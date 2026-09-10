@@ -1,9 +1,0 @@
-com\homefix\outbox\support\TestSupport$RecordingAlertPort.class
-com\homefix\outbox\relay\OutboxRelayServiceTest.class
-com\homefix\outbox\support\InMemoryOutboxEventRepository.class
-com\homefix\outbox\backoff\ExponentialBackoffTest.class
-com\homefix\outbox\relay\EventTopicResolverTest.class
-com\homefix\outbox\support\TestSupport.class
-com\homefix\outbox\relay\OutboxPollerTest.class
-com\homefix\outbox\support\TestSupport$SendCounter.class
-com\homefix\outbox\support\TestSupport$RecordingSleeper.class

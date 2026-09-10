@@ -1,4 +1,0 @@
--------------------------------------------------------------------------------
-Test set: com.homefix.dispatch.domain.MatchingWeightsTest
--------------------------------------------------------------------------------
-Tests run: 11, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.188 s -- in com.homefix.dispatch.domain.MatchingWeightsTest

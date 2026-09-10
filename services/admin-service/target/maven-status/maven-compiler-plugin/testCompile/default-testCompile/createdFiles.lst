@@ -1,8 +1,0 @@
-com\homefix\admin\api\SystemConfigurationControllerTest.class
-com\homefix\admin\module\OperationalModuleServiceTest.class
-com\homefix\admin\api\DispatchRuleControllerTest.class
-com\homefix\admin\audit\AuditLogServiceTest.class
-com\homefix\admin\dispatch\DispatchWeightsTest.class
-com\homefix\admin\rbac\AdminAuthorizationTest.class
-com\homefix\admin\support\InMemoryAuditLogStore.class
-com\homefix\admin\verification\VerificationQueueServiceTest.class

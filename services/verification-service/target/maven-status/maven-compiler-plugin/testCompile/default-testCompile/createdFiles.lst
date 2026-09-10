@@ -1,8 +1,0 @@
-com\homefix\verification\service\VerificationServiceTest$InvalidTransitions.class
-com\homefix\verification\support\InMemoryVerificationRepository.class
-com\homefix\verification\service\VerificationServiceTest$AuditTrail.class
-com\homefix\verification\domain\VerificationStateMachineTest.class
-com\homefix\verification\service\VerificationServiceTest$DocumentUploadFlow.class
-com\homefix\verification\service\VerificationServiceTest$JobAssignmentGate.class
-com\homefix\verification\service\VerificationServiceTest$ValidTransitions.class
-com\homefix\verification\service\VerificationServiceTest.class

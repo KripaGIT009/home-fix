@@ -1,4 +1,0 @@
--------------------------------------------------------------------------------
-Test set: com.homefix.gateway.it.GatewaySecurityIntegrationTest
--------------------------------------------------------------------------------
-Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 60.68 s -- in com.homefix.gateway.it.GatewaySecurityIntegrationTest

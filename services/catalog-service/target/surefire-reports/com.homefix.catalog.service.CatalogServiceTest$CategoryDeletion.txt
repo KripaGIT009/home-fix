@@ -1,4 +1,0 @@
--------------------------------------------------------------------------------
-Test set: com.homefix.catalog.service.CatalogServiceTest$CategoryDeletion
--------------------------------------------------------------------------------
-Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.626 s -- in com.homefix.catalog.service.CatalogServiceTest$CategoryDeletion

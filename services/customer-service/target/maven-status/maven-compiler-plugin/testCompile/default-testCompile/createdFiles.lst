@@ -1,6 +1,0 @@
-com\homefix\customer\service\CustomerProfileServiceTest.class
-com\homefix\customer\support\FakeBookingClientPort.class
-com\homefix\customer\support\FakeKmsEncryptionPort.class
-com\homefix\customer\support\FakeGeocodingPort.class
-com\homefix\customer\support\InMemoryAddressRepository.class
-com\homefix\customer\api\ProfilePhotoValidatorTest.class

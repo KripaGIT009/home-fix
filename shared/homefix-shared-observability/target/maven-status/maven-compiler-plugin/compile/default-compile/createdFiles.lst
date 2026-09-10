@@ -1,6 +1,0 @@
-com\homefix\shared\observability\logging\LogFields.class
-com\homefix\shared\observability\tracing\TracingSupport.class
-com\homefix\shared\observability\logging\PiiMaskingConverter.class
-com\homefix\shared\observability\logging\PiiScrubber.class
-com\homefix\shared\observability\error\ErrorResponseDto$Builder.class
-com\homefix\shared\observability\error\ErrorResponseDto.class

@@ -1,6 +1,0 @@
-com\homefix\gateway\it\GatewaySecurityIntegrationTest$DownstreamStubController.class
-com\homefix\gateway\it\GatewaySecurityIntegrationTest$TestBeans.class
-com\homefix\gateway\filter\RateLimitGatewayFilterPropertiesTest.class
-com\homefix\gateway\filter\RateLimitGatewayFilterPropertiesTest$InMemoryRateLimitCounter.class
-com\homefix\gateway\it\GatewaySecurityIntegrationTest.class
-com\homefix\gateway\waf\AttackPatternMatcherTest.class

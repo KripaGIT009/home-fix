@@ -1,4 +1,0 @@
--------------------------------------------------------------------------------
-Test set: com.homefix.payment.PaymentPropertiesTest
--------------------------------------------------------------------------------
-Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.941 s -- in com.homefix.payment.PaymentPropertiesTest

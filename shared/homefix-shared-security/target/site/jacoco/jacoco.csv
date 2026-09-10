@@ -1,7 +1,0 @@
-GROUP,PACKAGE,CLASS,INSTRUCTION_MISSED,INSTRUCTION_COVERED,BRANCH_MISSED,BRANCH_COVERED,LINE_MISSED,LINE_COVERED,COMPLEXITY_MISSED,COMPLEXITY_COVERED,METHOD_MISSED,METHOD_COVERED
-HomeFix Shared Security,com.homefix.shared.security,RbacProperties,0,15,0,0,0,5,0,3,0,3
-HomeFix Shared Security,com.homefix.shared.security,RbacEnforcementFilter,6,191,1,17,1,45,1,16,0,8
-HomeFix Shared Security,com.homefix.shared.security,JwtValidationFilter,0,163,1,7,0,49,1,11,0,8
-HomeFix Shared Security,com.homefix.shared.security,HomefixSecurityAutoConfiguration,61,0,0,0,13,0,6,0,6,0
-HomeFix Shared Security,com.homefix.shared.security,SecurityProperties,4,16,0,0,2,6,1,4,1,4
-HomeFix Shared Security,com.homefix.shared.security,CorrelationIdFilter,0,44,0,2,0,16,0,6,0,5

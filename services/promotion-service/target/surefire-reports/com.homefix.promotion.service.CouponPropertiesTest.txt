@@ -1,4 +1,0 @@
--------------------------------------------------------------------------------
-Test set: com.homefix.promotion.service.CouponPropertiesTest
--------------------------------------------------------------------------------
-Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 3.299 s -- in com.homefix.promotion.service.CouponPropertiesTest

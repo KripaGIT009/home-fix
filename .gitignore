@@ -1,0 +1,18 @@
+# Build output
+target/
+dist/
+*.tsbuildinfo
+node_modules/
+
+# Secrets / local scratch
+tok.tmp
+*.tmp
+.env
+.env.*
+!.env.example
+
+# IDE / OS
+.idea/
+*.iml
+.DS_Store
+Thumbs.db

@@ -1,9 +1,0 @@
-com\homefix\reporting\rbac\ReportAuthorizationTest.class
-com\homefix\reporting\report\ReportGeneratorTest.class
-com\homefix\reporting\domain\GenerationModeSelectorTest.class
-com\homefix\reporting\report\ReportingServiceTest.class
-com\homefix\reporting\support\FakeAnalyticsDataStore.class
-com\homefix\reporting\export\ReportExportServiceTest.class
-com\homefix\reporting\support\RecordingReportEmailAdapter.class
-com\homefix\reporting\api\ReportControllerTest.class
-com\homefix\reporting\support\RecordingReportEmailAdapter$Sent.class

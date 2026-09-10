@@ -1,4 +1,0 @@
-com\homefix\shared\observability\logging\PiiScrubberTest.class
-com\homefix\shared\observability\tracing\TracingSupportTest.class
-com\homefix\shared\observability\error\ErrorResponseDtoTest.class
-com\homefix\shared\observability\logging\PiiMaskingConverterTest.class

@@ -1,4 +1,0 @@
--------------------------------------------------------------------------------
-Test set: com.homefix.catalog.service.CatalogServiceTest$SubcategoryAttributeValidation
--------------------------------------------------------------------------------
-Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.589 s -- in com.homefix.catalog.service.CatalogServiceTest$SubcategoryAttributeValidation

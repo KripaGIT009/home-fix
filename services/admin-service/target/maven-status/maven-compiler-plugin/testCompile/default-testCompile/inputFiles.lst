@@ -1,8 +1,0 @@
-C:\projects\home-fix\services\admin-service\src\test\java\com\homefix\admin\api\DispatchRuleControllerTest.java
-C:\projects\home-fix\services\admin-service\src\test\java\com\homefix\admin\api\SystemConfigurationControllerTest.java
-C:\projects\home-fix\services\admin-service\src\test\java\com\homefix\admin\audit\AuditLogServiceTest.java
-C:\projects\home-fix\services\admin-service\src\test\java\com\homefix\admin\dispatch\DispatchWeightsTest.java
-C:\projects\home-fix\services\admin-service\src\test\java\com\homefix\admin\module\OperationalModuleServiceTest.java
-C:\projects\home-fix\services\admin-service\src\test\java\com\homefix\admin\rbac\AdminAuthorizationTest.java
-C:\projects\home-fix\services\admin-service\src\test\java\com\homefix\admin\support\InMemoryAuditLogStore.java
-C:\projects\home-fix\services\admin-service\src\test\java\com\homefix\admin\verification\VerificationQueueServiceTest.java

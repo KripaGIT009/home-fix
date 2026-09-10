@@ -1,4 +1,0 @@
--------------------------------------------------------------------------------
-Test set: com.homefix.shared.security.HomefixSecurityAutoConfigurationTest
--------------------------------------------------------------------------------
-Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.514 s -- in com.homefix.shared.security.HomefixSecurityAutoConfigurationTest
