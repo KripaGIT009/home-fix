@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DlqForwarder.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Shared Outbox</a> &gt; <a href="index.source.html" class="el_package">com.homefix.shared.outbox.kafka</a> &gt; <span class="el_source">DlqForwarder.java</span></div><h1>DlqForwarder.java</h1><pre class="source lang-java linenums">package com.homefix.shared.outbox.kafka;
+
+import org.apache.kafka.common.header.internals.RecordHeader;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.kafka.core.KafkaTemplate;
+
+import java.nio.charset.StandardCharsets;
+
+/**
+ * Forwards events that could not be processed to a consumer group's dead-letter topic
+ * (Task 6, Requirement 22.6).
+ *
+ * &lt;p&gt;The dead-letter topic name is derived by suffixing the source topic with {@code .DLT}
+ * (e.g. {@code booking.created} → {@code booking.created.DLT}). The original {@code eventId}
+ * and the failure reason are attached as headers so operators can trace the poison message.
+ */
+public class DlqForwarder {
+
+    /** Suffix appended to a source topic to form its dead-letter topic. */
+    public static final String DLT_SUFFIX = &quot;.DLT&quot;;
+    public static final String HEADER_EVENT_ID = &quot;eventId&quot;;
+    public static final String HEADER_DLQ_REASON = &quot;dlqReason&quot;;
+    public static final String HEADER_ORIGINAL_TOPIC = &quot;originalTopic&quot;;
+
+<span class="fc" id="L26">    private static final Logger log = LoggerFactory.getLogger(DlqForwarder.class);</span>
+
+    private final KafkaTemplate&lt;String, String&gt; kafkaTemplate;
+
+<span class="fc" id="L30">    public DlqForwarder(KafkaTemplate&lt;String, String&gt; kafkaTemplate) {</span>
+<span class="fc" id="L31">        this.kafkaTemplate = kafkaTemplate;</span>
+<span class="fc" id="L32">    }</span>
+
+    /**
+     * Publishes the failed record to {@code &lt;sourceTopic&gt;.DLT}.
+     *
+     * @param sourceTopic the topic the event was originally consumed from
+     * @param key         the record key (preserved for partition affinity)
+     * @param eventId     the stable event ID, echoed as a header
+     * @param payload     the original event payload
+     * @param reason      a human-readable description of why processing failed
+     */
+    public void forward(String sourceTopic, String key, String eventId, String payload, String reason) {
+<span class="fc" id="L44">        String dltTopic = deadLetterTopicFor(sourceTopic);</span>
+<span class="fc" id="L45">        var record = new org.apache.kafka.clients.producer.ProducerRecord&lt;&gt;(dltTopic, null, key, payload);</span>
+<span class="fc bfc" id="L46" title="All 2 branches covered.">        if (eventId != null) {</span>
+<span class="fc" id="L47">            record.headers().add(new RecordHeader(HEADER_EVENT_ID, eventId.getBytes(StandardCharsets.UTF_8)));</span>
+        }
+<span class="fc" id="L49">        record.headers().add(new RecordHeader(HEADER_ORIGINAL_TOPIC,</span>
+<span class="fc" id="L50">                sourceTopic.getBytes(StandardCharsets.UTF_8)));</span>
+<span class="fc" id="L51">        record.headers().add(new RecordHeader(HEADER_DLQ_REASON,</span>
+<span class="fc bfc" id="L52" title="All 2 branches covered.">                (reason == null ? &quot;unknown&quot; : reason).getBytes(StandardCharsets.UTF_8)));</span>
+<span class="fc" id="L53">        kafkaTemplate.send(record);</span>
+<span class="fc" id="L54">        log.warn(&quot;Forwarded event {} from topic {} to dead-letter topic {} reason={}&quot;,</span>
+                eventId, sourceTopic, dltTopic, reason);
+<span class="fc" id="L56">    }</span>
+
+    /**
+     * Derives the dead-letter topic name for a source topic.
+     */
+    public static String deadLetterTopicFor(String sourceTopic) {
+<span class="fc" id="L62">        return sourceTopic + DLT_SUFFIX;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

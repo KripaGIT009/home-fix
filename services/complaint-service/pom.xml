@@ -1,0 +1,178 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.homefix</groupId>
+    <artifactId>complaint-service</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+    <packaging>jar</packaging>
+
+    <name>HomeFix Complaint Service</name>
+    <description>
+        Complaint lifecycle, SLA enforcement, and refund coordination (Requirement 16). Creates
+        complaint records against completed bookings with one of seven categories, a description up
+        to 2000 characters, and up to 5 evidence attachments (each &lt;= 10 MB), and assigns the
+        complaint to an available Support_Agent (16.1). Acknowledges the complaint to the customer
+        via the Notification Service within 30 minutes (16.2) and notifies the customer of status
+        changes via in-app notification within 5 minutes (16.3). Enforces resolution SLAs (24 h for
+        emergency, 72 h for standard) escalating to a Senior_Support_Agent and notifying the
+        customer on breach (16.4). Coordinates refunds with the Payment Service, setting
+        REFUND_FAILED and alerting Finance_Admin on rejection (16.5, 16.6), places and releases
+        provider settlement holds on DISPUTED/closed complaints (16.7, 16.8), and aggregates
+        complaint statistics for Admin reports (16.9). Built on the shared security, observability,
+        and outbox libraries (Tasks 4-6); coordinates with the Payment Service (Task 18) and the
+        Booking Service (Task 14).
+    </description>
+
+    <properties>
+        <java.version>21</java.version>
+        <maven.compiler.source>21</maven.compiler.source>
+        <maven.compiler.target>21</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
+        <spring-boot.version>3.2.5</spring-boot.version>
+        <homefix-shared.version>1.0.0-SNAPSHOT</homefix-shared.version>
+        <jacoco.version>0.8.12</jacoco.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-dependencies</artifactId>
+                <version>${spring-boot.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <dependencies>
+        <!-- ===== HomeFix shared libraries (Tasks 4-6) ===== -->
+        <dependency>
+            <groupId>com.homefix.shared</groupId>
+            <artifactId>homefix-shared-security</artifactId>
+            <version>${homefix-shared.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.homefix.shared</groupId>
+            <artifactId>homefix-shared-observability</artifactId>
+            <version>${homefix-shared.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.homefix.shared</groupId>
+            <artifactId>homefix-shared-resilience</artifactId>
+            <version>${homefix-shared.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.homefix.shared</groupId>
+            <artifactId>homefix-shared-outbox</artifactId>
+            <version>${homefix-shared.version}</version>
+        </dependency>
+
+        <!-- ===== Spring Boot starters ===== -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <!-- ===== Runtime persistence driver ===== -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- ===== Micrometer Prometheus registry for /metrics (Requirement 25.4) ===== -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- ===== Test dependencies ===== -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <version>${spring-boot.version}</version>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>repackage</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.13.0</version>
+                <configuration>
+                    <release>21</release>
+                </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.2.5</version>
+            </plugin>
+
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>${jacoco.version}</version>
+                <executions>
+                    <execution>
+                        <id>prepare-agent</id>
+                        <goals><goal>prepare-agent</goal></goals>
+                    </execution>
+                    <execution>
+                        <id>report</id>
+                        <phase>verify</phase>
+                        <goals><goal>report</goal></goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

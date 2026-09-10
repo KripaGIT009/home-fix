@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BookingProperties.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Booking Service</a> &gt; <a href="index.source.html" class="el_package">com.homefix.booking.config</a> &gt; <span class="el_source">BookingProperties.java</span></div><h1>BookingProperties.java</h1><pre class="source lang-java linenums">package com.homefix.booking.config;
+
+import java.math.BigDecimal;
+import java.time.Duration;
+import java.util.List;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+
+/**
+ * Externalised booking configuration (bound from {@code homefix.booking.*}).
+ */
+@ConfigurationProperties(prefix = &quot;homefix.booking&quot;)
+<span class="fc" id="L13">public class BookingProperties {</span>
+
+    /** Minimum lead time for a scheduled booking (Requirement 7.7). */
+<span class="fc" id="L16">    private Duration minLeadTime = Duration.ofHours(2);</span>
+
+    /** Maximum scheduling horizon for a scheduled booking (Requirement 7.8). */
+<span class="fc" id="L19">    private Duration maxHorizon = Duration.ofDays(90);</span>
+
+    /** Emergency create SLA (Requirement 8.1). */
+<span class="fc" id="L22">    private Duration emergencyCreateWithin = Duration.ofSeconds(2);</span>
+
+    /** Emergency SEARCHING_PROVIDER SLA after creation (Requirement 8.1). */
+<span class="fc" id="L25">    private Duration emergencySearchingWithin = Duration.ofSeconds(3);</span>
+
+    /** Additional-quote customer response timeout (Requirement 9.9). */
+<span class="fc" id="L28">    private Duration additionalQuoteTimeout = Duration.ofMinutes(60);</span>
+
+    /**
+     * Default cancellation fee applied when a Service_Subcategory has none configured. Must
+     * be within the 0.00-999.99 range (Requirement 9.18).
+     */
+<span class="fc" id="L34">    private BigDecimal defaultCancellationFee = new BigDecimal(&quot;0.00&quot;);</span>
+
+<span class="fc" id="L36">    private final Media media = new Media();</span>
+
+    public Duration getMinLeadTime() {
+<span class="fc" id="L39">        return minLeadTime;</span>
+    }
+
+    public void setMinLeadTime(Duration minLeadTime) {
+<span class="fc" id="L43">        this.minLeadTime = minLeadTime;</span>
+<span class="fc" id="L44">    }</span>
+
+    public Duration getMaxHorizon() {
+<span class="fc" id="L47">        return maxHorizon;</span>
+    }
+
+    public void setMaxHorizon(Duration maxHorizon) {
+<span class="fc" id="L51">        this.maxHorizon = maxHorizon;</span>
+<span class="fc" id="L52">    }</span>
+
+    public Duration getEmergencyCreateWithin() {
+<span class="fc" id="L55">        return emergencyCreateWithin;</span>
+    }
+
+    public void setEmergencyCreateWithin(Duration emergencyCreateWithin) {
+<span class="fc" id="L59">        this.emergencyCreateWithin = emergencyCreateWithin;</span>
+<span class="fc" id="L60">    }</span>
+
+    public Duration getEmergencySearchingWithin() {
+<span class="fc" id="L63">        return emergencySearchingWithin;</span>
+    }
+
+    public void setEmergencySearchingWithin(Duration emergencySearchingWithin) {
+<span class="fc" id="L67">        this.emergencySearchingWithin = emergencySearchingWithin;</span>
+<span class="fc" id="L68">    }</span>
+
+    public Duration getAdditionalQuoteTimeout() {
+<span class="fc" id="L71">        return additionalQuoteTimeout;</span>
+    }
+
+    public void setAdditionalQuoteTimeout(Duration additionalQuoteTimeout) {
+<span class="fc" id="L75">        this.additionalQuoteTimeout = additionalQuoteTimeout;</span>
+<span class="fc" id="L76">    }</span>
+
+    public BigDecimal getDefaultCancellationFee() {
+<span class="fc" id="L79">        return defaultCancellationFee;</span>
+    }
+
+    public void setDefaultCancellationFee(BigDecimal defaultCancellationFee) {
+<span class="fc" id="L83">        this.defaultCancellationFee = defaultCancellationFee;</span>
+<span class="fc" id="L84">    }</span>
+
+    public Media getMedia() {
+<span class="fc" id="L87">        return media;</span>
+    }
+
+    /** Media upload constraints (Requirement 7.2). */
+<span class="fc" id="L91">    public static class Media {</span>
+<span class="fc" id="L92">        private int maxFiles = 10;</span>
+<span class="fc" id="L93">        private long maxFileSize = 52_428_800L; // 50 MB</span>
+<span class="fc" id="L94">        private List&lt;String&gt; allowedContentTypes = List.of(</span>
+                &quot;image/jpeg&quot;, &quot;image/png&quot;, &quot;video/mp4&quot;, &quot;video/quicktime&quot;);
+
+        public int getMaxFiles() {
+<span class="fc" id="L98">            return maxFiles;</span>
+        }
+
+        public void setMaxFiles(int maxFiles) {
+<span class="fc" id="L102">            this.maxFiles = maxFiles;</span>
+<span class="fc" id="L103">        }</span>
+
+        public long getMaxFileSize() {
+<span class="fc" id="L106">            return maxFileSize;</span>
+        }
+
+        public void setMaxFileSize(long maxFileSize) {
+<span class="fc" id="L110">            this.maxFileSize = maxFileSize;</span>
+<span class="fc" id="L111">        }</span>
+
+        public List&lt;String&gt; getAllowedContentTypes() {
+<span class="fc" id="L114">            return allowedContentTypes;</span>
+        }
+
+        public void setAllowedContentTypes(List&lt;String&gt; allowedContentTypes) {
+<span class="fc" id="L118">            this.allowedContentTypes = allowedContentTypes;</span>
+<span class="fc" id="L119">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

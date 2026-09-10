@@ -1,0 +1,12 @@
+{{ include "homefix-service.fullname" . }} deployed to namespace {{ .Release.Namespace }} ({{ .Values.environment }}).
+
+Image:      {{ .Values.image.repository }}:{{ .Values.image.tag }}
+Replicas:   {{ if .Values.autoscaling.enabled }}autoscaled {{ .Values.autoscaling.minReplicas }}–{{ .Values.autoscaling.maxReplicas }}{{ else }}{{ .Values.replicaCount }}{{ end }}
+Service:    {{ include "homefix-service.fullname" . }}:{{ .Values.service.port }} ({{ .Values.service.type }})
+
+Check rollout:
+  kubectl rollout status deployment/{{ include "homefix-service.fullname" . }} -n {{ .Release.Namespace }}
+
+Health endpoints (via port-forward):
+  kubectl port-forward svc/{{ include "homefix-service.fullname" . }} 8080:{{ .Values.service.port }} -n {{ .Release.Namespace }}
+  curl http://localhost:8080{{ .Values.probes.readiness.path }}

@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>JwksOidcKeyLocator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Auth Service</a> &gt; <a href="index.source.html" class="el_package">com.homefix.auth.social</a> &gt; <span class="el_source">JwksOidcKeyLocator.java</span></div><h1>JwksOidcKeyLocator.java</h1><pre class="source lang-java linenums">package com.homefix.auth.social;
+
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.security.Key;
+import java.time.Duration;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+import com.homefix.auth.config.SocialLoginProperties;
+import com.homefix.auth.config.SocialLoginProperties.ProviderConfig;
+
+import io.jsonwebtoken.security.Jwk;
+import io.jsonwebtoken.security.JwkSet;
+import io.jsonwebtoken.security.Jwks;
+
+/**
+ * {@link OidcKeyLocator} that fetches and caches each provider's JWKS document and returns the
+ * public key matching the token's {@code kid} (Requirement 23.10).
+ *
+ * &lt;p&gt;Keys are cached per provider; a cache miss (unknown {@code kid}) triggers a single refresh
+ * to pick up key rotation before failing. Network/parse failures surface as a
+ * {@link SocialIdentityException} so the login endpoint returns 401 rather than 500.
+ */
+@Component
+public class JwksOidcKeyLocator implements OidcKeyLocator {
+
+<span class="fc" id="L35">    private static final Logger log = LoggerFactory.getLogger(JwksOidcKeyLocator.class);</span>
+
+<span class="fc" id="L37">    private final Map&lt;SocialProvider, ProviderConfig&gt; configs = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L38">    private final Map&lt;SocialProvider, Map&lt;String, Key&gt;&gt; cache = new ConcurrentHashMap&lt;&gt;();</span>
+    private final HttpClient httpClient;
+
+<span class="fc" id="L41">    public JwksOidcKeyLocator(SocialLoginProperties properties) {</span>
+<span class="fc" id="L42">        this.configs.put(SocialProvider.GOOGLE, properties.getGoogle());</span>
+<span class="fc" id="L43">        this.configs.put(SocialProvider.APPLE, properties.getApple());</span>
+<span class="fc" id="L44">        this.httpClient = HttpClient.newBuilder()</span>
+<span class="fc" id="L45">                .connectTimeout(Duration.ofSeconds(5))</span>
+<span class="fc" id="L46">                .build();</span>
+<span class="fc" id="L47">    }</span>
+
+    @Override
+    public Key locate(SocialProvider provider, String keyId) {
+<span class="fc bfc" id="L51" title="All 4 branches covered.">        if (keyId == null || keyId.isBlank()) {</span>
+<span class="fc" id="L52">            throw SocialIdentityException.invalidToken();</span>
+        }
+<span class="fc" id="L54">        Key key = cachedKey(provider, keyId);</span>
+<span class="pc bpc" id="L55" title="1 of 2 branches missed.">        if (key == null) {</span>
+            // Possible key rotation — refresh once before giving up.
+<span class="nc" id="L57">            refresh(provider);</span>
+<span class="nc" id="L58">            key = cachedKey(provider, keyId);</span>
+        }
+<span class="nc bnc" id="L60" title="All 2 branches missed.">        if (key == null) {</span>
+<span class="nc" id="L61">            throw SocialIdentityException.invalidToken();</span>
+        }
+<span class="nc" id="L63">        return key;</span>
+    }
+
+    private Key cachedKey(SocialProvider provider, String keyId) {
+<span class="fc" id="L67">        Map&lt;String, Key&gt; keys = cache.get(provider);</span>
+<span class="pc bpc" id="L68" title="1 of 2 branches missed.">        return keys == null ? null : keys.get(keyId);</span>
+    }
+
+    private void refresh(SocialProvider provider) {
+<span class="fc" id="L72">        ProviderConfig config = configs.get(provider);</span>
+<span class="pc bpc" id="L73" title="2 of 6 branches missed.">        if (config == null || config.getJwksUri() == null || config.getJwksUri().isBlank()) {</span>
+<span class="fc" id="L74">            throw SocialIdentityException.unsupportedProvider(String.valueOf(provider));</span>
+        }
+        try {
+<span class="fc" id="L77">            HttpRequest request = HttpRequest.newBuilder()</span>
+<span class="fc" id="L78">                    .uri(URI.create(config.getJwksUri()))</span>
+<span class="fc" id="L79">                    .timeout(Duration.ofSeconds(5))</span>
+<span class="fc" id="L80">                    .GET()</span>
+<span class="fc" id="L81">                    .build();</span>
+<span class="nc" id="L82">            HttpResponse&lt;String&gt; response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());</span>
+<span class="nc bnc" id="L83" title="All 2 branches missed.">            if (response.statusCode() / 100 != 2) {</span>
+<span class="nc" id="L84">                throw new IllegalStateException(&quot;JWKS fetch returned HTTP &quot; + response.statusCode());</span>
+            }
+<span class="nc" id="L86">            JwkSet jwkSet = Jwks.setParser().build().parse(response.body());</span>
+<span class="nc" id="L87">            Map&lt;String, Key&gt; keys = new HashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L88" title="All 2 branches missed.">            for (Jwk&lt;?&gt; jwk : jwkSet.getKeys()) {</span>
+<span class="nc bnc" id="L89" title="All 2 branches missed.">                if (jwk.getId() != null) {</span>
+<span class="nc" id="L90">                    keys.put(jwk.getId(), jwk.toKey());</span>
+                }
+<span class="nc" id="L92">            }</span>
+<span class="nc" id="L93">            cache.put(provider, keys);</span>
+<span class="nc" id="L94">        } catch (SocialIdentityException ex) {</span>
+<span class="nc" id="L95">            throw ex;</span>
+<span class="nc" id="L96">        } catch (InterruptedException ex) {</span>
+<span class="nc" id="L97">            Thread.currentThread().interrupt();</span>
+<span class="nc" id="L98">            throw SocialIdentityException.invalidToken();</span>
+<span class="fc" id="L99">        } catch (RuntimeException | java.io.IOException ex) {</span>
+<span class="fc" id="L100">            log.warn(&quot;Failed to refresh JWKS for provider {}&quot;, provider);</span>
+<span class="fc" id="L101">            throw SocialIdentityException.invalidToken();</span>
+<span class="nc" id="L102">        }</span>
+<span class="nc" id="L103">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

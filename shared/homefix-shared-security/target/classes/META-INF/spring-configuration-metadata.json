@@ -1,0 +1,36 @@
+{
+  "groups": [
+    {
+      "name": "homefix.security",
+      "type": "com.homefix.shared.security.SecurityProperties",
+      "sourceType": "com.homefix.shared.security.SecurityProperties"
+    },
+    {
+      "name": "homefix.security.rbac",
+      "type": "com.homefix.shared.security.RbacProperties",
+      "sourceType": "com.homefix.shared.security.RbacProperties"
+    }
+  ],
+  "properties": [
+    {
+      "name": "homefix.security.enabled",
+      "type": "java.lang.Boolean",
+      "description": "Master switch; when {@code false} no security filters are registered.",
+      "sourceType": "com.homefix.shared.security.SecurityProperties",
+      "defaultValue": true
+    },
+    {
+      "name": "homefix.security.jwt-secret",
+      "type": "java.lang.String",
+      "description": "HMAC-SHA256 signing secret. Must be at least 256 bits (32 bytes).",
+      "sourceType": "com.homefix.shared.security.SecurityProperties"
+    },
+    {
+      "name": "homefix.security.rbac.endpoint-roles",
+      "type": "java.util.Map<java.lang.String,java.util.List<java.lang.String>>",
+      "description": "Map of {@code \"METHOD \/path\"} → required roles. Evaluated in insertion order; first matching entry wins.",
+      "sourceType": "com.homefix.shared.security.RbacProperties"
+    }
+  ],
+  "hints": []
+}

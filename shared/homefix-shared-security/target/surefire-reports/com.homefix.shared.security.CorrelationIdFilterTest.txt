@@ -1,0 +1,4 @@
+-------------------------------------------------------------------------------
+Test set: com.homefix.shared.security.CorrelationIdFilterTest
+-------------------------------------------------------------------------------
+Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 4.647 s -- in com.homefix.shared.security.CorrelationIdFilterTest

@@ -1,0 +1,16 @@
+com\homefix\pricing\service\PriceQuoteServiceTest$FakeParametersPort.class
+com\homefix\pricing\cache\InMemoryPricingConfigCacheAdapterTest.class
+com\homefix\pricing\service\PricingServiceTest$SurgeMultiplier.class
+com\homefix\pricing\support\TestData.class
+com\homefix\pricing\service\PricingServiceTest.class
+com\homefix\pricing\service\PricingServiceTest$CombinedMultipliers.class
+com\homefix\pricing\service\PricingServiceTest$NightWeekendSurcharge.class
+com\homefix\pricing\service\PriceQuoteServiceTest$1.class
+com\homefix\pricing\service\PriceQuoteServiceTest.class
+com\homefix\pricing\service\CouponServiceTest.class
+com\homefix\pricing\service\ProviderOverrideServiceTest.class
+com\homefix\pricing\service\PricingServiceTest$EmergencyMultiplier.class
+com\homefix\pricing\service\PricingServiceTest$ItemisedBreakdown.class
+com\homefix\pricing\cache\InMemoryPricingConfigCacheAdapterTest$MutableClock.class
+com\homefix\pricing\service\PricingServiceTest$MinimumTotal.class
+com\homefix\pricing\service\PricingServiceTest$DistanceCharge.class

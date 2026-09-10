@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PricingConfigService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Pricing Engine</a> &gt; <a href="index.source.html" class="el_package">com.homefix.pricing.service</a> &gt; <span class="el_source">PricingConfigService.java</span></div><h1>PricingConfigService.java</h1><pre class="source lang-java linenums">package com.homefix.pricing.service;
+
+import java.util.UUID;
+
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Service;
+
+import com.homefix.pricing.cache.PricingConfigCachePort;
+import com.homefix.pricing.config.PricingParametersPort;
+import com.homefix.pricing.domain.PricingParameters;
+
+/**
+ * Read-through accessor and Admin writer for per-subcategory pricing parameters
+ * (Requirement 6.11).
+ *
+ * &lt;p&gt;Reads consult the {@link PricingConfigCachePort} first and fall back to the
+ * {@link PricingParametersPort} source of truth on a miss, repopulating the cache. Admin writes
+ * persist through the source of truth and invalidate the cache so the next read repopulates —
+ * guaranteeing updated parameters reach new bookings within the cache TTL (default 60 s).
+ */
+@Service
+public class PricingConfigService {
+
+    private final PricingConfigCachePort cache;
+    private final PricingParametersPort parametersPort;
+
+<span class="fc" id="L27">    public PricingConfigService(PricingConfigCachePort cache, PricingParametersPort parametersPort) {</span>
+<span class="fc" id="L28">        this.cache = cache;</span>
+<span class="fc" id="L29">        this.parametersPort = parametersPort;</span>
+<span class="fc" id="L30">    }</span>
+
+    /**
+     * Resolves the effective pricing parameters for a subcategory, read-through the cache.
+     *
+     * @throws PricingException if no parameters are configured for the subcategory.
+     */
+    public PricingParameters requireParameters(UUID subcategoryId) {
+<span class="fc" id="L38">        return cache.get(subcategoryId).orElseGet(() -&gt; {</span>
+<span class="fc" id="L39">            PricingParameters loaded = parametersPort.findBySubcategoryId(subcategoryId)</span>
+<span class="fc" id="L40">                    .orElseThrow(() -&gt; new PricingException(HttpStatus.NOT_FOUND,</span>
+                            &quot;PRICING_PARAMETERS_NOT_FOUND&quot;,
+                            &quot;No pricing parameters configured for subcategory &quot; + subcategoryId));
+<span class="fc" id="L43">            cache.put(loaded);</span>
+<span class="fc" id="L44">            return loaded;</span>
+        });
+    }
+
+    /**
+     * Admin update of pricing parameters. Persists through the source of truth and invalidates
+     * the cache entry so the change is reflected on the next read within the TTL bound
+     * (Requirement 6.11).
+     */
+    public PricingParameters updateParameters(PricingParameters parameters) {
+<span class="fc" id="L54">        PricingParameters saved = parametersPort.save(parameters);</span>
+<span class="fc" id="L55">        cache.invalidate(saved.subcategoryId());</span>
+<span class="fc" id="L56">        return saved;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

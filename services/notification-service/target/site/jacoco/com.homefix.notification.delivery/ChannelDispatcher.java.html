@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ChannelDispatcher.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Notification Service</a> &gt; <a href="index.source.html" class="el_package">com.homefix.notification.delivery</a> &gt; <span class="el_source">ChannelDispatcher.java</span></div><h1>ChannelDispatcher.java</h1><pre class="source lang-java linenums">package com.homefix.notification.delivery;
+
+import com.homefix.notification.channel.EmailPort;
+import com.homefix.notification.channel.InAppPort;
+import com.homefix.notification.channel.NotificationDeliveryException;
+import com.homefix.notification.channel.PushPort;
+import com.homefix.notification.channel.SmsPort;
+import com.homefix.notification.domain.NotificationChannel;
+import com.homefix.notification.domain.NotificationContact;
+import com.homefix.notification.domain.NotificationEvent;
+import com.homefix.notification.domain.RenderedMessage;
+import org.springframework.stereotype.Component;
+
+/**
+ * Routes a rendered message to the correct channel port. Keeps the port-selection logic out of
+ * the orchestrator so {@link NotificationDeliveryService} deals only with the abstract notion of
+ * &quot;deliver on channel X&quot;.
+ *
+ * &lt;p&gt;A channel whose recipient address is missing is treated as an unrecoverable delivery
+ * failure for that channel (it cannot succeed on retry), signalled via
+ * {@link NotificationDeliveryException}.
+ */
+@Component
+public class ChannelDispatcher {
+
+    private final SmsPort smsPort;
+    private final EmailPort emailPort;
+    private final PushPort pushPort;
+    private final InAppPort inAppPort;
+
+    public ChannelDispatcher(SmsPort smsPort, EmailPort emailPort, PushPort pushPort,
+<span class="fc" id="L32">                             InAppPort inAppPort) {</span>
+<span class="fc" id="L33">        this.smsPort = smsPort;</span>
+<span class="fc" id="L34">        this.emailPort = emailPort;</span>
+<span class="fc" id="L35">        this.pushPort = pushPort;</span>
+<span class="fc" id="L36">        this.inAppPort = inAppPort;</span>
+<span class="fc" id="L37">    }</span>
+
+    /**
+     * Dispatches the message on the given channel.
+     *
+     * @throws NotificationDeliveryException if the channel address is missing or the vendor fails
+     */
+    public void dispatch(NotificationChannel channel, NotificationEvent event, RenderedMessage message) {
+<span class="fc" id="L45">        NotificationContact contact = event.contact();</span>
+<span class="pc bpc" id="L46" title="1 of 5 branches missed.">        switch (channel) {</span>
+            case SMS -&gt; {
+<span class="fc" id="L48">                requireAddress(contact.mobileNumber(), &quot;SMS&quot;);</span>
+<span class="fc" id="L49">                smsPort.send(contact.mobileNumber(), message.body());</span>
+<span class="fc" id="L50">            }</span>
+            case EMAIL -&gt; {
+<span class="fc" id="L52">                requireAddress(contact.emailAddress(), &quot;email&quot;);</span>
+<span class="fc" id="L53">                emailPort.send(contact.emailAddress(), message.title(), message.body());</span>
+<span class="fc" id="L54">            }</span>
+            case PUSH -&gt; {
+<span class="fc" id="L56">                requireAddress(contact.deviceToken(), &quot;push&quot;);</span>
+<span class="fc" id="L57">                pushPort.send(contact.deviceToken(), message.title(), message.body());</span>
+<span class="fc" id="L58">            }</span>
+<span class="fc" id="L59">            case IN_APP -&gt; inAppPort.publish(event.recipientUserId(), message.title(), message.body());</span>
+        }
+<span class="fc" id="L61">    }</span>
+
+    private static void requireAddress(String address, String channelLabel) {
+<span class="pc bpc" id="L64" title="2 of 4 branches missed.">        if (address == null || address.isBlank()) {</span>
+<span class="nc" id="L65">            throw new NotificationDeliveryException(&quot;missing &quot; + channelLabel + &quot; address for recipient&quot;);</span>
+        }
+<span class="fc" id="L67">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

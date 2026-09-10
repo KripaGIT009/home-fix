@@ -1,0 +1,8 @@
+C:\projects\home-fix\services\reporting-service\src\test\java\com\homefix\reporting\api\ReportControllerTest.java
+C:\projects\home-fix\services\reporting-service\src\test\java\com\homefix\reporting\domain\GenerationModeSelectorTest.java
+C:\projects\home-fix\services\reporting-service\src\test\java\com\homefix\reporting\export\ReportExportServiceTest.java
+C:\projects\home-fix\services\reporting-service\src\test\java\com\homefix\reporting\rbac\ReportAuthorizationTest.java
+C:\projects\home-fix\services\reporting-service\src\test\java\com\homefix\reporting\report\ReportGeneratorTest.java
+C:\projects\home-fix\services\reporting-service\src\test\java\com\homefix\reporting\report\ReportingServiceTest.java
+C:\projects\home-fix\services\reporting-service\src\test\java\com\homefix\reporting\support\FakeAnalyticsDataStore.java
+C:\projects\home-fix\services\reporting-service\src\test\java\com\homefix\reporting\support\RecordingReportEmailAdapter.java

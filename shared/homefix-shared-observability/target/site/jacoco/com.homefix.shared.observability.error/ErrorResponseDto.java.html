@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ErrorResponseDto.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Shared Observability</a> &gt; <a href="index.source.html" class="el_package">com.homefix.shared.observability.error</a> &gt; <span class="el_source">ErrorResponseDto.java</span></div><h1>ErrorResponseDto.java</h1><pre class="source lang-java linenums">package com.homefix.shared.observability.error;
+
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * Standard error envelope returned by every HomeFix microservice so clients see a
+ * consistent shape regardless of which service failed (Task 5).
+ *
+ * &lt;p&gt;JSON shape:
+ * &lt;pre&gt;
+ * {
+ *   &quot;errorCode&quot;: &quot;BOOKING_NOT_FOUND&quot;,
+ *   &quot;message&quot;: &quot;No booking exists with the supplied reference&quot;,
+ *   &quot;details&quot;: [&quot;field 'reference' did not match any record&quot;],
+ *   &quot;correlationId&quot;: &quot;0e9c...-uuid&quot;,
+ *   &quot;timestamp&quot;: &quot;2026-09-07T05:56:33.454Z&quot;
+ * }
+ * &lt;/pre&gt;
+ *
+ * &lt;p&gt;{@code null}/empty optional fields are omitted from the serialised output via
+ * {@link JsonInclude.Include#NON_EMPTY}.
+ */
+@JsonInclude(JsonInclude.Include.NON_EMPTY)
+public class ErrorResponseDto {
+
+    @JsonProperty(&quot;errorCode&quot;)
+    private String errorCode;
+
+    @JsonProperty(&quot;message&quot;)
+    private String message;
+
+<span class="fc" id="L37">    @JsonProperty(&quot;details&quot;)</span>
+    private List&lt;String&gt; details = new ArrayList&lt;&gt;();
+
+    @JsonProperty(&quot;correlationId&quot;)
+    private String correlationId;
+
+<span class="fc" id="L43">    @JsonProperty(&quot;timestamp&quot;)</span>
+<span class="fc" id="L44">    private Instant timestamp = Instant.now();</span>
+
+<span class="fc" id="L46">    public ErrorResponseDto() {</span>
+<span class="fc" id="L47">    }</span>
+
+<span class="fc" id="L49">    public ErrorResponseDto(String errorCode, String message, String correlationId) {</span>
+<span class="fc" id="L50">        this.errorCode = errorCode;</span>
+<span class="fc" id="L51">        this.message = message;</span>
+<span class="fc" id="L52">        this.correlationId = correlationId;</span>
+<span class="fc" id="L53">    }</span>
+
+    /**
+     * Fluent builder entry point.
+     */
+    public static Builder builder() {
+<span class="fc" id="L59">        return new Builder();</span>
+    }
+
+    // ----- getters / setters -----
+
+    public String getErrorCode() {
+<span class="fc" id="L65">        return errorCode;</span>
+    }
+
+    public void setErrorCode(String errorCode) {
+<span class="fc" id="L69">        this.errorCode = errorCode;</span>
+<span class="fc" id="L70">    }</span>
+
+    public String getMessage() {
+<span class="fc" id="L73">        return message;</span>
+    }
+
+    public void setMessage(String message) {
+<span class="fc" id="L77">        this.message = message;</span>
+<span class="fc" id="L78">    }</span>
+
+    public List&lt;String&gt; getDetails() {
+<span class="fc" id="L81">        return details;</span>
+    }
+
+    public void setDetails(List&lt;String&gt; details) {
+<span class="fc bfc" id="L85" title="All 2 branches covered.">        this.details = details == null ? new ArrayList&lt;&gt;() : details;</span>
+<span class="fc" id="L86">    }</span>
+
+    public String getCorrelationId() {
+<span class="fc" id="L89">        return correlationId;</span>
+    }
+
+    public void setCorrelationId(String correlationId) {
+<span class="fc" id="L93">        this.correlationId = correlationId;</span>
+<span class="fc" id="L94">    }</span>
+
+    public Instant getTimestamp() {
+<span class="fc" id="L97">        return timestamp;</span>
+    }
+
+    public void setTimestamp(Instant timestamp) {
+<span class="fc" id="L101">        this.timestamp = timestamp;</span>
+<span class="fc" id="L102">    }</span>
+
+    /**
+     * Minimal builder for ergonomic construction in exception handlers.
+     */
+<span class="fc" id="L107">    public static final class Builder {</span>
+<span class="fc" id="L108">        private final ErrorResponseDto dto = new ErrorResponseDto();</span>
+
+        public Builder errorCode(String errorCode) {
+<span class="fc" id="L111">            dto.errorCode = errorCode;</span>
+<span class="fc" id="L112">            return this;</span>
+        }
+
+        public Builder message(String message) {
+<span class="fc" id="L116">            dto.message = message;</span>
+<span class="fc" id="L117">            return this;</span>
+        }
+
+        public Builder correlationId(String correlationId) {
+<span class="fc" id="L121">            dto.correlationId = correlationId;</span>
+<span class="fc" id="L122">            return this;</span>
+        }
+
+        public Builder addDetail(String detail) {
+<span class="pc bpc" id="L126" title="1 of 2 branches missed.">            if (detail != null) {</span>
+<span class="fc" id="L127">                dto.details.add(detail);</span>
+            }
+<span class="fc" id="L129">            return this;</span>
+        }
+
+        public Builder details(List&lt;String&gt; details) {
+<span class="fc" id="L133">            dto.setDetails(details);</span>
+<span class="fc" id="L134">            return this;</span>
+        }
+
+        public Builder timestamp(Instant timestamp) {
+<span class="fc" id="L138">            dto.timestamp = timestamp;</span>
+<span class="fc" id="L139">            return this;</span>
+        }
+
+        public ErrorResponseDto build() {
+<span class="fc" id="L143">            return dto;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

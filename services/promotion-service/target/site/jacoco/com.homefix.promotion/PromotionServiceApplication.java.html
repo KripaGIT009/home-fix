@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PromotionServiceApplication.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Promotion / Coupon Service</a> &gt; <a href="index.source.html" class="el_package">com.homefix.promotion</a> &gt; <span class="el_source">PromotionServiceApplication.java</span></div><h1>PromotionServiceApplication.java</h1><pre class="source lang-java linenums">package com.homefix.promotion;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.autoconfigure.domain.EntityScan;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
+
+import com.homefix.promotion.config.PromotionProperties;
+import com.homefix.shared.outbox.OutboxEventEntity;
+import com.homefix.shared.outbox.OutboxEventRepository;
+
+/**
+ * Entry point for the HomeFix Promotion / Coupon Service.
+ *
+ * &lt;p&gt;Owns coupon and promotion management (Requirement 21): Admin coupon CRUD with attribute
+ * validation, a checkout-time validation endpoint that returns the applicable discount or a
+ * descriptive constraint violation, atomic redemption that increments the total and per-user
+ * usage counters without over-redemption under concurrency (Property 20), immediate Admin
+ * deactivation, and atomic counter decrement on cancellation before payment capture (Property 21).
+ *
+ * &lt;p&gt;The shared security, observability, and outbox libraries auto-configure from the classpath.
+ * The shared outbox JPA entities/repositories live in {@code com.homefix.shared.outbox}, so both
+ * they and this service's own persistence package are explicitly scanned.
+ */
+@SpringBootApplication
+@EnableConfigurationProperties(PromotionProperties.class)
+@EntityScan(basePackageClasses = {OutboxEventEntity.class, PromotionServiceApplication.class})
+@EnableJpaRepositories(basePackageClasses = {OutboxEventRepository.class, PromotionServiceApplication.class})
+<span class="nc" id="L30">public class PromotionServiceApplication {</span>
+
+    public static void main(String[] args) {
+<span class="nc" id="L33">        SpringApplication.run(PromotionServiceApplication.class, args);</span>
+<span class="nc" id="L34">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

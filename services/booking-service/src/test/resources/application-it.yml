@@ -1,0 +1,57 @@
+# Integration-test profile for the end-to-end booking-flow tests (Task 44).
+#
+# Stands up the full Booking Service Spring context (web layer + JPA + state machine + Saga +
+# transactional outbox) against an in-memory H2 database. A real multi-service cloud staging
+# environment is not available in CI, so the cross-service dependencies the Booking Service
+# talks to (Pricing Engine, Service Catalog) are exercised through their stub port adapters,
+# and the events the Booking Service emits to the downstream services (Dispatch Engine,
+# Payment, Invoice, Notification) are asserted on the transactional outbox — the exact rows
+# the Outbox Processor would relay to Kafka in staging.
+spring:
+  datasource:
+    # H2 in PostgreSQL-compatibility mode; DB created fresh per test context.
+    url: jdbc:h2:mem:booking_it;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    username: sa
+    password: ""
+    driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      # The booking + outbox schema is generated from the JPA entities for the test run
+      # (production uses ddl-auto=validate against the migrated Postgres 'booking' schema).
+      ddl-auto: create-drop
+    properties:
+      hibernate:
+        # No fixed schema prefix under H2 — entities live in the default schema.
+        default_schema: ""
+        format_sql: false
+    open-in-view: false
+
+homefix:
+  security:
+    # The shared auto-configured *servlet* filter chain is disabled for the IT so it does not
+    # double up with the in-chain JWT/RBAC filters wired by ItSecurityConfig (which run inside
+    # the Spring Security chain, where the authenticated principal survives to the controller).
+    # The same shared filter classes are still exercised — just registered inside the chain.
+    enabled: false
+    # Fixed HS256 secret (>= 32 bytes) used by both the in-chain JwtValidationFilter and the
+    # test's token generator so the full authentication path runs end-to-end.
+    jwt-secret: it-signing-secret-key-0123456789-abcdefzz
+  booking:
+    min-lead-time: 2h
+    max-horizon: 90d
+    additional-quote-timeout: 60m
+    default-cancellation-fee: 0.00
+  catalog:
+    client: stub
+  pricing:
+    client: stub
+  media-storage:
+    provider: local
+  outbox:
+    enabled: true
+
+# Quieter logs during the integration run.
+logging:
+  level:
+    org.hibernate.SQL: warn
+    com.homefix.booking: info

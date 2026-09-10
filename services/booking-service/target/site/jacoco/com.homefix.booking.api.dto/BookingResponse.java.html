@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BookingResponse.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Booking Service</a> &gt; <a href="index.source.html" class="el_package">com.homefix.booking.api.dto</a> &gt; <span class="el_source">BookingResponse.java</span></div><h1>BookingResponse.java</h1><pre class="source lang-java linenums">package com.homefix.booking.api.dto;
+
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.Map;
+import java.util.UUID;
+
+import com.homefix.booking.domain.Booking;
+import com.homefix.booking.pricing.PriceEstimate;
+
+/**
+ * Response returned when creating or querying a booking. When returned from a create call the
+ * {@code estimate} carries the itemized price breakdown to present to the customer before
+ * confirmation (Requirement 7.3); it is null for responses that do not include an estimate.
+ */
+<span class="fc" id="L16">public record BookingResponse(</span>
+        UUID bookingId,
+        String reference,
+        String status,
+        boolean emergency,
+        Instant scheduledAt,
+        BigDecimal estimatedTotal,
+        BigDecimal cancellationFee,
+        PriceEstimateView estimate) {
+
+    public static BookingResponse of(Booking b) {
+<span class="fc" id="L27">        return new BookingResponse(b.getId(), b.getReference(), b.getStatus().name(),</span>
+<span class="fc" id="L28">                b.isEmergency(), b.getScheduledAt(), b.getEstimatedTotal(),</span>
+<span class="fc" id="L29">                b.getCancellationFee(), null);</span>
+    }
+
+    public static BookingResponse withEstimate(Booking b, PriceEstimate estimate) {
+<span class="fc" id="L33">        return new BookingResponse(b.getId(), b.getReference(), b.getStatus().name(),</span>
+<span class="fc" id="L34">                b.isEmergency(), b.getScheduledAt(), b.getEstimatedTotal(),</span>
+<span class="fc" id="L35">                b.getCancellationFee(), PriceEstimateView.of(estimate));</span>
+    }
+
+    /** Itemized estimate view (Requirement 6.9, 7.3). */
+<span class="fc" id="L39">    public record PriceEstimateView(BigDecimal total, Map&lt;String, BigDecimal&gt; components) {</span>
+        static PriceEstimateView of(PriceEstimate e) {
+<span class="fc bfc" id="L41" title="All 2 branches covered.">            return e == null ? null : new PriceEstimateView(e.total(), e.components());</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

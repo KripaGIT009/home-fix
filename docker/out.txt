@@ -1,0 +1,4 @@
+catId=5eca8fa9-d2bf-4066-bce7-474b52d62431
+direct_public=403
+gateway_with_token=403
+gateway_no_token=401

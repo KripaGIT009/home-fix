@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>FraudDetector.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Rating &amp; Review Service</a> &gt; <a href="index.source.html" class="el_package">com.homefix.rating.service</a> &gt; <span class="el_source">FraudDetector.java</span></div><h1>FraudDetector.java</h1><pre class="source lang-java linenums">package com.homefix.rating.service;
+
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.EnumSet;
+import java.util.List;
+import java.util.Set;
+
+import com.homefix.rating.config.RatingProperties;
+
+/**
+ * Detects the three suspicious patterns that flag a review for Admin moderation (Requirement 15.5,
+ * Property 17):
+ *
+ * &lt;ol&gt;
+ *   &lt;li&gt;&lt;b&gt;Same-IP burst&lt;/b&gt; — two or more reviews from the same IP within 1 hour (15.5a).&lt;/li&gt;
+ *   &lt;li&gt;&lt;b&gt;Rating deviation&lt;/b&gt; — the star rating deviates more than 2 standard deviations from the
+ *       provider's historical mean (15.5b).&lt;/li&gt;
+ *   &lt;li&gt;&lt;b&gt;Fresh account&lt;/b&gt; — the reviewer's account was created within 24 hours of submission
+ *       (15.5c).&lt;/li&gt;
+ * &lt;/ol&gt;
+ *
+ * &lt;p&gt;Pure logic: it consumes a {@link FraudSignals} snapshot and returns the set of triggers that
+ * fired. Any non-empty result means the review must be held out of the aggregate until an Admin
+ * approves it.
+ */
+public class FraudDetector {
+
+    /** The individual suspicious patterns that can flag a review. */
+<span class="fc" id="L30">    public enum Trigger {</span>
+<span class="fc" id="L31">        SAME_IP_BURST,</span>
+<span class="fc" id="L32">        RATING_DEVIATION,</span>
+<span class="fc" id="L33">        FRESH_ACCOUNT</span>
+    }
+
+    private final RatingProperties.Fraud config;
+
+<span class="fc" id="L38">    public FraudDetector(RatingProperties.Fraud config) {</span>
+<span class="fc" id="L39">        this.config = config;</span>
+<span class="fc" id="L40">    }</span>
+
+    /** @return the triggers that fired; empty means the review is not flagged. */
+    public Set&lt;Trigger&gt; evaluate(FraudSignals signals) {
+<span class="fc" id="L44">        Set&lt;Trigger&gt; triggers = EnumSet.noneOf(Trigger.class);</span>
+
+<span class="pc bpc" id="L46" title="1 of 4 branches missed.">        if (signals.sourceIp() != null &amp;&amp; signals.recentSameIpCount() &gt;= config.getSameIpThreshold()) {</span>
+<span class="fc" id="L47">            triggers.add(Trigger.SAME_IP_BURST);</span>
+        }
+
+<span class="fc bfc" id="L50" title="All 2 branches covered.">        if (deviatesBeyondThreshold(signals.overallRating(), signals.providerHistory())) {</span>
+<span class="fc" id="L51">            triggers.add(Trigger.RATING_DEVIATION);</span>
+        }
+
+<span class="fc bfc" id="L54" title="All 2 branches covered.">        if (isFreshAccount(signals)) {</span>
+<span class="fc" id="L55">            triggers.add(Trigger.FRESH_ACCOUNT);</span>
+        }
+
+<span class="fc" id="L58">        return triggers;</span>
+    }
+
+    /** Convenience: whether any trigger fires. */
+    public boolean isFraudulent(FraudSignals signals) {
+<span class="pc bpc" id="L63" title="1 of 2 branches missed.">        return !evaluate(signals).isEmpty();</span>
+    }
+
+    /**
+     * True when {@code rating} lies more than the configured number of standard deviations from the
+     * historical mean. With fewer than two prior data points the standard deviation is undefined (or
+     * zero), so the check is skipped — a provider's first reviews cannot deviate from a
+     * not-yet-established mean.
+     */
+    private boolean deviatesBeyondThreshold(int rating, List&lt;Integer&gt; history) {
+<span class="pc bpc" id="L73" title="1 of 2 branches missed.">        List&lt;Integer&gt; values = history == null ? List.of() : history;</span>
+<span class="fc bfc" id="L74" title="All 2 branches covered.">        if (values.size() &lt; 2) {</span>
+<span class="fc" id="L75">            return false;</span>
+        }
+<span class="fc" id="L77">        double mean = values.stream().mapToInt(Integer::intValue).average().orElse(0.0);</span>
+<span class="fc" id="L78">        double variance = values.stream()</span>
+<span class="fc" id="L79">                .mapToDouble(v -&gt; {</span>
+<span class="fc" id="L80">                    double d = v - mean;</span>
+<span class="fc" id="L81">                    return d * d;</span>
+                })
+<span class="fc" id="L83">                .sum() / values.size();</span>
+<span class="fc" id="L84">        double sd = Math.sqrt(variance);</span>
+<span class="fc bfc" id="L85" title="All 2 branches covered.">        if (sd == 0.0) {</span>
+            // No historical spread: any exact-match rating is fine; a differing rating is suspicious.
+<span class="fc bfc" id="L87" title="All 2 branches covered.">            return rating != Math.round(mean);</span>
+        }
+<span class="fc" id="L89">        double deviations = Math.abs(rating - mean) / sd;</span>
+<span class="fc bfc" id="L90" title="All 2 branches covered.">        return deviations &gt; config.getDeviationSdThreshold();</span>
+    }
+
+    private boolean isFreshAccount(FraudSignals signals) {
+<span class="fc bfc" id="L94" title="All 2 branches covered.">        if (signals.reviewerCreatedAt() == null) {</span>
+<span class="fc" id="L95">            return false;</span>
+        }
+<span class="fc" id="L97">        Duration age = Duration.between(signals.reviewerCreatedAt(), signals.submittedAt());</span>
+<span class="fc bfc" id="L98" title="All 2 branches covered.">        return age.compareTo(config.getMinAccountAge()) &lt; 0;</span>
+    }
+
+    /** Human-readable reasons for the audit trail / logs. */
+    public static List&lt;String&gt; describe(Set&lt;Trigger&gt; triggers) {
+<span class="fc" id="L103">        List&lt;String&gt; reasons = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L104" title="All 2 branches covered.">        for (Trigger t : triggers) {</span>
+<span class="pc bpc" id="L105" title="1 of 4 branches missed.">            switch (t) {</span>
+<span class="fc" id="L106">                case SAME_IP_BURST -&gt; reasons.add(&quot;multiple reviews from the same IP within the burst window&quot;);</span>
+<span class="fc" id="L107">                case RATING_DEVIATION -&gt; reasons.add(&quot;rating deviates beyond threshold from provider historical mean&quot;);</span>
+<span class="fc" id="L108">                case FRESH_ACCOUNT -&gt; reasons.add(&quot;reviewer account created within the minimum age window&quot;);</span>
+            }
+<span class="fc" id="L110">        }</span>
+<span class="fc" id="L111">        return reasons;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

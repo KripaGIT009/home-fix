@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DistributedLockPort.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Dispatch Engine</a> &gt; <a href="index.source.html" class="el_package">com.homefix.dispatch.port</a> &gt; <span class="el_source">DistributedLockPort.java</span></div><h1>DistributedLockPort.java</h1><pre class="source lang-java linenums">package com.homefix.dispatch.port;
+
+import java.time.Duration;
+import java.util.UUID;
+
+/**
+ * Outbound port for the exclusive per-provider offer lock (Requirement 8.11). Before a job offer
+ * is sent, the Dispatch Engine must hold an exclusive lock on the provider's offer slot so that
+ * no two concurrent booking flows can offer the same provider simultaneously.
+ *
+ * &lt;p&gt;The default adapter backs this with a Redis {@code SET key value NX PX ttl} on
+ * {@code dispatch:lock:provider:{providerId}}, giving atomic acquire-if-absent semantics and an
+ * automatic TTL expiry (default = the offer timeout, 60 s) so a crashed holder cannot deadlock a
+ * provider forever. Ownership tokens ensure a holder only releases its own lock.
+ */
+public interface DistributedLockPort {
+
+    /**
+     * Attempts to acquire the exclusive offer lock for {@code providerId}.
+     *
+     * @param providerId the provider to lock
+     * @param ttl        time-to-live after which the lock auto-expires
+     * @return a lock handle if acquired, or {@code null} if another flow already holds it
+     */
+    LockHandle tryAcquire(UUID providerId, Duration ttl);
+
+    /**
+     * Releases a previously acquired lock. Releasing a lock whose token no longer matches (because
+     * it expired and was re-acquired by someone else) is a no-op.
+     */
+    void release(LockHandle handle);
+
+    /**
+     * A handle to an acquired lock, carrying the provider it guards and the ownership token used to
+     * make release safe against expiry races.
+     */
+<span class="fc" id="L37">    record LockHandle(UUID providerId, String token, String key) {</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

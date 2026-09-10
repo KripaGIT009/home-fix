@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RefundResult.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Complaint Service</a> &gt; <a href="index.source.html" class="el_package">com.homefix.complaint.payment</a> &gt; <span class="el_source">RefundResult.java</span></div><h1>RefundResult.java</h1><pre class="source lang-java linenums">package com.homefix.complaint.payment;
+
+/**
+ * Outcome of a refund request submitted to the Payment Service (Requirement 16.5, 16.6).
+ *
+ * @param approved       whether the Payment Service accepted and processed the refund
+ * @param transactionRef the Payment Service transaction/refund reference when approved (may be null)
+ * @param failureReason  a human-readable reason when the refund was rejected (may be null)
+ */
+<span class="fc" id="L10">public record RefundResult(boolean approved, String transactionRef, String failureReason) {</span>
+
+    public static RefundResult approved(String transactionRef) {
+<span class="fc" id="L13">        return new RefundResult(true, transactionRef, null);</span>
+    }
+
+    public static RefundResult rejected(String failureReason) {
+<span class="fc" id="L17">        return new RefundResult(false, null, failureReason);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

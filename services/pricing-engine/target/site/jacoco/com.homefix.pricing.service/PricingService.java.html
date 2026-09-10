@@ -1,0 +1,186 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PricingService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Pricing Engine</a> &gt; <a href="index.source.html" class="el_package">com.homefix.pricing.service</a> &gt; <span class="el_source">PricingService.java</span></div><h1>PricingService.java</h1><pre class="source lang-java linenums">package com.homefix.pricing.service;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.DayOfWeek;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+
+import org.springframework.stereotype.Service;
+
+import com.homefix.pricing.config.PricingProperties;
+import com.homefix.pricing.domain.Money;
+import com.homefix.pricing.domain.PriceBreakdown;
+import com.homefix.pricing.domain.PricingParameters;
+
+/**
+ * Core price calculation (Requirement 6.1–6.9).
+ *
+ * &lt;p&gt;Produces a fully itemised {@link PriceBreakdown} whose components sum to the returned total
+ * (Property 6) and whose total is never below the configured floor (Property 1). All monetary
+ * math uses {@link BigDecimal} normalised through {@link Money}. Coupon validation
+ * (Requirement 6.10) and provider-override bounds (Requirement 6.12) are handled by
+ * {@link CouponService} and {@link ProviderOverrideService} respectively and are not part of
+ * the raw formula here.
+ *
+ * &lt;p&gt;Multiplier semantics (Requirement 6.2–6.4):
+ * &lt;ul&gt;
+ *   &lt;li&gt;Emergency multiplier is clamped to {@code [1, maxEmergencyMultiplier]} (default cap 2.0×).&lt;/li&gt;
+ *   &lt;li&gt;Surge multiplier is clamped to {@code [1, maxSurgeMultiplier]} (default cap 2.0×).&lt;/li&gt;
+ *   &lt;li&gt;When both apply, emergency is applied first, then surge:
+ *       {@code effective = base × emergency × surge}, and the combined effective factor is
+ *       capped at {@code emergencyCap + surgeCap}. The surcharge is decomposed into an emergency
+ *       component and a surge component so the breakdown stays itemised.&lt;/li&gt;
+ * &lt;/ul&gt;
+ */
+@Service
+public class PricingService {
+
+<span class="fc" id="L39">    private static final BigDecimal ONE = BigDecimal.ONE;</span>
+<span class="fc" id="L40">    private static final LocalTime NIGHT_START = LocalTime.of(22, 0);</span>
+<span class="fc" id="L41">    private static final LocalTime NIGHT_END = LocalTime.of(6, 0);</span>
+    /** Precision used for intermediate multiplier arithmetic before monetary rounding. */
+    private static final int CALC_SCALE = 10;
+
+    private final PricingProperties properties;
+    private final Money money;
+
+<span class="fc" id="L48">    public PricingService(PricingProperties properties) {</span>
+<span class="fc" id="L49">        this.properties = properties;</span>
+<span class="fc" id="L50">        this.money = new Money(properties.getMoneyScale(), properties.getMoneyRounding());</span>
+<span class="fc" id="L51">    }</span>
+
+    public Money money() {
+<span class="fc" id="L54">        return money;</span>
+    }
+
+    /** Calculates the itemised breakdown for a request using the resolved subcategory parameters. */
+    public PriceBreakdown calculate(PriceRequest request, PricingParameters params) {
+<span class="fc" id="L59">        BigDecimal base = nonNegative(params.basePrice());</span>
+
+        // ----- Multipliers (emergency first, then surge), with the combined cap. -----
+<span class="fc" id="L62">        BigDecimal emergencyCharge = BigDecimal.ZERO;</span>
+<span class="fc" id="L63">        BigDecimal surgeCharge = BigDecimal.ZERO;</span>
+
+<span class="fc bfc" id="L65" title="All 2 branches covered.">        BigDecimal emgFactor = request.emergency()</span>
+<span class="fc" id="L66">                ? clamp(orOne(params.emergencyMultiplier()), ONE, properties.getMaxEmergencyMultiplier())</span>
+<span class="fc" id="L67">                : ONE;</span>
+<span class="fc bfc" id="L68" title="All 2 branches covered.">        BigDecimal surgeFactor = request.surgeActive()</span>
+<span class="fc" id="L69">                ? clamp(orOne(params.surgeMultiplier()), ONE, properties.getMaxSurgeMultiplier())</span>
+<span class="fc" id="L70">                : ONE;</span>
+
+<span class="fc bfc" id="L72" title="All 4 branches covered.">        if (request.emergency() || request.surgeActive()) {</span>
+            // Combined effective factor, capped at the sum of the two configured caps.
+<span class="fc" id="L74">            BigDecimal effective = emgFactor.multiply(surgeFactor);</span>
+<span class="fc" id="L75">            BigDecimal combinedCap = properties.getMaxEmergencyMultiplier()</span>
+<span class="fc" id="L76">                    .add(properties.getMaxSurgeMultiplier());</span>
+<span class="pc bpc" id="L77" title="1 of 2 branches missed.">            if (effective.compareTo(combinedCap) &gt; 0) {</span>
+<span class="nc" id="L78">                effective = combinedCap;</span>
+            }
+            // Total surcharge over base attributable to multipliers.
+<span class="fc" id="L81">            BigDecimal totalSurcharge = base.multiply(effective.subtract(ONE));</span>
+
+            // Decompose: emergency component = base × (emgFactor − 1); the remainder is surge.
+<span class="fc" id="L84">            emergencyCharge = base.multiply(emgFactor.subtract(ONE));</span>
+<span class="pc bpc" id="L85" title="1 of 2 branches missed.">            if (emergencyCharge.compareTo(totalSurcharge) &gt; 0) {</span>
+<span class="nc" id="L86">                emergencyCharge = totalSurcharge;</span>
+            }
+<span class="fc" id="L88">            surgeCharge = totalSurcharge.subtract(emergencyCharge);</span>
+        }
+
+        // ----- Distance charge (Requirement 6.7), capped at max travel charge. -----
+<span class="fc" id="L92">        BigDecimal distanceCharge = distanceCharge(request.distanceKm(), params);</span>
+
+        // ----- Night / weekend surcharges (Requirement 6.5, 6.6). -----
+<span class="fc bfc" id="L95" title="All 2 branches covered.">        BigDecimal nightSurcharge = isNight(request.scheduledLocalTime())</span>
+<span class="fc" id="L96">                ? nonNegative(params.nightSurcharge()) : BigDecimal.ZERO;</span>
+<span class="fc bfc" id="L97" title="All 2 branches covered.">        BigDecimal weekendSurcharge = isWeekend(request.scheduledLocalTime())</span>
+<span class="fc" id="L98">                ? nonNegative(params.weekendSurcharge()) : BigDecimal.ZERO;</span>
+
+<span class="fc" id="L100">        BigDecimal timeCharge = nonNegative(request.timeCharge());</span>
+<span class="fc" id="L101">        BigDecimal parts = nonNegative(request.partsMaterialsCharge());</span>
+
+        // ----- Platform fee and taxes computed on the pre-fee subtotal. -----
+<span class="fc" id="L104">        BigDecimal subtotal = base</span>
+<span class="fc" id="L105">                .add(distanceCharge)</span>
+<span class="fc" id="L106">                .add(timeCharge)</span>
+<span class="fc" id="L107">                .add(parts)</span>
+<span class="fc" id="L108">                .add(emergencyCharge)</span>
+<span class="fc" id="L109">                .add(surgeCharge)</span>
+<span class="fc" id="L110">                .add(nightSurcharge)</span>
+<span class="fc" id="L111">                .add(weekendSurcharge);</span>
+<span class="fc" id="L112">        BigDecimal platformFee = subtotal.multiply(fraction(params.platformFeeRate()));</span>
+<span class="fc" id="L113">        BigDecimal taxes = subtotal.add(platformFee).multiply(fraction(params.taxRate()));</span>
+
+<span class="fc" id="L115">        BigDecimal discount = nonNegative(request.orderDiscount());</span>
+
+<span class="fc" id="L117">        return PriceBreakdown.builder()</span>
+<span class="fc" id="L118">                .basePrice(base)</span>
+<span class="fc" id="L119">                .distanceCharge(distanceCharge)</span>
+<span class="fc" id="L120">                .timeCharge(timeCharge)</span>
+<span class="fc" id="L121">                .partsMaterialsCharge(parts)</span>
+<span class="fc" id="L122">                .emergencyCharge(emergencyCharge)</span>
+<span class="fc" id="L123">                .weekendSurcharge(weekendSurcharge)</span>
+<span class="fc" id="L124">                .nightSurcharge(nightSurcharge)</span>
+<span class="fc" id="L125">                .demandSurgeCharge(surgeCharge)</span>
+<span class="fc" id="L126">                .platformFee(platformFee)</span>
+<span class="fc" id="L127">                .taxes(taxes)</span>
+<span class="fc" id="L128">                .discountAmount(discount)</span>
+<span class="fc" id="L129">                .couponAmount(BigDecimal.ZERO)</span>
+<span class="fc" id="L130">                .build(money, properties.getMinTotal());</span>
+    }
+
+    /** distance_charge = distance_km × per_km_rate, capped at max_travel_charge (Requirement 6.7). */
+    BigDecimal distanceCharge(BigDecimal distanceKm, PricingParameters params) {
+<span class="pc bpc" id="L135" title="1 of 6 branches missed.">        if (distanceKm == null || distanceKm.signum() &lt;= 0 || params.perKmRate() == null) {</span>
+<span class="fc" id="L136">            return BigDecimal.ZERO;</span>
+        }
+<span class="fc" id="L138">        BigDecimal charge = distanceKm.multiply(params.perKmRate());</span>
+<span class="fc" id="L139">        BigDecimal cap = params.maxTravelCharge();</span>
+<span class="pc bpc" id="L140" title="1 of 4 branches missed.">        if (cap != null &amp;&amp; charge.compareTo(cap) &gt; 0) {</span>
+<span class="fc" id="L141">            return cap;</span>
+        }
+<span class="fc" id="L143">        return charge;</span>
+    }
+
+    boolean isNight(LocalDateTime local) {
+<span class="fc bfc" id="L147" title="All 2 branches covered.">        if (local == null) {</span>
+<span class="fc" id="L148">            return false;</span>
+        }
+<span class="fc" id="L150">        LocalTime t = local.toLocalTime();</span>
+        // Night window wraps midnight: [22:00, 24:00) ∪ [00:00, 06:00).
+<span class="fc bfc" id="L152" title="All 4 branches covered.">        return !t.isBefore(NIGHT_START) || t.isBefore(NIGHT_END);</span>
+    }
+
+    boolean isWeekend(LocalDateTime local) {
+<span class="fc bfc" id="L156" title="All 2 branches covered.">        if (local == null) {</span>
+<span class="fc" id="L157">            return false;</span>
+        }
+<span class="fc" id="L159">        DayOfWeek day = local.getDayOfWeek();</span>
+<span class="pc bpc" id="L160" title="1 of 4 branches missed.">        return day == DayOfWeek.SATURDAY || day == DayOfWeek.SUNDAY;</span>
+    }
+
+    private static BigDecimal orOne(BigDecimal v) {
+<span class="pc bpc" id="L164" title="1 of 2 branches missed.">        return v == null ? ONE : v;</span>
+    }
+
+    private static BigDecimal nonNegative(BigDecimal v) {
+<span class="pc bpc" id="L168" title="1 of 4 branches missed.">        return (v == null || v.signum() &lt; 0) ? BigDecimal.ZERO : v;</span>
+    }
+
+    private static BigDecimal fraction(BigDecimal rate) {
+<span class="pc bpc" id="L172" title="2 of 4 branches missed.">        return (rate == null || rate.signum() &lt; 0) ? BigDecimal.ZERO : rate;</span>
+    }
+
+    private static BigDecimal clamp(BigDecimal value, BigDecimal min, BigDecimal max) {
+<span class="fc" id="L176">        BigDecimal v = value.setScale(CALC_SCALE, RoundingMode.HALF_UP);</span>
+<span class="pc bpc" id="L177" title="1 of 2 branches missed.">        if (v.compareTo(min) &lt; 0) {</span>
+<span class="nc" id="L178">            return min;</span>
+        }
+<span class="fc bfc" id="L180" title="All 2 branches covered.">        if (v.compareTo(max) &gt; 0) {</span>
+<span class="fc" id="L181">            return max;</span>
+        }
+<span class="fc" id="L183">        return v;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

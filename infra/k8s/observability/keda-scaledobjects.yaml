@@ -1,0 +1,328 @@
+# KEDA ScaledObjects — Kafka consumer-lag based autoscaling for event-driven services.
+# Complements the CPU/memory HPAs in infra/k8s/observability/hpa/ (Task 2).
+#
+# Prerequisite: KEDA operator installed in the cluster.
+#   helm repo add kedacore https://kedacore.github.io/charts
+#   helm upgrade --install keda kedacore/keda -n keda --create-namespace
+#
+# Deploy: kubectl apply -f keda-scaledobjects.yaml
+#
+# The `kafka` trigger uses MSK bootstrap servers with SASL/TLS. KEDA reads the
+# consumer group lag and scales the Deployment between minReplicaCount and
+# maxReplicaCount, targeting `lagThreshold` messages of lag per replica.
+#
+# KEDA creates and manages a v2 HPA under the hood, so these ScaledObjects must
+# NOT target the same Deployments as the plain CPU HPAs. For the consumer
+# services below, prefer the ScaledObject (it also honours CPU via an extra
+# trigger); do not additionally apply a plain HPA for the same Deployment.
+#
+# `sasl`/`tls` and `bootstrapServers` are supplied via a shared TriggerAuthentication
+# and referenced by each ScaledObject.
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: keda-kafka-auth
+  namespace: booking-dispatch-location
+  labels:
+    app: homefix
+    component: keda
+type: Opaque
+stringData:
+  # Populate from AWS Secrets Manager / External Secrets Operator in real deploys.
+  sasl: "aws_msk_iam"
+  username: "PLACEHOLDER"
+  password: "PLACEHOLDER"
+---
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: keda-kafka-trigger-auth
+  namespace: booking-dispatch-location
+spec:
+  secretTargetRef:
+    - parameter: sasl
+      name: keda-kafka-auth
+      key: sasl
+    - parameter: username
+      name: keda-kafka-auth
+      key: username
+    - parameter: password
+      name: keda-kafka-auth
+      key: password
+---
+# ---------------------------------------------------------------------------
+# Dispatch Engine — consumes BookingCreated; latency-sensitive, scale eagerly
+# ---------------------------------------------------------------------------
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: dispatch-engine-kafka-lag
+  namespace: booking-dispatch-location
+  labels:
+    app: dispatch-engine
+    component: autoscaling
+spec:
+  scaleTargetRef:
+    name: dispatch-engine
+  minReplicaCount: 2
+  maxReplicaCount: 15
+  pollingInterval: 15
+  cooldownPeriod: 120
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleUp:
+          stabilizationWindowSeconds: 30
+          policies:
+            - type: Pods
+              value: 3
+              periodSeconds: 60
+        scaleDown:
+          stabilizationWindowSeconds: 300
+          policies:
+            - type: Pods
+              value: 1
+              periodSeconds: 120
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: "b-1.homefix-msk.ap-south-1.amazonaws.com:9098,b-2.homefix-msk.ap-south-1.amazonaws.com:9098"
+        consumerGroup: dispatch-engine
+        topic: booking.events
+        lagThreshold: "50"
+        offsetResetPolicy: latest
+        allowIdleConsumers: "false"
+      authenticationRef:
+        name: keda-kafka-trigger-auth
+    - type: cpu
+      metricType: Utilization
+      metadata:
+        value: "70"
+---
+# ---------------------------------------------------------------------------
+# Location Service — consumes JobStarted
+# ---------------------------------------------------------------------------
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: location-service-kafka-lag
+  namespace: booking-dispatch-location
+  labels:
+    app: location-service
+    component: autoscaling
+spec:
+  scaleTargetRef:
+    name: location-service
+  minReplicaCount: 2
+  maxReplicaCount: 12
+  pollingInterval: 15
+  cooldownPeriod: 180
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: "b-1.homefix-msk.ap-south-1.amazonaws.com:9098,b-2.homefix-msk.ap-south-1.amazonaws.com:9098"
+        consumerGroup: location-service
+        topic: booking.events
+        lagThreshold: "100"
+        offsetResetPolicy: latest
+      authenticationRef:
+        name: keda-kafka-trigger-auth
+    - type: cpu
+      metricType: Utilization
+      metadata:
+        value: "70"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: keda-kafka-auth
+  namespace: payment-invoice-rating
+  labels:
+    app: homefix
+    component: keda
+type: Opaque
+stringData:
+  sasl: "aws_msk_iam"
+  username: "PLACEHOLDER"
+  password: "PLACEHOLDER"
+---
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: keda-kafka-trigger-auth
+  namespace: payment-invoice-rating
+spec:
+  secretTargetRef:
+    - parameter: sasl
+      name: keda-kafka-auth
+      key: sasl
+    - parameter: username
+      name: keda-kafka-auth
+      key: username
+    - parameter: password
+      name: keda-kafka-auth
+      key: password
+---
+# ---------------------------------------------------------------------------
+# Invoice Service — consumes PaymentCompleted
+# ---------------------------------------------------------------------------
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: invoice-service-kafka-lag
+  namespace: payment-invoice-rating
+  labels:
+    app: invoice-service
+    component: autoscaling
+spec:
+  scaleTargetRef:
+    name: invoice-service
+  minReplicaCount: 2
+  maxReplicaCount: 10
+  pollingInterval: 20
+  cooldownPeriod: 180
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: "b-1.homefix-msk.ap-south-1.amazonaws.com:9098,b-2.homefix-msk.ap-south-1.amazonaws.com:9098"
+        consumerGroup: invoice-service
+        topic: payment.events
+        lagThreshold: "100"
+        offsetResetPolicy: latest
+      authenticationRef:
+        name: keda-kafka-trigger-auth
+    - type: cpu
+      metricType: Utilization
+      metadata:
+        value: "70"
+---
+# ---------------------------------------------------------------------------
+# Rating & Review Service — consumes PaymentCompleted
+# ---------------------------------------------------------------------------
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: rating-review-service-kafka-lag
+  namespace: payment-invoice-rating
+  labels:
+    app: rating-review-service
+    component: autoscaling
+spec:
+  scaleTargetRef:
+    name: rating-review-service
+  minReplicaCount: 2
+  maxReplicaCount: 8
+  pollingInterval: 30
+  cooldownPeriod: 300
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: "b-1.homefix-msk.ap-south-1.amazonaws.com:9098,b-2.homefix-msk.ap-south-1.amazonaws.com:9098"
+        consumerGroup: rating-review-service
+        topic: payment.events
+        lagThreshold: "200"
+        offsetResetPolicy: latest
+      authenticationRef:
+        name: keda-kafka-trigger-auth
+    - type: cpu
+      metricType: Utilization
+      metadata:
+        value: "70"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: keda-kafka-auth
+  namespace: notification-chat-complaint
+  labels:
+    app: homefix
+    component: keda
+type: Opaque
+stringData:
+  sasl: "aws_msk_iam"
+  username: "PLACEHOLDER"
+  password: "PLACEHOLDER"
+---
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: keda-kafka-trigger-auth
+  namespace: notification-chat-complaint
+spec:
+  secretTargetRef:
+    - parameter: sasl
+      name: keda-kafka-auth
+      key: sasl
+    - parameter: username
+      name: keda-kafka-auth
+      key: username
+    - parameter: password
+      name: keda-kafka-auth
+      key: password
+---
+# ---------------------------------------------------------------------------
+# Notification Service — consumes all 11 event types; high fan-out
+# ---------------------------------------------------------------------------
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: notification-service-kafka-lag
+  namespace: notification-chat-complaint
+  labels:
+    app: notification-service
+    component: autoscaling
+spec:
+  scaleTargetRef:
+    name: notification-service
+  minReplicaCount: 2
+  maxReplicaCount: 12
+  pollingInterval: 15
+  cooldownPeriod: 180
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: "b-1.homefix-msk.ap-south-1.amazonaws.com:9098,b-2.homefix-msk.ap-south-1.amazonaws.com:9098"
+        consumerGroup: notification-service
+        topic: booking.events,payment.events,review.events
+        lagThreshold: "100"
+        offsetResetPolicy: latest
+      authenticationRef:
+        name: keda-kafka-trigger-auth
+    - type: cpu
+      metricType: Utilization
+      metadata:
+        value: "70"
+---
+# ---------------------------------------------------------------------------
+# Chat Service — consumes ProviderAccepted / PaymentCompleted / BookingCancelled
+# ---------------------------------------------------------------------------
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: chat-service-kafka-lag
+  namespace: notification-chat-complaint
+  labels:
+    app: chat-service
+    component: autoscaling
+spec:
+  scaleTargetRef:
+    name: chat-service
+  minReplicaCount: 2
+  maxReplicaCount: 10
+  pollingInterval: 20
+  cooldownPeriod: 180
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: "b-1.homefix-msk.ap-south-1.amazonaws.com:9098,b-2.homefix-msk.ap-south-1.amazonaws.com:9098"
+        consumerGroup: chat-service
+        topic: booking.events,payment.events
+        lagThreshold: "150"
+        offsetResetPolicy: latest
+      authenticationRef:
+        name: keda-kafka-trigger-auth
+    - type: cpu
+      metricType: Utilization
+      metadata:
+        value: "70"

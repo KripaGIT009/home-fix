@@ -1,0 +1,227 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Complaint.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Complaint Service</a> &gt; <a href="index.source.html" class="el_package">com.homefix.complaint.domain</a> &gt; <span class="el_source">Complaint.java</span></div><h1>Complaint.java</h1><pre class="source lang-java linenums">package com.homefix.complaint.domain;
+
+import java.time.Instant;
+import java.util.UUID;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
+
+/**
+ * A customer complaint against a completed booking (Requirement 16).
+ *
+ * &lt;p&gt;Carries the booking reference, the raising customer, the assigned Support_Agent, the category
+ * and description, current {@link ComplaintStatus}, and the SLA deadline used by the escalation
+ * sweep (16.4). {@link #settlementHeld} tracks whether a provider settlement hold is currently in
+ * place for this complaint (16.7, 16.8). {@link #acknowledged} records that the customer was
+ * acknowledged within 30 minutes of submission (16.2).
+ */
+@Entity
+@Table(name = &quot;complaint&quot;)
+public class Complaint {
+
+    @Id
+    @Column(name = &quot;id&quot;, nullable = false, updatable = false)
+    private UUID id;
+
+    @Column(name = &quot;booking_id&quot;, nullable = false, updatable = false)
+    private UUID bookingId;
+
+    @Column(name = &quot;customer_id&quot;, nullable = false, updatable = false)
+    private UUID customerId;
+
+    /** The provider whose settlement may be held while the complaint is DISPUTED (16.7). */
+    @Column(name = &quot;provider_id&quot;, updatable = false)
+    private UUID providerId;
+
+    /** The Support_Agent the complaint is assigned to (16.1); reassigned on escalation (16.4). */
+    @Column(name = &quot;agent_id&quot;)
+    private UUID agentId;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = &quot;category&quot;, nullable = false, updatable = false, length = 32)
+    private ComplaintCategory category;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = &quot;priority&quot;, nullable = false, updatable = false, length = 16)
+    private ServicePriority priority;
+
+    @Column(name = &quot;description&quot;, nullable = false, length = 2000, updatable = false)
+    private String description;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = &quot;status&quot;, nullable = false, length = 24)
+    private ComplaintStatus status;
+
+    /** True once the customer has been acknowledged within the 30-minute SLA (16.2). */
+    @Column(name = &quot;acknowledged&quot;, nullable = false)
+    private boolean acknowledged;
+
+    /** True while a provider settlement hold is active for this complaint (16.7, 16.8). */
+    @Column(name = &quot;settlement_held&quot;, nullable = false)
+    private boolean settlementHeld;
+
+    /** True once the complaint has been escalated to a Senior_Support_Agent (16.4). */
+    @Column(name = &quot;escalated&quot;, nullable = false)
+    private boolean escalated;
+
+    @Column(name = &quot;created_at&quot;, nullable = false, updatable = false)
+    private Instant createdAt;
+
+    @Column(name = &quot;sla_deadline&quot;, nullable = false)
+    private Instant slaDeadline;
+
+    @Column(name = &quot;resolved_at&quot;)
+    private Instant resolvedAt;
+
+<span class="nc" id="L80">    protected Complaint() {</span>
+        // JPA
+<span class="nc" id="L82">    }</span>
+
+    private Complaint(UUID bookingId, UUID customerId, UUID providerId, UUID agentId,
+                      ComplaintCategory category, ServicePriority priority, String description,
+<span class="fc" id="L86">                      Instant createdAt, Instant slaDeadline) {</span>
+<span class="fc" id="L87">        this.id = UUID.randomUUID();</span>
+<span class="fc" id="L88">        this.bookingId = bookingId;</span>
+<span class="fc" id="L89">        this.customerId = customerId;</span>
+<span class="fc" id="L90">        this.providerId = providerId;</span>
+<span class="fc" id="L91">        this.agentId = agentId;</span>
+<span class="fc" id="L92">        this.category = category;</span>
+<span class="fc" id="L93">        this.priority = priority;</span>
+<span class="fc" id="L94">        this.description = description;</span>
+<span class="fc" id="L95">        this.status = ComplaintStatus.OPEN;</span>
+<span class="fc" id="L96">        this.acknowledged = false;</span>
+<span class="fc" id="L97">        this.settlementHeld = false;</span>
+<span class="fc" id="L98">        this.escalated = false;</span>
+<span class="fc" id="L99">        this.createdAt = createdAt;</span>
+<span class="fc" id="L100">        this.slaDeadline = slaDeadline;</span>
+<span class="fc" id="L101">    }</span>
+
+    /**
+     * Creates an OPEN complaint assigned to {@code agentId} with its resolution SLA deadline
+     * precomputed from the submission time (Requirement 16.1, 16.4).
+     */
+    public static Complaint open(UUID bookingId, UUID customerId, UUID providerId, UUID agentId,
+                                 ComplaintCategory category, ServicePriority priority,
+                                 String description, Instant createdAt, Instant slaDeadline) {
+<span class="fc" id="L110">        return new Complaint(bookingId, customerId, providerId, agentId, category, priority,</span>
+                description, createdAt, slaDeadline);
+    }
+
+    /** Marks the customer as acknowledged (Requirement 16.2). */
+    public void markAcknowledged() {
+<span class="fc" id="L116">        this.acknowledged = true;</span>
+<span class="fc" id="L117">    }</span>
+
+    /** Transitions the complaint to a new status (Requirement 16.3). */
+    public void changeStatus(ComplaintStatus newStatus) {
+<span class="fc" id="L121">        this.status = newStatus;</span>
+<span class="fc" id="L122">    }</span>
+
+    /**
+     * Escalates the complaint to a Senior_Support_Agent after an SLA breach (Requirement 16.4).
+     * Idempotent: a complaint already escalated is unaffected.
+     */
+    public void escalateTo(UUID seniorAgentId) {
+<span class="fc" id="L129">        this.escalated = true;</span>
+<span class="fc" id="L130">        this.agentId = seniorAgentId;</span>
+<span class="fc" id="L131">        this.status = ComplaintStatus.ESCALATED;</span>
+<span class="fc" id="L132">    }</span>
+
+    /** Places a provider settlement hold and moves to DISPUTED (Requirement 16.7). */
+    public void placeSettlementHold() {
+<span class="fc" id="L136">        this.settlementHeld = true;</span>
+<span class="fc" id="L137">        this.status = ComplaintStatus.DISPUTED;</span>
+<span class="fc" id="L138">    }</span>
+
+    /** Releases any active provider settlement hold (Requirement 16.8). */
+    public void releaseSettlementHold() {
+<span class="fc" id="L142">        this.settlementHeld = false;</span>
+<span class="fc" id="L143">    }</span>
+
+    /** Records that the associated refund request was rejected (Requirement 16.6). */
+    public void markRefundFailed() {
+<span class="fc" id="L147">        this.status = ComplaintStatus.REFUND_FAILED;</span>
+<span class="fc" id="L148">    }</span>
+
+    /** Resolves the complaint and stamps the resolution time (Requirement 16.8, 16.9). */
+    public void resolve(Instant resolvedAt) {
+<span class="fc" id="L152">        this.status = ComplaintStatus.RESOLVED;</span>
+<span class="fc" id="L153">        this.resolvedAt = resolvedAt;</span>
+<span class="fc" id="L154">    }</span>
+
+    /** Closes the complaint and stamps the closure time (Requirement 16.8, 16.9). */
+    public void close(Instant closedAt) {
+<span class="fc" id="L158">        this.status = ComplaintStatus.CLOSED;</span>
+<span class="fc" id="L159">        this.resolvedAt = closedAt;</span>
+<span class="fc" id="L160">    }</span>
+
+    /** Whether the resolution SLA has been breached at {@code now} for a still-open complaint. */
+    public boolean isSlaBreachedAt(Instant now) {
+<span class="nc bnc" id="L164" title="All 6 branches missed.">        return !status.isTerminal() &amp;&amp; !escalated &amp;&amp; now.isAfter(slaDeadline);</span>
+    }
+
+    public UUID getId() {
+<span class="fc" id="L168">        return id;</span>
+    }
+
+    public UUID getBookingId() {
+<span class="fc" id="L172">        return bookingId;</span>
+    }
+
+    public UUID getCustomerId() {
+<span class="fc" id="L176">        return customerId;</span>
+    }
+
+    public UUID getProviderId() {
+<span class="fc" id="L180">        return providerId;</span>
+    }
+
+    public UUID getAgentId() {
+<span class="fc" id="L184">        return agentId;</span>
+    }
+
+    public ComplaintCategory getCategory() {
+<span class="fc" id="L188">        return category;</span>
+    }
+
+    public ServicePriority getPriority() {
+<span class="fc" id="L192">        return priority;</span>
+    }
+
+    public String getDescription() {
+<span class="nc" id="L196">        return description;</span>
+    }
+
+    public ComplaintStatus getStatus() {
+<span class="fc" id="L200">        return status;</span>
+    }
+
+    public boolean isAcknowledged() {
+<span class="fc" id="L204">        return acknowledged;</span>
+    }
+
+    public boolean isSettlementHeld() {
+<span class="fc" id="L208">        return settlementHeld;</span>
+    }
+
+    public boolean isEscalated() {
+<span class="fc" id="L212">        return escalated;</span>
+    }
+
+    public Instant getCreatedAt() {
+<span class="fc" id="L216">        return createdAt;</span>
+    }
+
+    public Instant getSlaDeadline() {
+<span class="fc" id="L220">        return slaDeadline;</span>
+    }
+
+    public Instant getResolvedAt() {
+<span class="fc" id="L224">        return resolvedAt;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

@@ -1,0 +1,5 @@
+﻿SPA_root=000
+SPA_auth_proxy_status=000
+SPA_auth_proxy_body=
+gw_health=200
+auth_health_body={"status":"UP","groups":["liveness","readiness"]}

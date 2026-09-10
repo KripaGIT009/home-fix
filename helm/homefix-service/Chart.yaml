@@ -1,0 +1,21 @@
+apiVersion: v2
+name: homefix-service
+description: >
+  Shared Helm chart template for all HomeFix microservices.
+  Every service supplies its own values.yaml (or values-<env>.yaml) to customise
+  replica count, image, resources, HPA thresholds, environment variables, and
+  ingress rules.
+
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+
+keywords:
+  - homefix
+  - microservice
+  - spring-boot
+
+home: https://github.com/your-org/home-fix
+maintainers:
+  - name: HomeFix Platform Team
+    email: platform@homefix.app

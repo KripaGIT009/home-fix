@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TokenException.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Auth Service</a> &gt; <a href="index.source.html" class="el_package">com.homefix.auth.token</a> &gt; <span class="el_source">TokenException.java</span></div><h1>TokenException.java</h1><pre class="source lang-java linenums">package com.homefix.auth.token;
+
+import org.springframework.http.HttpStatus;
+
+/**
+ * Domain exception for refresh/logout/social-token failures, carrying the HTTP status and a
+ * stable error code the REST layer surfaces via the shared {@code ErrorResponseDto}.
+ *
+ * &lt;p&gt;Authentication-token failures map to {@code 401 Unauthorized} (Requirement 1.5, 1.10,
+ * 1.15): an invalid, expired, revoked, or replayed token requires the client to
+ * re-authenticate.
+ */
+public class TokenException extends RuntimeException {
+
+    private final HttpStatus status;
+    private final String errorCode;
+
+    public TokenException(HttpStatus status, String errorCode, String message) {
+<span class="fc" id="L19">        super(message);</span>
+<span class="fc" id="L20">        this.status = status;</span>
+<span class="fc" id="L21">        this.errorCode = errorCode;</span>
+<span class="fc" id="L22">    }</span>
+
+    /** 401 for a refresh token that is unknown, expired, or explicitly revoked (Requirement 1.15). */
+    public static TokenException invalidRefreshToken() {
+<span class="fc" id="L26">        return new TokenException(HttpStatus.UNAUTHORIZED, &quot;REFRESH_TOKEN_INVALID&quot;,</span>
+                &quot;Refresh token is invalid, expired, or revoked. Re-authenticate to continue.&quot;);
+    }
+
+    /** 401 for a replayed refresh token whose family has been invalidated (Requirement 1.10). */
+    public static TokenException replayDetected() {
+<span class="fc" id="L32">        return new TokenException(HttpStatus.UNAUTHORIZED, &quot;REFRESH_TOKEN_REPLAY&quot;,</span>
+                &quot;Refresh token reuse detected. The token family has been invalidated; re-authenticate.&quot;);
+    }
+
+    public HttpStatus getStatus() {
+<span class="fc" id="L37">        return status;</span>
+    }
+
+    public String getErrorCode() {
+<span class="fc" id="L41">        return errorCode;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

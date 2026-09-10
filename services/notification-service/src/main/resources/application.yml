@@ -1,0 +1,77 @@
+spring:
+  application:
+    name: notification-service
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/homefix}
+    username: ${DB_USERNAME:homefix}
+    password: ${DB_PASSWORD:homefix}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: notification
+    open-in-view: false
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: notification-service
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      # Reliability contract required by the shared KafkaProducerTemplate (Task 6).
+      acks: all
+      properties:
+        enable.idempotence: true
+
+server:
+  port: ${SERVER_PORT:8090}
+
+homefix:
+  security:
+    enabled: true
+    # HMAC-SHA256 signing secret shared with the shared JwtValidationFilter (Task 4).
+    # Must be >= 32 bytes. Injected from AWS Secrets Manager in production.
+    jwt-secret: ${JWT_SECRET:change-me-in-production-please-use-32-bytes-min}
+  notification:
+    # Maximum delivery attempts per (event, channel) before permanent failure (Requirement 17.8).
+    max-attempts: ${NOTIFICATION_MAX_ATTEMPTS:3}
+    # First retry backoff; each subsequent retry doubles it (1 s -> 2 s -> 4 s, Requirement 17.8).
+    retry-initial-backoff: ${NOTIFICATION_RETRY_INITIAL_BACKOFF:1s}
+    # SMS vendor adapter selector: 'log' (dev/test), 'twilio', 'vonage'.
+    sms-provider: ${NOTIFICATION_SMS_PROVIDER:log}
+    # Email vendor adapter selector: 'log' (dev/test), 'ses', 'sendgrid'.
+    email-provider: ${NOTIFICATION_EMAIL_PROVIDER:log}
+    # Push vendor adapter selector: 'log' (dev/test), 'fcm'.
+    push-provider: ${NOTIFICATION_PUSH_PROVIDER:log}
+    topics:
+      booking-created: ${NOTIFICATION_TOPIC_BOOKING_CREATED:BookingCreated}
+      provider-assigned: ${NOTIFICATION_TOPIC_PROVIDER_ASSIGNED:ProviderAssigned}
+      provider-accepted: ${NOTIFICATION_TOPIC_PROVIDER_ACCEPTED:ProviderAccepted}
+      provider-rejected: ${NOTIFICATION_TOPIC_PROVIDER_REJECTED:ProviderRejected}
+      provider-arriving: ${NOTIFICATION_TOPIC_PROVIDER_ARRIVING:ProviderArriving}
+      provider-arrived: ${NOTIFICATION_TOPIC_PROVIDER_ARRIVED:ProviderArrived}
+      job-started: ${NOTIFICATION_TOPIC_JOB_STARTED:JobStarted}
+      job-completed: ${NOTIFICATION_TOPIC_JOB_COMPLETED:JobCompleted}
+      payment-completed: ${NOTIFICATION_TOPIC_PAYMENT_COMPLETED:PaymentCompleted}
+      booking-cancelled: ${NOTIFICATION_TOPIC_BOOKING_CANCELLED:BookingCancelled}
+      review-submitted: ${NOTIFICATION_TOPIC_REVIEW_SUBMITTED:ReviewSubmitted}
+    clients:
+      preference-service-base-url: ${PREFERENCE_SERVICE_URL:http://customer-service}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus,metrics
+      base-path: /
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  metrics:
+    tags:
+      application: notification-service

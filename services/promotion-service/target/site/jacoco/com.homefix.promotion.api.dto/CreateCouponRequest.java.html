@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CreateCouponRequest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Promotion / Coupon Service</a> &gt; <a href="index.source.html" class="el_package">com.homefix.promotion.api.dto</a> &gt; <span class="el_source">CreateCouponRequest.java</span></div><h1>CreateCouponRequest.java</h1><pre class="source lang-java linenums">package com.homefix.promotion.api.dto;
+
+import java.math.BigDecimal;
+import java.time.LocalDate;
+
+import com.homefix.promotion.domain.DiscountType;
+import com.homefix.promotion.service.CreateCouponCommand;
+
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.PositiveOrZero;
+
+/**
+ * Admin request to create a coupon (Requirement 21.1). Bean-validation annotations give an early
+ * 400 for structurally invalid input; the deeper cross-field rules (expiry after valid_from, cap
+ * required for PERCENTAGE) are enforced by the domain layer.
+ */
+<span class="fc" id="L21">public record CreateCouponRequest(</span>
+        @NotBlank
+        @Pattern(regexp = &quot;^[A-Za-z0-9]{4,20}$&quot;,
+                message = &quot;must be 4-20 alphanumeric characters&quot;)
+        String code,
+
+        @NotNull
+        DiscountType discountType,
+
+        @NotNull
+        @Positive
+        BigDecimal discountValue,
+
+        @NotNull
+        @PositiveOrZero
+        BigDecimal minOrderValue,
+
+        BigDecimal maxDiscountCap,
+
+        @NotNull
+        LocalDate validFrom,
+
+        @NotNull
+        LocalDate expiryDate,
+
+        @Min(1)
+        int perUserLimit,
+
+        @Min(1)
+        int totalLimit) {
+
+    public CreateCouponCommand toCommand() {
+<span class="fc" id="L53">        return new CreateCouponCommand(code, discountType, discountValue, minOrderValue,</span>
+                maxDiscountCap, validFrom, expiryDate, perUserLimit, totalLimit);
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

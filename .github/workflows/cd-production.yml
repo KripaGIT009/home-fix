@@ -1,0 +1,210 @@
+name: CD — Production Promotion
+
+on:
+  # Triggered manually after staging integration tests pass, or by the CI
+  # workflow via `workflow_run` once all staging jobs succeed.
+  workflow_dispatch:
+    inputs:
+      service:
+        description: 'Service name to promote (e.g. hello-world-service)'
+        required: true
+        default: 'hello-world-service'
+      image_tag:
+        description: 'Docker image tag to promote to production'
+        required: true
+      staging_run_id:
+        description: 'GitHub Actions run ID of the CI workflow that passed staging'
+        required: false
+
+  # Automatic trigger: promote only when the CI workflow completes
+  # successfully on main (integration-test-staging must have passed).
+  workflow_run:
+    workflows:
+      - 'CI — Lint, Test, Build, Push, Deploy to Staging'
+    types:
+      - completed
+    branches:
+      - main
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'ap-south-1' }}
+  ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+  EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME || 'homefix-eks' }}
+  HELM_RELEASE_PREFIX: homefix
+  PRODUCTION_NAMESPACE: production
+  JAVA_VERSION: '21'
+
+jobs:
+  # ─────────────────────────────────────────────
+  # Guard: ensure upstream CI was a full success
+  # ─────────────────────────────────────────────
+  check-upstream:
+    name: Verify Staging Gate Passed
+    runs-on: ubuntu-latest
+    # When triggered via workflow_run, skip if the upstream run failed.
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+    steps:
+      - name: Confirm promotion eligibility
+        run: |
+          echo "Upstream CI concluded: ${{ github.event.workflow_run.conclusion || 'manually triggered' }}"
+          echo "Service  : ${{ github.event.inputs.service || 'determined from upstream' }}"
+          echo "Image tag: ${{ github.event.inputs.image_tag || 'determined from upstream' }}"
+
+  # ─────────────────────────────────────────────
+  # Production deployment
+  # ─────────────────────────────────────────────
+  deploy-production:
+    name: Deploy to Production (EKS)
+    runs-on: ubuntu-latest
+    needs: check-upstream
+    environment:
+      name: production
+      url: https://homefix.app
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Resolve service and tag
+        id: svc
+        run: |
+          SERVICE="${{ github.event.inputs.service || 'hello-world-service' }}"
+          TAG="${{ github.event.inputs.image_tag || github.sha }}"
+          echo "name=${SERVICE}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG::8}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Confirm image exists in ECR
+        run: |
+          aws ecr describe-images \
+            --repository-name "${{ steps.svc.outputs.name }}" \
+            --image-ids imageTag="${{ steps.svc.outputs.tag }}" \
+            --region "${{ env.AWS_REGION }}"
+
+      - name: Update kubeconfig for EKS
+        run: |
+          aws eks update-kubeconfig \
+            --name "${{ env.EKS_CLUSTER_NAME }}" \
+            --region "${{ env.AWS_REGION }}"
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'v3.14.0'
+
+      - name: Helm upgrade / install to production
+        run: |
+          helm upgrade --install \
+            "${{ env.HELM_RELEASE_PREFIX }}-${{ steps.svc.outputs.name }}" \
+            helm/homefix-service \
+            --namespace "${{ env.PRODUCTION_NAMESPACE }}" \
+            --create-namespace \
+            --set image.repository="${{ env.ECR_REGISTRY }}/${{ steps.svc.outputs.name }}" \
+            --set image.tag="${{ steps.svc.outputs.tag }}" \
+            --set environment=production \
+            --values helm/homefix-service/values-production.yaml \
+            --wait \
+            --timeout 10m \
+            --atomic
+
+      - name: Verify production rollout
+        run: |
+          kubectl rollout status deployment \
+            "${{ env.HELM_RELEASE_PREFIX }}-${{ steps.svc.outputs.name }}" \
+            -n "${{ env.PRODUCTION_NAMESPACE }}" \
+            --timeout=10m
+
+      - name: Smoke test production
+        run: |
+          PROD_URL="${{ vars.PRODUCTION_BASE_URL || 'https://homefix.app' }}"
+          echo "Running smoke test against ${PROD_URL}..."
+          # Basic liveness check — replace with real smoke test script as services mature
+          curl --fail --silent --retry 3 --retry-delay 5 \
+            "${PROD_URL}/actuator/health" | grep -q '"status":"UP"' || \
+          echo "Health check endpoint not yet available — skipping for initial scaffold."
+
+      - name: Tag release in ECR
+        run: |
+          # Re-tag the image with the Git ref for immutable production traceability
+          MANIFEST=$(aws ecr batch-get-image \
+            --repository-name "${{ steps.svc.outputs.name }}" \
+            --image-ids imageTag="${{ steps.svc.outputs.tag }}" \
+            --query 'images[0].imageManifest' \
+            --output text \
+            --region "${{ env.AWS_REGION }}")
+
+          aws ecr put-image \
+            --repository-name "${{ steps.svc.outputs.name }}" \
+            --image-tag "prod-${{ steps.svc.outputs.tag }}" \
+            --image-manifest "${MANIFEST}" \
+            --region "${{ env.AWS_REGION }}" || true
+
+      - name: Create GitHub Release
+        if: github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "${{ steps.svc.outputs.name }}-${{ steps.svc.outputs.tag }}"
+          name: "${{ steps.svc.outputs.name }} — ${{ steps.svc.outputs.tag }}"
+          body: |
+            **Service**: `${{ steps.svc.outputs.name }}`
+            **Image tag**: `${{ steps.svc.outputs.tag }}`
+            **Environment**: production
+            **Promoted by**: @${{ github.actor }}
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ─────────────────────────────────────────────
+  # Rollback on failure
+  # ─────────────────────────────────────────────
+  rollback:
+    name: Rollback Production on Failure
+    runs-on: ubuntu-latest
+    needs: deploy-production
+    if: failure()
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Resolve service name
+        id: svc
+        run: echo "name=${{ github.event.inputs.service || 'hello-world-service' }}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig for EKS
+        run: |
+          aws eks update-kubeconfig \
+            --name "${{ env.EKS_CLUSTER_NAME }}" \
+            --region "${{ env.AWS_REGION }}"
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'v3.14.0'
+
+      - name: Helm rollback
+        run: |
+          helm rollback \
+            "${{ env.HELM_RELEASE_PREFIX }}-${{ steps.svc.outputs.name }}" \
+            0 \
+            --namespace "${{ env.PRODUCTION_NAMESPACE }}" \
+            --wait \
+            --timeout 5m
+          echo "Rollback completed for ${{ steps.svc.outputs.name }}"

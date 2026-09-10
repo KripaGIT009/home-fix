@@ -1,0 +1,372 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>JobExecutionService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Booking Service</a> &gt; <a href="index.source.html" class="el_package">com.homefix.booking.service</a> &gt; <span class="el_source">JobExecutionService.java</span></div><h1>JobExecutionService.java</h1><pre class="source lang-java linenums">package com.homefix.booking.service;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.Clock;
+import java.time.Instant;
+import java.util.List;
+import java.util.Optional;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.homefix.booking.config.BookingProperties;
+import com.homefix.booking.domain.Booking;
+import com.homefix.booking.domain.BookingRepository;
+import com.homefix.booking.domain.BookingStatus;
+import com.homefix.booking.domain.JobDurationCalculator;
+import com.homefix.booking.domain.JobInterval;
+import com.homefix.booking.domain.JobIntervalRepository;
+import com.homefix.booking.domain.JobMediaRepository;
+import com.homefix.booking.domain.PartsLineItem;
+import com.homefix.booking.domain.PartsLineItemRepository;
+import com.homefix.booking.event.JobExecutionEvents;
+import com.homefix.booking.pricing.PartsRecalculationRequest;
+import com.homefix.booking.pricing.PriceEstimate;
+import com.homefix.booking.pricing.PricingClientPort;
+import com.homefix.booking.pricing.PricingUnavailableException;
+import com.homefix.shared.outbox.OutboxEventPublisher;
+
+/**
+ * Job-execution milestones and parts/materials flow (Task 15; Requirements 6.8, 9.3-9.11,
+ * 11.2-11.6, 22.1; Property 10).
+ *
+ * &lt;p&gt;Every state change funnels through the existing {@link BookingTransitionService} so the
+ * single state-machine enforcement point and contiguous audit trail from Task 14 are reused.
+ * This service layers the job-execution concerns on top:
+ * &lt;ul&gt;
+ *   &lt;li&gt;before/after-photo requirement gates (11.2, 9.10/9.11/11.4);&lt;/li&gt;
+ *   &lt;li&gt;pause/resume with a mandatory reason and interval tracking (11.5);&lt;/li&gt;
+ *   &lt;li&gt;net job duration = Σ WORK − Σ PAUSE intervals, stored on completion (11.6, Property 10);&lt;/li&gt;
+ *   &lt;li&gt;parts/materials line items submitted to the Pricing Engine, driving
+ *       ADDITIONAL_QUOTE_REQUIRED → CUSTOMER_APPROVAL_PENDING (6.8, 11.3);&lt;/li&gt;
+ *   &lt;li&gt;additional-quote approval timeout: auto-complete at the original price after the
+ *       configured window (default 60 min) of no customer response (9.9);&lt;/li&gt;
+ *   &lt;li&gt;Kafka events ProviderArriving / ProviderArrived / JobStarted / JobCompleted (22.1).&lt;/li&gt;
+ * &lt;/ul&gt;
+ *
+ * &lt;p&gt;Time-dependent logic (interval durations, approval timeout) uses the injected
+ * {@link Clock} so tests are deterministic.
+ */
+@Service
+public class JobExecutionService {
+
+<span class="fc" id="L56">    private static final Logger log = LoggerFactory.getLogger(JobExecutionService.class);</span>
+
+    /** Logical media types checked by the photo gates. */
+    public static final String BEFORE_PHOTO = &quot;BEFORE_PHOTO&quot;;
+    public static final String AFTER_PHOTO = &quot;AFTER_PHOTO&quot;;
+
+    private final BookingRepository bookingRepository;
+    private final BookingTransitionService transitionService;
+    private final JobIntervalRepository intervalRepository;
+    private final JobMediaRepository mediaRepository;
+    private final PartsLineItemRepository partsRepository;
+    private final PricingClientPort pricingClient;
+    private final OutboxEventPublisher outboxPublisher;
+    private final BookingProperties properties;
+    private final Clock clock;
+
+    public JobExecutionService(BookingRepository bookingRepository,
+                               BookingTransitionService transitionService,
+                               JobIntervalRepository intervalRepository,
+                               JobMediaRepository mediaRepository,
+                               PartsLineItemRepository partsRepository,
+                               PricingClientPort pricingClient,
+                               OutboxEventPublisher outboxPublisher,
+                               BookingProperties properties,
+<span class="fc" id="L80">                               Clock clock) {</span>
+<span class="fc" id="L81">        this.bookingRepository = bookingRepository;</span>
+<span class="fc" id="L82">        this.transitionService = transitionService;</span>
+<span class="fc" id="L83">        this.intervalRepository = intervalRepository;</span>
+<span class="fc" id="L84">        this.mediaRepository = mediaRepository;</span>
+<span class="fc" id="L85">        this.partsRepository = partsRepository;</span>
+<span class="fc" id="L86">        this.pricingClient = pricingClient;</span>
+<span class="fc" id="L87">        this.outboxPublisher = outboxPublisher;</span>
+<span class="fc" id="L88">        this.properties = properties;</span>
+<span class="fc" id="L89">        this.clock = clock;</span>
+<span class="fc" id="L90">    }</span>
+
+    /**
+     * PROVIDER_ACCEPTED → PROVIDER_ON_THE_WAY, publishing ProviderArriving (Requirement 9.3,
+     * 22.1).
+     */
+    @Transactional
+    public Booking markOnTheWay(String reference, Actor actor) {
+<span class="nc" id="L98">        Booking booking = require(reference);</span>
+<span class="nc" id="L99">        transitionService.transition(booking, BookingStatus.PROVIDER_ON_THE_WAY, actor,</span>
+                &quot;Provider on the way&quot;);
+<span class="nc" id="L101">        publish(JobExecutionEvents.ProviderArriving.EVENT_TYPE, booking,</span>
+                new JobExecutionEvents.ProviderArriving(
+<span class="nc" id="L103">                        booking.getId(), booking.getReference(), booking.getProviderId(), now()));</span>
+<span class="nc" id="L104">        return booking;</span>
+    }
+
+    /**
+     * PROVIDER_ON_THE_WAY → PROVIDER_ARRIVED, publishing ProviderArrived (Requirement 9.4,
+     * 22.1).
+     */
+    @Transactional
+    public Booking markArrived(String reference, Actor actor) {
+<span class="nc" id="L113">        Booking booking = require(reference);</span>
+<span class="nc" id="L114">        transitionService.transition(booking, BookingStatus.PROVIDER_ARRIVED, actor,</span>
+                &quot;Provider arrived&quot;);
+<span class="nc" id="L116">        publish(JobExecutionEvents.ProviderArrived.EVENT_TYPE, booking,</span>
+                new JobExecutionEvents.ProviderArrived(
+<span class="nc" id="L118">                        booking.getId(), booking.getReference(), booking.getProviderId(), now()));</span>
+<span class="nc" id="L119">        return booking;</span>
+    }
+
+    /**
+     * PROVIDER_ARRIVED → JOB_STARTED. Requires at least one before-photo (Requirement 11.2);
+     * records the job start timestamp, opens the first WORK interval, and publishes JobStarted
+     * (Requirement 9.5, 22.1).
+     *
+     * @throws BookingException 422 if no before-photo is attached
+     */
+    @Transactional
+    public Booking startJob(String reference, Actor actor) {
+<span class="fc" id="L131">        Booking booking = require(reference);</span>
+<span class="fc" id="L132">        requirePhoto(booking, BEFORE_PHOTO,</span>
+                &quot;A before-photo must be attached before starting the job&quot;);
+
+<span class="fc" id="L135">        Instant startAt = now();</span>
+<span class="fc" id="L136">        transitionService.transition(booking, BookingStatus.JOB_STARTED, actor, &quot;Job started&quot;);</span>
+<span class="pc bpc" id="L137" title="1 of 2 branches missed.">        if (booking.getStartedAt() == null) {</span>
+<span class="fc" id="L138">            booking.setStartedAt(startAt);</span>
+        }
+<span class="fc" id="L140">        intervalRepository.save(JobInterval.work(booking.getId(), startAt));</span>
+<span class="fc" id="L141">        publish(JobExecutionEvents.JobStarted.EVENT_TYPE, booking,</span>
+                new JobExecutionEvents.JobStarted(
+<span class="fc" id="L143">                        booking.getId(), booking.getReference(), booking.getProviderId(),</span>
+<span class="fc" id="L144">                        booking.getStartedAt(), now()));</span>
+<span class="fc" id="L145">        return booking;</span>
+    }
+
+    /**
+     * JOB_STARTED → JOB_PAUSED. Requires a mandatory reason 1-500 chars (Requirement 11.5).
+     * Closes the open WORK interval and opens a PAUSE interval.
+     *
+     * @throws BookingException 400 if the reason is missing or out of the 1-500 char range
+     */
+    @Transactional
+    public Booking pauseJob(String reference, Actor actor, String reason) {
+<span class="pc bpc" id="L156" title="1 of 2 branches missed.">        String trimmed = reason == null ? null : reason.strip();</span>
+<span class="pc bpc" id="L157" title="1 of 4 branches missed.">        if (trimmed == null || trimmed.isEmpty()) {</span>
+<span class="fc" id="L158">            throw BookingException.validation(&quot;A pause reason is required (1-500 characters)&quot;);</span>
+        }
+<span class="fc bfc" id="L160" title="All 2 branches covered.">        if (trimmed.length() &gt; 500) {</span>
+<span class="fc" id="L161">            throw BookingException.validation(&quot;Pause reason must be at most 500 characters&quot;);</span>
+        }
+<span class="fc" id="L163">        Booking booking = require(reference);</span>
+<span class="fc" id="L164">        Instant at = now();</span>
+<span class="fc" id="L165">        transitionService.transition(booking, BookingStatus.JOB_PAUSED, actor, trimmed);</span>
+<span class="fc" id="L166">        closeOpenInterval(booking.getId(), at);</span>
+<span class="fc" id="L167">        intervalRepository.save(JobInterval.pause(booking.getId(), at, trimmed));</span>
+<span class="fc" id="L168">        return booking;</span>
+    }
+
+    /**
+     * JOB_PAUSED → JOB_STARTED. Closes the open PAUSE interval and opens a new WORK interval
+     * (Requirement 11.5). No new JobStarted event is published for a resume; the original
+     * start timestamp is preserved.
+     */
+    @Transactional
+    public Booking resumeJob(String reference, Actor actor) {
+<span class="fc" id="L178">        Booking booking = require(reference);</span>
+<span class="fc" id="L179">        Instant at = now();</span>
+<span class="fc" id="L180">        transitionService.transition(booking, BookingStatus.JOB_STARTED, actor, &quot;Job resumed&quot;);</span>
+<span class="fc" id="L181">        closeOpenInterval(booking.getId(), at);</span>
+<span class="fc" id="L182">        intervalRepository.save(JobInterval.work(booking.getId(), at));</span>
+<span class="fc" id="L183">        return booking;</span>
+    }
+
+    /**
+     * Records a parts/materials line item and drives the additional-quote flow (Requirement
+     * 6.8, 11.3): validates the item, persists it, submits the aggregate parts total to the
+     * Pricing Engine, then transitions JOB_STARTED → ADDITIONAL_QUOTE_REQUIRED →
+     * CUSTOMER_APPROVAL_PENDING. The updated total is stored as the booking's final total
+     * (pending customer approval); the original estimated total is retained for auto-resolution.
+     *
+     * @throws BookingException 400 on invalid item; 503 if the Pricing Engine is unavailable
+     */
+    @Transactional
+    public Booking addParts(String reference, Actor actor, AddPartsCommand item) {
+<span class="fc" id="L197">        validatePart(item);</span>
+<span class="fc" id="L198">        Booking booking = require(reference);</span>
+
+<span class="fc" id="L200">        PartsLineItem line = PartsLineItem.of(</span>
+<span class="fc" id="L201">                booking.getId(), item.itemName().strip(), item.quantity(), item.unitCost(), now());</span>
+<span class="fc" id="L202">        partsRepository.save(line);</span>
+
+<span class="fc" id="L204">        BigDecimal partsTotal = currentPartsTotal(booking.getId());</span>
+<span class="fc" id="L205">        PriceEstimate updated = recalculate(booking, partsTotal);</span>
+
+        // JOB_STARTED -&gt; ADDITIONAL_QUOTE_REQUIRED -&gt; CUSTOMER_APPROVAL_PENDING (Requirement 9.6).
+<span class="fc" id="L208">        transitionService.transition(booking, BookingStatus.ADDITIONAL_QUOTE_REQUIRED, actor,</span>
+                &quot;Provider requested additional quote for parts/materials&quot;);
+<span class="fc" id="L210">        transitionService.transition(booking, BookingStatus.CUSTOMER_APPROVAL_PENDING, Actor.system(),</span>
+                &quot;Awaiting customer approval of additional quote&quot;);
+<span class="fc" id="L212">        booking.setFinalTotal(updated.total());</span>
+<span class="fc" id="L213">        log.info(&quot;Booking {} additional quote pending: partsTotal={} updatedTotal={}&quot;,</span>
+<span class="fc" id="L214">                booking.getReference(), partsTotal, updated.total());</span>
+<span class="fc" id="L215">        return booking;</span>
+    }
+
+    /**
+     * Customer approves the additional quote: CUSTOMER_APPROVAL_PENDING → JOB_STARTED
+     * (Requirement 9.7). Opens a new WORK interval so paused-for-approval time is not counted.
+     */
+    @Transactional
+    public Booking approveAdditionalQuote(String reference, Actor actor) {
+<span class="fc" id="L224">        Booking booking = require(reference);</span>
+<span class="fc" id="L225">        transitionService.transition(booking, BookingStatus.JOB_STARTED, actor,</span>
+                &quot;Customer approved additional quote&quot;);
+<span class="fc" id="L227">        intervalRepository.save(JobInterval.work(booking.getId(), now()));</span>
+<span class="fc" id="L228">        return booking;</span>
+    }
+
+    /**
+     * Customer rejects the additional quote: CUSTOMER_APPROVAL_PENDING → JOB_COMPLETED at the
+     * original pre-additional-quote price (Requirement 9.8). Reverts the final total to the
+     * original estimate and completes the job.
+     */
+    @Transactional
+    public Booking rejectAdditionalQuote(String reference, Actor actor) {
+<span class="fc" id="L238">        Booking booking = require(reference);</span>
+<span class="fc" id="L239">        booking.setFinalTotal(booking.getEstimatedTotal());</span>
+<span class="fc" id="L240">        completeInternal(booking, actor, &quot;Customer rejected additional quote; completed at original price&quot;);</span>
+<span class="fc" id="L241">        return booking;</span>
+    }
+
+    /**
+     * Auto-resolves an additional quote that the customer has not responded to within the
+     * configured window (default 60 min): CUSTOMER_APPROVAL_PENDING → JOB_COMPLETED at the
+     * original price, with the system recorded as the actor (Requirement 9.9). No-op unless the
+     * timeout has actually elapsed since entering CUSTOMER_APPROVAL_PENDING.
+     *
+     * @param pendingSince the instant the booking entered CUSTOMER_APPROVAL_PENDING
+     * @return {@code true} if the booking was auto-completed
+     */
+    @Transactional
+    public boolean autoResolveApprovalTimeout(String reference, Instant pendingSince) {
+<span class="fc" id="L255">        Booking booking = require(reference);</span>
+<span class="pc bpc" id="L256" title="1 of 2 branches missed.">        if (booking.getStatus() != BookingStatus.CUSTOMER_APPROVAL_PENDING) {</span>
+<span class="nc" id="L257">            return false;</span>
+        }
+<span class="fc" id="L259">        Instant deadline = pendingSince.plus(properties.getAdditionalQuoteTimeout());</span>
+<span class="fc bfc" id="L260" title="All 2 branches covered.">        if (now().isBefore(deadline)) {</span>
+<span class="fc" id="L261">            return false;</span>
+        }
+<span class="fc" id="L263">        booking.setFinalTotal(booking.getEstimatedTotal());</span>
+<span class="fc" id="L264">        completeInternal(booking, Actor.system(),</span>
+                &quot;No customer response within timeout; auto-completed at original price&quot;);
+<span class="fc" id="L266">        log.info(&quot;Booking {} additional quote auto-resolved at original price after timeout&quot;,</span>
+<span class="fc" id="L267">                booking.getReference());</span>
+<span class="fc" id="L268">        return true;</span>
+    }
+
+    /**
+     * Marks the job complete: JOB_STARTED (or CUSTOMER_APPROVAL_PENDING) → JOB_COMPLETED.
+     * Requires at least one after-photo (Requirement 9.10, 9.11, 11.4); computes and stores the
+     * net job duration (Requirement 11.6, Property 10); publishes JobCompleted (22.1).
+     *
+     * @throws BookingException 422 if no after-photo is attached
+     */
+    @Transactional
+    public Booking completeJob(String reference, Actor actor) {
+<span class="fc" id="L280">        Booking booking = require(reference);</span>
+<span class="fc" id="L281">        requirePhoto(booking, AFTER_PHOTO,</span>
+                &quot;An after-photo must be attached before completing the job&quot;);
+<span class="fc" id="L283">        completeInternal(booking, actor, &quot;Job completed&quot;);</span>
+<span class="fc" id="L284">        return booking;</span>
+    }
+
+    // ----- internals -------------------------------------------------------
+
+    /** Shared completion path: close intervals, compute net duration, transition, publish. */
+    private void completeInternal(Booking booking, Actor actor, String reason) {
+<span class="fc" id="L291">        Instant completedAt = now();</span>
+<span class="fc" id="L292">        closeOpenInterval(booking.getId(), completedAt);</span>
+
+<span class="fc" id="L294">        transitionService.transition(booking, BookingStatus.JOB_COMPLETED, actor, reason);</span>
+<span class="fc" id="L295">        booking.setCompletedAt(completedAt);</span>
+
+<span class="fc" id="L297">        List&lt;JobInterval&gt; intervals = intervalRepository.findByBookingIdOrderByStartedAtAsc(booking.getId());</span>
+<span class="fc" id="L298">        long net = JobDurationCalculator.netDurationSeconds(intervals, completedAt);</span>
+<span class="fc" id="L299">        booking.setNetDurationSeconds((int) net);</span>
+
+<span class="fc bfc" id="L301" title="All 2 branches covered.">        if (booking.getFinalTotal() == null) {</span>
+<span class="fc" id="L302">            booking.setFinalTotal(booking.getEstimatedTotal());</span>
+        }
+
+<span class="fc" id="L305">        publish(JobExecutionEvents.JobCompleted.EVENT_TYPE, booking,</span>
+                new JobExecutionEvents.JobCompleted(
+<span class="fc" id="L307">                        booking.getId(), booking.getReference(), booking.getProviderId(),</span>
+<span class="fc" id="L308">                        completedAt, net, booking.getFinalTotal(), now()));</span>
+<span class="fc" id="L309">    }</span>
+
+    private void closeOpenInterval(java.util.UUID bookingId, Instant at) {
+<span class="fc" id="L312">        Optional&lt;JobInterval&gt; open = intervalRepository.findByBookingIdAndEndedAtIsNull(bookingId);</span>
+<span class="fc" id="L313">        open.ifPresent(interval -&gt; {</span>
+<span class="fc" id="L314">            interval.close(at);</span>
+<span class="fc" id="L315">            intervalRepository.save(interval);</span>
+<span class="fc" id="L316">        });</span>
+<span class="fc" id="L317">    }</span>
+
+    private void requirePhoto(Booking booking, String type, String message) {
+<span class="fc bfc" id="L320" title="All 2 branches covered.">        if (mediaRepository.countByBookingIdAndType(booking.getId(), type) &lt; 1) {</span>
+<span class="fc" id="L321">            throw BookingException.photoRequired(message);</span>
+        }
+<span class="fc" id="L323">    }</span>
+
+    private void validatePart(AddPartsCommand item) {
+<span class="pc bpc" id="L326" title="3 of 6 branches missed.">        if (item == null || item.itemName() == null || item.itemName().strip().isEmpty()) {</span>
+<span class="nc" id="L327">            throw BookingException.validation(&quot;Parts item name is required&quot;);</span>
+        }
+<span class="pc bpc" id="L329" title="1 of 2 branches missed.">        if (item.itemName().strip().length() &gt; 200) {</span>
+<span class="nc" id="L330">            throw BookingException.validation(&quot;Parts item name must be at most 200 characters&quot;);</span>
+        }
+<span class="fc bfc" id="L332" title="All 2 branches covered.">        if (item.quantity() &lt; 1) {</span>
+<span class="fc" id="L333">            throw BookingException.validation(&quot;Parts quantity must be at least 1&quot;);</span>
+        }
+<span class="pc bpc" id="L335" title="1 of 4 branches missed.">        if (item.unitCost() == null || item.unitCost().compareTo(new BigDecimal(&quot;0.01&quot;)) &lt; 0) {</span>
+<span class="fc" id="L336">            throw BookingException.validation(&quot;Parts unit cost must be at least 0.01&quot;);</span>
+        }
+<span class="fc" id="L338">    }</span>
+
+    private BigDecimal currentPartsTotal(java.util.UUID bookingId) {
+<span class="fc" id="L341">        return partsRepository.findByBookingIdOrderByAddedAtAsc(bookingId).stream()</span>
+<span class="fc" id="L342">                .map(PartsLineItem::lineTotal)</span>
+<span class="fc" id="L343">                .reduce(BigDecimal.ZERO, BigDecimal::add)</span>
+<span class="fc" id="L344">                .setScale(2, RoundingMode.HALF_UP);</span>
+    }
+
+    private PriceEstimate recalculate(Booking booking, BigDecimal partsTotal) {
+        try {
+<span class="fc" id="L349">            return pricingClient.recalculateWithParts(new PartsRecalculationRequest(</span>
+<span class="fc" id="L350">                    booking.getId(), booking.getCategoryId(), booking.getSubcategoryId(),</span>
+<span class="fc" id="L351">                    booking.getEstimatedTotal(), partsTotal));</span>
+<span class="nc" id="L352">        } catch (PricingUnavailableException ex) {</span>
+<span class="nc" id="L353">            log.warn(&quot;Pricing Engine unavailable during parts recalculation for booking {}: {}&quot;,</span>
+<span class="nc" id="L354">                    booking.getReference(), ex.getMessage());</span>
+<span class="nc" id="L355">            throw BookingException.pricingUnavailable();</span>
+        }
+    }
+
+    private void publish(String eventType, Booking booking, Object payload) {
+<span class="fc" id="L360">        outboxPublisher.publish(JobExecutionEvents.AGGREGATE_TYPE, booking.getId(), eventType, payload);</span>
+<span class="fc" id="L361">    }</span>
+
+    private Booking require(String reference) {
+<span class="fc" id="L364">        return bookingRepository.findByReference(reference)</span>
+<span class="pc" id="L365">                .orElseThrow(() -&gt; BookingException.notFound(reference));</span>
+    }
+
+    private Instant now() {
+<span class="fc" id="L369">        return Instant.now(clock);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

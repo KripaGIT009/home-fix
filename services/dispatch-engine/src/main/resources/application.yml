@@ -1,0 +1,76 @@
+spring:
+  application:
+    name: dispatch-engine
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/homefix}
+    username: ${DB_USERNAME:homefix}
+    password: ${DB_PASSWORD:homefix}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: dispatch
+    open-in-view: false
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: dispatch-engine
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      # Reliability contract required by the shared KafkaProducerTemplate (Task 6).
+      acks: all
+      properties:
+        enable.idempotence: true
+
+server:
+  port: ${SERVER_PORT:8087}
+
+homefix:
+  security:
+    enabled: true
+    # HMAC-SHA256 signing secret shared with the shared JwtValidationFilter (Task 4).
+    # Must be >= 32 bytes. Injected from AWS Secrets Manager in production.
+    jwt-secret: ${JWT_SECRET:change-me-in-production-please-use-32-bytes-min}
+  dispatch:
+    # Provider matching / offer / radius-expansion tuning (Requirements 8.2, 8.5, 8.8).
+    initial-radius-km: ${DISPATCH_INITIAL_RADIUS_KM:10.0}
+    radius-increment-km: ${DISPATCH_RADIUS_INCREMENT_KM:5.0}
+    max-expansion-cycles: ${DISPATCH_MAX_EXPANSION_CYCLES:3}
+    offer-timeout-seconds: ${DISPATCH_OFFER_TIMEOUT_SECONDS:60}
+    topics:
+      booking-created: ${DISPATCH_TOPIC_BOOKING_CREATED:BookingCreated}
+    clients:
+      provider-service-base-url: ${PROVIDER_SERVICE_URL:http://provider-service}
+      booking-service-base-url: ${BOOKING_SERVICE_URL:http://booking-service}
+      notification-service-base-url: ${NOTIFICATION_SERVICE_URL:http://notification-service}
+    bulkhead:
+      # Dedicated, non-shared pools so scheduled load cannot starve emergency dispatch (Req 24.5).
+      emergency-core-threads: ${DISPATCH_EMERGENCY_CORE_THREADS:8}
+      emergency-max-threads: ${DISPATCH_EMERGENCY_MAX_THREADS:16}
+      emergency-queue-capacity: ${DISPATCH_EMERGENCY_QUEUE_CAPACITY:100}
+      scheduled-core-threads: ${DISPATCH_SCHEDULED_CORE_THREADS:8}
+      scheduled-max-threads: ${DISPATCH_SCHEDULED_MAX_THREADS:16}
+      scheduled-queue-capacity: ${DISPATCH_SCHEDULED_QUEUE_CAPACITY:500}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus,metrics
+      base-path: /
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  metrics:
+    tags:
+      application: dispatch-engine

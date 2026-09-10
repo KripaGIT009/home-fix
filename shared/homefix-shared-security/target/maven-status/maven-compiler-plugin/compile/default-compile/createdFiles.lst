@@ -1,0 +1,7 @@
+com\homefix\shared\security\CorrelationIdFilter.class
+com\homefix\shared\security\RbacEnforcementFilter.class
+com\homefix\shared\security\RbacProperties.class
+com\homefix\shared\security\SecurityProperties.class
+com\homefix\shared\security\JwtValidationFilter.class
+com\homefix\shared\security\HomefixSecurityAutoConfiguration.class
+META-INF\spring-configuration-metadata.json

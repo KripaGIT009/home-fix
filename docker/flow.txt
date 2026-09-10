@@ -1,0 +1,2 @@
+direct_pricing_status=403
+direct_pricing_resp=(empty)

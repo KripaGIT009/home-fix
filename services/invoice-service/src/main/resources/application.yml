@@ -1,0 +1,76 @@
+spring:
+  application:
+    name: invoice-service
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/homefix}
+    username: ${DB_USERNAME:homefix}
+    password: ${DB_PASSWORD:homefix}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: invoice
+    open-in-view: false
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: invoice-service
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      # Reliability contract required by the shared KafkaProducerTemplate (Task 6).
+      acks: all
+      properties:
+        enable.idempotence: true
+
+server:
+  port: ${SERVER_PORT:8089}
+
+homefix:
+  security:
+    enabled: true
+    # HMAC-SHA256 signing secret shared with the shared JwtValidationFilter (Task 4).
+    # Must be >= 32 bytes. Injected from AWS Secrets Manager in production.
+    jwt-secret: ${JWT_SECRET:change-me-in-production-please-use-32-bytes-min}
+  invoice:
+    # Number of PDF-generation attempts before alerting ops (Requirement 13.7).
+    max-pdf-retries: ${INVOICE_MAX_PDF_RETRIES:3}
+    # Base backoff between PDF-generation retries (doubled on each attempt).
+    pdf-retry-backoff: ${INVOICE_PDF_RETRY_BACKOFF:500ms}
+    # Signed-URL validity delivered to the customer (Requirement 13.3).
+    signed-url-ttl: ${INVOICE_SIGNED_URL_TTL:72h}
+    # Minimum retention window for customer-accessible invoices (Requirement 13.5).
+    retention: ${INVOICE_RETENTION:730d}
+    # Tax identifier printed on every invoice (Requirement 13.1).
+    tax-identifier: ${INVOICE_TAX_IDENTIFIER:GSTIN-HOMEFIX-0000}
+    topics:
+      payment-completed: ${INVOICE_TOPIC_PAYMENT_COMPLETED:PaymentCompleted}
+    s3:
+      bucket: ${INVOICE_S3_BUCKET:homefix-invoices}
+      region: ${AWS_REGION:ap-south-1}
+      # S3 storage backend: 'aws' (production) or 'memory' (dev/test).
+      backend: ${INVOICE_S3_BACKEND:memory}
+    clients:
+      notification-service-base-url: ${NOTIFICATION_SERVICE_URL:http://notification-service}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus,metrics
+      base-path: /
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  metrics:
+    tags:
+      application: invoice-service

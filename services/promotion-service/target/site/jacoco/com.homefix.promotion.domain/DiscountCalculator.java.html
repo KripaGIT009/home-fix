@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DiscountCalculator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Promotion / Coupon Service</a> &gt; <a href="index.source.html" class="el_package">com.homefix.promotion.domain</a> &gt; <span class="el_source">DiscountCalculator.java</span></div><h1>DiscountCalculator.java</h1><pre class="source lang-java linenums">package com.homefix.promotion.domain;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+
+/**
+ * Pure, side-effect-free computation of the discount amount a coupon yields for a given order value
+ * (Requirement 21.2). Factored out of the service so it is trivially unit-testable and can be
+ * targeted directly by property-based tests.
+ *
+ * &lt;p&gt;All monetary math uses {@link BigDecimal} and results are rounded to 2 decimal places
+ * (HALF_UP). The returned discount never exceeds the order value and never goes negative.
+ */
+public final class DiscountCalculator {
+
+<span class="fc" id="L16">    private static final BigDecimal HUNDRED = new BigDecimal(&quot;100&quot;);</span>
+
+    private DiscountCalculator() {
+    }
+
+    /**
+     * Computes the discount amount for {@code orderValue} given the coupon's discount type, value,
+     * and (for PERCENTAGE) maximum discount cap.
+     *
+     * &lt;ul&gt;
+     *   &lt;li&gt;FLAT: discount = min(discountValue, orderValue).&lt;/li&gt;
+     *   &lt;li&gt;PERCENTAGE: discount = min(orderValue × discountValue%, maxDiscountCap, orderValue).&lt;/li&gt;
+     * &lt;/ul&gt;
+     *
+     * @param type          the discount type (must not be {@code null}).
+     * @param discountValue the FLAT amount or the PERCENTAGE value (e.g. 15 for 15%); must be &amp;gt; 0.
+     * @param maxDiscountCap the cap applied to PERCENTAGE discounts; ignored for FLAT. May be
+     *                       {@code null} for FLAT.
+     * @param orderValue    the order value the coupon is applied to; must be &amp;ge; 0.
+     * @return the discount amount, rounded to 2 dp, clamped to {@code [0, orderValue]}.
+     */
+    public static BigDecimal compute(DiscountType type, BigDecimal discountValue,
+                                     BigDecimal maxDiscountCap, BigDecimal orderValue) {
+<span class="fc bfc" id="L39" title="All 2 branches covered.">        if (type == null) {</span>
+<span class="fc" id="L40">            throw new IllegalArgumentException(&quot;Discount type is required&quot;);</span>
+        }
+<span class="pc bpc" id="L42" title="1 of 4 branches missed.">        if (discountValue == null || discountValue.signum() &lt;= 0) {</span>
+<span class="fc" id="L43">            throw new IllegalArgumentException(&quot;Discount value must be greater than 0&quot;);</span>
+        }
+<span class="pc bpc" id="L45" title="1 of 4 branches missed.">        if (orderValue == null || orderValue.signum() &lt; 0) {</span>
+<span class="fc" id="L46">            throw new IllegalArgumentException(&quot;Order value must be 0 or greater&quot;);</span>
+        }
+
+        BigDecimal raw;
+<span class="fc bfc" id="L50" title="All 2 branches covered.">        if (type == DiscountType.FLAT) {</span>
+<span class="fc" id="L51">            raw = discountValue;</span>
+        } else {
+<span class="fc" id="L53">            BigDecimal percentageDiscount = orderValue.multiply(discountValue)</span>
+<span class="fc" id="L54">                    .divide(HUNDRED, 2, RoundingMode.HALF_UP);</span>
+<span class="fc bfc" id="L55" title="All 2 branches covered.">            if (maxDiscountCap == null) {</span>
+<span class="fc" id="L56">                throw new IllegalArgumentException(</span>
+                        &quot;A maximum discount cap is required for PERCENTAGE coupons&quot;);
+            }
+<span class="fc" id="L59">            raw = percentageDiscount.min(maxDiscountCap);</span>
+        }
+
+        // Never discount more than the order value; never go negative.
+<span class="fc" id="L63">        BigDecimal clamped = raw.min(orderValue).max(BigDecimal.ZERO);</span>
+<span class="fc" id="L64">        return clamped.setScale(2, RoundingMode.HALF_UP);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

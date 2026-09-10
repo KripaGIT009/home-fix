@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BulkheadDispatchExecutor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Dispatch Engine</a> &gt; <a href="index.source.html" class="el_package">com.homefix.dispatch.service</a> &gt; <span class="el_source">BulkheadDispatchExecutor.java</span></div><h1>BulkheadDispatchExecutor.java</h1><pre class="source lang-java linenums">package com.homefix.dispatch.service;
+
+import com.homefix.dispatch.config.BulkheadConfig;
+import com.homefix.dispatch.domain.DispatchRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+import org.springframework.stereotype.Component;
+
+/**
+ * Routes a dispatch job to the correct bulkhead pool (Requirement 24.5): emergency bookings run on
+ * the dedicated emergency pool, scheduled bookings on the scheduled pool. Because the pools share
+ * nothing, a flood of scheduled bookings cannot consume the threads reserved for emergencies.
+ */
+@Component
+public class BulkheadDispatchExecutor {
+
+<span class="fc" id="L19">    private static final Logger log = LoggerFactory.getLogger(BulkheadDispatchExecutor.class);</span>
+
+    private final DispatchService dispatchService;
+    private final ThreadPoolTaskExecutor emergencyExecutor;
+    private final ThreadPoolTaskExecutor scheduledExecutor;
+
+    public BulkheadDispatchExecutor(
+            DispatchService dispatchService,
+            @Qualifier(BulkheadConfig.EMERGENCY_EXECUTOR) ThreadPoolTaskExecutor emergencyExecutor,
+<span class="fc" id="L28">            @Qualifier(BulkheadConfig.SCHEDULED_EXECUTOR) ThreadPoolTaskExecutor scheduledExecutor) {</span>
+<span class="fc" id="L29">        this.dispatchService = dispatchService;</span>
+<span class="fc" id="L30">        this.emergencyExecutor = emergencyExecutor;</span>
+<span class="fc" id="L31">        this.scheduledExecutor = scheduledExecutor;</span>
+<span class="fc" id="L32">    }</span>
+
+    /** Submits the dispatch of {@code request} to the pool matching its emergency flag. */
+    public void submit(DispatchRequest request) {
+<span class="fc bfc" id="L36" title="All 2 branches covered.">        ThreadPoolTaskExecutor executor = request.emergency() ? emergencyExecutor : scheduledExecutor;</span>
+<span class="fc" id="L37">        executor.execute(() -&gt; runSafely(request));</span>
+<span class="fc" id="L38">    }</span>
+
+    private void runSafely(DispatchRequest request) {
+        try {
+<span class="fc" id="L42">            dispatchService.dispatch(request);</span>
+<span class="fc" id="L43">        } catch (RuntimeException ex) {</span>
+            // A failure inside a pool task must not kill the worker thread; log and let the
+            // consumer's retry/DLQ machinery handle redelivery of the source event.
+<span class="fc" id="L46">            log.error(&quot;Dispatch failed for booking {}: {}&quot;, request.bookingId(), ex.toString());</span>
+<span class="fc" id="L47">            throw ex;</span>
+<span class="fc" id="L48">        }</span>
+<span class="fc" id="L49">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

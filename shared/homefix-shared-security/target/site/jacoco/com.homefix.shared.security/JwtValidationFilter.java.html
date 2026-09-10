@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>JwtValidationFilter.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Shared Security</a> &gt; <a href="index.source.html" class="el_package">com.homefix.shared.security</a> &gt; <span class="el_source">JwtValidationFilter.java</span></div><h1>JwtValidationFilter.java</h1><pre class="source lang-java linenums">package com.homefix.shared.security;
+
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.ExpiredJwtException;
+import io.jsonwebtoken.JwtException;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.security.Keys;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.util.StringUtils;
+import org.springframework.web.filter.OncePerRequestFilter;
+
+import javax.crypto.SecretKey;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.Collections;
+import java.util.List;
+
+/**
+ * OncePerRequestFilter that validates an incoming JWT bearer token.
+ *
+ * &lt;ul&gt;
+ *   &lt;li&gt;Extracts the token from the {@code Authorization: Bearer &lt;token&gt;} header.&lt;/li&gt;
+ *   &lt;li&gt;Verifies the HMAC-SHA256 signature using the configured secret key.&lt;/li&gt;
+ *   &lt;li&gt;Rejects expired tokens with HTTP 401.&lt;/li&gt;
+ *   &lt;li&gt;Rejects malformed / invalid-signature tokens with HTTP 401.&lt;/li&gt;
+ *   &lt;li&gt;On success, populates the {@link SecurityContextHolder} with an
+ *       {@link UsernamePasswordAuthenticationToken} carrying the subject and role claims.&lt;/li&gt;
+ * &lt;/ul&gt;
+ *
+ * Downstream filters (e.g. {@link RbacEnforcementFilter}) rely on the populated
+ * {@link SecurityContextHolder} to perform role-based access control.
+ */
+public class JwtValidationFilter extends OncePerRequestFilter {
+
+<span class="fc" id="L45">    private static final Logger log = LoggerFactory.getLogger(JwtValidationFilter.class);</span>
+
+    private static final String BEARER_PREFIX = &quot;Bearer &quot;;
+    /** JWT claim key that carries the list of role strings, e.g. [&quot;CUSTOMER&quot;, &quot;SERVICE_PROVIDER&quot;]. */
+    public static final String ROLES_CLAIM = &quot;roles&quot;;
+
+    private final SecretKey signingKey;
+
+    /**
+     * @param jwtSecret raw HMAC secret; must be at least 256 bits (32 bytes) for HS256.
+     */
+<span class="fc" id="L56">    public JwtValidationFilter(String jwtSecret) {</span>
+<span class="fc" id="L57">        this.signingKey = Keys.hmacShaKeyFor(jwtSecret.getBytes(StandardCharsets.UTF_8));</span>
+<span class="fc" id="L58">    }</span>
+
+    /**
+     * Package-visible constructor accepting a pre-built key (used in tests).
+     */
+<span class="fc" id="L63">    JwtValidationFilter(SecretKey signingKey) {</span>
+<span class="fc" id="L64">        this.signingKey = signingKey;</span>
+<span class="fc" id="L65">    }</span>
+
+    @Override
+    protected void doFilterInternal(HttpServletRequest request,
+                                    HttpServletResponse response,
+                                    FilterChain filterChain)
+            throws ServletException, IOException {
+
+<span class="fc" id="L73">        String token = extractToken(request);</span>
+
+<span class="fc bfc" id="L75" title="All 2 branches covered.">        if (token == null) {</span>
+            // No bearer token — let downstream security config decide (e.g. permit public endpoints)
+<span class="fc" id="L77">            filterChain.doFilter(request, response);</span>
+<span class="fc" id="L78">            return;</span>
+        }
+
+        try {
+<span class="fc" id="L82">            Claims claims = Jwts.parser()</span>
+<span class="fc" id="L83">                    .verifyWith(signingKey)</span>
+<span class="fc" id="L84">                    .build()</span>
+<span class="fc" id="L85">                    .parseSignedClaims(token)</span>
+<span class="fc" id="L86">                    .getPayload();</span>
+
+<span class="fc" id="L88">            String subject = claims.getSubject();</span>
+<span class="fc" id="L89">            List&lt;String&gt; roles = extractRoles(claims);</span>
+
+<span class="fc" id="L91">            List&lt;SimpleGrantedAuthority&gt; authorities = roles.stream()</span>
+<span class="fc" id="L92">                    .map(r -&gt; new SimpleGrantedAuthority(&quot;ROLE_&quot; + r))</span>
+<span class="fc" id="L93">                    .toList();</span>
+
+<span class="fc" id="L95">            UsernamePasswordAuthenticationToken authentication =</span>
+                    new UsernamePasswordAuthenticationToken(subject, null, authorities);
+<span class="fc" id="L97">            SecurityContextHolder.getContext().setAuthentication(authentication);</span>
+
+<span class="fc" id="L99">        } catch (ExpiredJwtException ex) {</span>
+<span class="fc" id="L100">            log.warn(&quot;JWT expired for request {}: {}&quot;, request.getRequestURI(), ex.getMessage());</span>
+<span class="fc" id="L101">            sendError(response, HttpStatus.UNAUTHORIZED, &quot;Token has expired&quot;);</span>
+<span class="fc" id="L102">            return;</span>
+<span class="fc" id="L103">        } catch (JwtException | IllegalArgumentException ex) {</span>
+<span class="fc" id="L104">            log.warn(&quot;Invalid JWT for request {}: {}&quot;, request.getRequestURI(), ex.getMessage());</span>
+<span class="fc" id="L105">            sendError(response, HttpStatus.UNAUTHORIZED, &quot;Invalid token&quot;);</span>
+<span class="fc" id="L106">            return;</span>
+<span class="fc" id="L107">        }</span>
+
+<span class="fc" id="L109">        filterChain.doFilter(request, response);</span>
+<span class="fc" id="L110">    }</span>
+
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
+
+    private String extractToken(HttpServletRequest request) {
+<span class="fc" id="L117">        String header = request.getHeader(HttpHeaders.AUTHORIZATION);</span>
+<span class="pc bpc" id="L118" title="1 of 4 branches missed.">        if (StringUtils.hasText(header) &amp;&amp; header.startsWith(BEARER_PREFIX)) {</span>
+<span class="fc" id="L119">            return header.substring(BEARER_PREFIX.length()).trim();</span>
+        }
+<span class="fc" id="L121">        return null;</span>
+    }
+
+    @SuppressWarnings(&quot;unchecked&quot;)
+    private List&lt;String&gt; extractRoles(Claims claims) {
+<span class="fc" id="L126">        Object rolesClaim = claims.get(ROLES_CLAIM);</span>
+<span class="fc bfc" id="L127" title="All 2 branches covered.">        if (rolesClaim instanceof List&lt;?&gt; list) {</span>
+<span class="fc" id="L128">            return list.stream()</span>
+<span class="fc" id="L129">                    .filter(String.class::isInstance)</span>
+<span class="fc" id="L130">                    .map(String.class::cast)</span>
+<span class="fc" id="L131">                    .toList();</span>
+        }
+<span class="fc" id="L133">        return Collections.emptyList();</span>
+    }
+
+    private void sendError(HttpServletResponse response, HttpStatus status, String message)
+            throws IOException {
+<span class="fc" id="L138">        response.setStatus(status.value());</span>
+<span class="fc" id="L139">        response.setContentType(&quot;application/json&quot;);</span>
+<span class="fc" id="L140">        response.getWriter().write(&quot;{\&quot;error\&quot;:\&quot;&quot; + message + &quot;\&quot;}&quot;);</span>
+<span class="fc" id="L141">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

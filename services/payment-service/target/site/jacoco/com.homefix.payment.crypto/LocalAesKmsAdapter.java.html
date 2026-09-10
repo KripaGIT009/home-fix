@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>LocalAesKmsAdapter.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Payment Service</a> &gt; <a href="index.source.html" class="el_package">com.homefix.payment.crypto</a> &gt; <span class="el_source">LocalAesKmsAdapter.java</span></div><h1>LocalAesKmsAdapter.java</h1><pre class="source lang-java linenums">package com.homefix.payment.crypto;
+
+import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
+import java.util.Base64;
+
+import javax.crypto.Cipher;
+import javax.crypto.spec.GCMParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.stereotype.Component;
+
+/**
+ * Default {@link KmsEncryptionPort} implementation performing envelope-style AES-256-GCM
+ * encryption with a locally configured data key.
+ *
+ * &lt;p&gt;This adapter is intended for local development and tests. In production an AWS-KMS-backed
+ * adapter can replace it behind the same port. Data-key material never leaves this process and the
+ * ciphertext token embeds a random 96-bit IV so identical plaintexts encrypt differently,
+ * satisfying the &quot;not readable without the key&quot; requirement (Requirement 12.9).
+ *
+ * &lt;p&gt;Token format: {@code v1:base64(iv || ciphertext+tag)}.
+ */
+@Component
+@ConditionalOnProperty(name = &quot;homefix.kms.provider&quot;, havingValue = &quot;local&quot;, matchIfMissing = true)
+public class LocalAesKmsAdapter implements KmsEncryptionPort {
+
+    private static final String TOKEN_PREFIX = &quot;v1:&quot;;
+    private static final String TRANSFORMATION = &quot;AES/GCM/NoPadding&quot;;
+    private static final int IV_LENGTH_BYTES = 12;
+    private static final int GCM_TAG_LENGTH_BITS = 128;
+
+    private final SecretKeySpec key;
+<span class="fc" id="L36">    private final SecureRandom secureRandom = new SecureRandom();</span>
+
+<span class="fc" id="L38">    public LocalAesKmsAdapter(@Value(&quot;${homefix.kms.data-key}&quot;) String base64DataKey) {</span>
+<span class="fc" id="L39">        byte[] keyBytes = Base64.getDecoder().decode(base64DataKey);</span>
+<span class="pc bpc" id="L40" title="3 of 6 branches missed.">        if (keyBytes.length != 16 &amp;&amp; keyBytes.length != 24 &amp;&amp; keyBytes.length != 32) {</span>
+<span class="nc" id="L41">            throw new IllegalArgumentException(</span>
+                    &quot;homefix.kms.data-key must decode to a 128, 192, or 256-bit AES key&quot;);
+        }
+<span class="fc" id="L44">        this.key = new SecretKeySpec(keyBytes, &quot;AES&quot;);</span>
+<span class="fc" id="L45">    }</span>
+
+    @Override
+    public String encrypt(String plaintext) {
+<span class="pc bpc" id="L49" title="1 of 2 branches missed.">        if (plaintext == null) {</span>
+<span class="nc" id="L50">            return null;</span>
+        }
+        try {
+<span class="fc" id="L53">            byte[] iv = new byte[IV_LENGTH_BYTES];</span>
+<span class="fc" id="L54">            secureRandom.nextBytes(iv);</span>
+
+<span class="fc" id="L56">            Cipher cipher = Cipher.getInstance(TRANSFORMATION);</span>
+<span class="fc" id="L57">            cipher.init(Cipher.ENCRYPT_MODE, key, new GCMParameterSpec(GCM_TAG_LENGTH_BITS, iv));</span>
+<span class="fc" id="L58">            byte[] ciphertext = cipher.doFinal(plaintext.getBytes(StandardCharsets.UTF_8));</span>
+
+<span class="fc" id="L60">            byte[] combined = new byte[iv.length + ciphertext.length];</span>
+<span class="fc" id="L61">            System.arraycopy(iv, 0, combined, 0, iv.length);</span>
+<span class="fc" id="L62">            System.arraycopy(ciphertext, 0, combined, iv.length, ciphertext.length);</span>
+
+<span class="fc" id="L64">            return TOKEN_PREFIX + Base64.getEncoder().encodeToString(combined);</span>
+<span class="nc" id="L65">        } catch (Exception e) {</span>
+<span class="nc" id="L66">            throw new EncryptionException(&quot;Failed to encrypt value&quot;, e);</span>
+        }
+    }
+
+    @Override
+    public String decrypt(String ciphertext) {
+<span class="pc bpc" id="L72" title="1 of 2 branches missed.">        if (ciphertext == null) {</span>
+<span class="nc" id="L73">            return null;</span>
+        }
+<span class="pc bpc" id="L75" title="1 of 2 branches missed.">        if (!ciphertext.startsWith(TOKEN_PREFIX)) {</span>
+<span class="nc" id="L76">            throw new EncryptionException(&quot;Unrecognised ciphertext token format&quot;);</span>
+        }
+        try {
+<span class="fc" id="L79">            byte[] combined = Base64.getDecoder().decode(ciphertext.substring(TOKEN_PREFIX.length()));</span>
+<span class="fc" id="L80">            byte[] iv = new byte[IV_LENGTH_BYTES];</span>
+<span class="fc" id="L81">            byte[] payload = new byte[combined.length - IV_LENGTH_BYTES];</span>
+<span class="fc" id="L82">            System.arraycopy(combined, 0, iv, 0, IV_LENGTH_BYTES);</span>
+<span class="fc" id="L83">            System.arraycopy(combined, IV_LENGTH_BYTES, payload, 0, payload.length);</span>
+
+<span class="fc" id="L85">            Cipher cipher = Cipher.getInstance(TRANSFORMATION);</span>
+<span class="fc" id="L86">            cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(GCM_TAG_LENGTH_BITS, iv));</span>
+<span class="fc" id="L87">            return new String(cipher.doFinal(payload), StandardCharsets.UTF_8);</span>
+<span class="nc" id="L88">        } catch (EncryptionException e) {</span>
+<span class="nc" id="L89">            throw e;</span>
+<span class="nc" id="L90">        } catch (Exception e) {</span>
+<span class="nc" id="L91">            throw new EncryptionException(&quot;Failed to decrypt value&quot;, e);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

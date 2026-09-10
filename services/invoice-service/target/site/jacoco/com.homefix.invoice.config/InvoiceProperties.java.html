@@ -1,0 +1,163 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>InvoiceProperties.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Invoice Service</a> &gt; <a href="index.source.html" class="el_package">com.homefix.invoice.config</a> &gt; <span class="el_source">InvoiceProperties.java</span></div><h1>InvoiceProperties.java</h1><pre class="source lang-java linenums">package com.homefix.invoice.config;
+
+import java.time.Duration;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.NestedConfigurationProperty;
+
+/**
+ * Tunable invoice-domain limits and thresholds (Requirement 13).
+ *
+ * &lt;p&gt;Defaults match the acceptance criteria; all values are overridable via configuration so
+ * operations can tune limits without a code change.
+ */
+@ConfigurationProperties(prefix = &quot;homefix.invoice&quot;)
+<span class="fc" id="L15">public class InvoiceProperties {</span>
+
+    /** Number of PDF-generation attempts before the operations team is alerted (Requirement 13.7). */
+<span class="fc" id="L18">    private int maxPdfRetries = 3;</span>
+
+    /** Base backoff between PDF-generation retries (doubled on each attempt). */
+<span class="fc" id="L21">    private Duration pdfRetryBackoff = Duration.ofMillis(500);</span>
+
+    /** Validity window of the signed URL delivered to the customer (Requirement 13.3). */
+<span class="fc" id="L24">    private Duration signedUrlTtl = Duration.ofHours(72);</span>
+
+    /** Minimum retention window for customer-accessible invoices (Requirement 13.5). */
+<span class="fc" id="L27">    private Duration retention = Duration.ofDays(730);</span>
+
+    /** Tax identifier printed on every generated invoice (Requirement 13.1). */
+<span class="fc" id="L30">    private String taxIdentifier = &quot;GSTIN-HOMEFIX-0000&quot;;</span>
+
+<span class="fc" id="L32">    @NestedConfigurationProperty</span>
+    private Topics topics = new Topics();
+
+<span class="fc" id="L35">    @NestedConfigurationProperty</span>
+    private S3 s3 = new S3();
+
+<span class="fc" id="L38">    @NestedConfigurationProperty</span>
+    private Clients clients = new Clients();
+
+    public int getMaxPdfRetries() {
+<span class="fc" id="L42">        return maxPdfRetries;</span>
+    }
+
+    public void setMaxPdfRetries(int maxPdfRetries) {
+<span class="fc" id="L46">        this.maxPdfRetries = maxPdfRetries;</span>
+<span class="fc" id="L47">    }</span>
+
+    public Duration getPdfRetryBackoff() {
+<span class="fc" id="L50">        return pdfRetryBackoff;</span>
+    }
+
+    public void setPdfRetryBackoff(Duration pdfRetryBackoff) {
+<span class="fc" id="L54">        this.pdfRetryBackoff = pdfRetryBackoff;</span>
+<span class="fc" id="L55">    }</span>
+
+    public Duration getSignedUrlTtl() {
+<span class="fc" id="L58">        return signedUrlTtl;</span>
+    }
+
+    public void setSignedUrlTtl(Duration signedUrlTtl) {
+<span class="fc" id="L62">        this.signedUrlTtl = signedUrlTtl;</span>
+<span class="fc" id="L63">    }</span>
+
+    public Duration getRetention() {
+<span class="fc" id="L66">        return retention;</span>
+    }
+
+    public void setRetention(Duration retention) {
+<span class="fc" id="L70">        this.retention = retention;</span>
+<span class="fc" id="L71">    }</span>
+
+    public String getTaxIdentifier() {
+<span class="fc" id="L74">        return taxIdentifier;</span>
+    }
+
+    public void setTaxIdentifier(String taxIdentifier) {
+<span class="fc" id="L78">        this.taxIdentifier = taxIdentifier;</span>
+<span class="fc" id="L79">    }</span>
+
+    public Topics getTopics() {
+<span class="fc" id="L82">        return topics;</span>
+    }
+
+    public void setTopics(Topics topics) {
+<span class="fc" id="L86">        this.topics = topics;</span>
+<span class="fc" id="L87">    }</span>
+
+    public S3 getS3() {
+<span class="fc" id="L90">        return s3;</span>
+    }
+
+    public void setS3(S3 s3) {
+<span class="fc" id="L94">        this.s3 = s3;</span>
+<span class="fc" id="L95">    }</span>
+
+    public Clients getClients() {
+<span class="fc" id="L98">        return clients;</span>
+    }
+
+    public void setClients(Clients clients) {
+<span class="fc" id="L102">        this.clients = clients;</span>
+<span class="fc" id="L103">    }</span>
+
+    /** Kafka topic names this service consumes. */
+<span class="fc" id="L106">    public static class Topics {</span>
+<span class="fc" id="L107">        private String paymentCompleted = &quot;PaymentCompleted&quot;;</span>
+
+        public String getPaymentCompleted() {
+<span class="fc" id="L110">            return paymentCompleted;</span>
+        }
+
+        public void setPaymentCompleted(String paymentCompleted) {
+<span class="fc" id="L114">            this.paymentCompleted = paymentCompleted;</span>
+<span class="fc" id="L115">        }</span>
+    }
+
+    /** S3 object-storage settings for invoice PDFs (Requirement 13.2). */
+<span class="fc" id="L119">    public static class S3 {</span>
+<span class="fc" id="L120">        private String bucket = &quot;homefix-invoices&quot;;</span>
+<span class="fc" id="L121">        private String region = &quot;ap-south-1&quot;;</span>
+        /** Storage backend: 'aws' (production) or 'memory' (dev/test). */
+<span class="fc" id="L123">        private String backend = &quot;memory&quot;;</span>
+
+        public String getBucket() {
+<span class="fc" id="L126">            return bucket;</span>
+        }
+
+        public void setBucket(String bucket) {
+<span class="fc" id="L130">            this.bucket = bucket;</span>
+<span class="fc" id="L131">        }</span>
+
+        public String getRegion() {
+<span class="fc" id="L134">            return region;</span>
+        }
+
+        public void setRegion(String region) {
+<span class="fc" id="L138">            this.region = region;</span>
+<span class="fc" id="L139">        }</span>
+
+        public String getBackend() {
+<span class="fc" id="L142">            return backend;</span>
+        }
+
+        public void setBackend(String backend) {
+<span class="fc" id="L146">            this.backend = backend;</span>
+<span class="fc" id="L147">        }</span>
+    }
+
+    /** Downstream service base URLs. */
+<span class="fc" id="L151">    public static class Clients {</span>
+<span class="fc" id="L152">        private String notificationServiceBaseUrl = &quot;http://notification-service&quot;;</span>
+
+        public String getNotificationServiceBaseUrl() {
+<span class="fc" id="L155">            return notificationServiceBaseUrl;</span>
+        }
+
+        public void setNotificationServiceBaseUrl(String notificationServiceBaseUrl) {
+<span class="fc" id="L159">            this.notificationServiceBaseUrl = notificationServiceBaseUrl;</span>
+<span class="fc" id="L160">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

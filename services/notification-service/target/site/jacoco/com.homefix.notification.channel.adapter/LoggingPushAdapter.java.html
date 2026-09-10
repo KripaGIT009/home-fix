@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>LoggingPushAdapter.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Notification Service</a> &gt; <a href="index.source.html" class="el_package">com.homefix.notification.channel.adapter</a> &gt; <span class="el_source">LoggingPushAdapter.java</span></div><h1>LoggingPushAdapter.java</h1><pre class="source lang-java linenums">package com.homefix.notification.channel.adapter;
+
+import com.homefix.notification.channel.NotificationDeliveryException;
+import com.homefix.notification.channel.PushPort;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.stereotype.Component;
+
+/**
+ * Default {@link PushPort} adapter used in local/dev/test profiles.
+ *
+ * &lt;p&gt;It does not contact a push provider — it records that a message would be sent. The device
+ * token, title, and body are never logged (Requirement 26.4). Real deployments supply a concrete
+ * vendor adapter (FCM/APNs/SNS) selected via {@code homefix.notification.push-provider}.
+ *
+ * &lt;p&gt;Activated when {@code homefix.notification.push-provider=log} (the default) or when no other
+ * {@link PushPort} bean is present.
+ */
+@Component
+@ConditionalOnProperty(prefix = &quot;homefix.notification&quot;, name = &quot;push-provider&quot;,
+        havingValue = &quot;log&quot;, matchIfMissing = true)
+@ConditionalOnMissingBean(PushPort.class)
+<span class="fc" id="L25">public class LoggingPushAdapter implements PushPort {</span>
+
+<span class="fc" id="L27">    private static final Logger log = LoggerFactory.getLogger(LoggingPushAdapter.class);</span>
+
+    @Override
+    public void send(String deviceToken, String title, String body)
+            throws NotificationDeliveryException {
+        // Do not log the device token or message content.
+<span class="fc" id="L33">        log.info(&quot;Push dispatch accepted by logging adapter&quot;);</span>
+<span class="fc" id="L34">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

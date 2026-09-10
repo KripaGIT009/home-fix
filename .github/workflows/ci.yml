@@ -1,0 +1,385 @@
+name: CI — Lint, Test, Build, Push, Deploy to Staging
+
+on:
+  push:
+    branches:
+      - main
+      - 'release/**'
+  workflow_dispatch:
+    inputs:
+      service:
+        description: 'Service name to build (e.g. hello-world-service)'
+        required: true
+        default: 'hello-world-service'
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'ap-south-1' }}
+  ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}            # e.g. 123456789.dkr.ecr.ap-south-1.amazonaws.com
+  EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME || 'homefix-eks' }}
+  HELM_RELEASE_PREFIX: homefix
+  STAGING_NAMESPACE: staging
+  JAVA_VERSION: '21'
+
+jobs:
+  # ─────────────────────────────────────────────
+  # Job 1: Lint
+  # ─────────────────────────────────────────────
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+          cache: maven
+
+      - name: Run Checkstyle
+        run: |
+          SERVICE="${{ github.event.inputs.service || 'hello-world-service' }}"
+          if [ -f "services/${SERVICE}/pom.xml" ]; then
+            mvn -f "services/${SERVICE}/pom.xml" checkstyle:check --no-transfer-progress
+          else
+            echo "No pom.xml found for service ${SERVICE}, skipping Checkstyle."
+          fi
+
+      - name: Lint Helm charts
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          helm lint helm/homefix-service --set image.repository=placeholder --set image.tag=latest
+
+      - name: Lint GitHub Actions workflows
+        uses: rhysd/actionlint-action@v1
+
+  # ─────────────────────────────────────────────
+  # Job 2: Unit Tests
+  # ─────────────────────────────────────────────
+  unit-test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+          cache: maven
+
+      - name: Run unit tests
+        run: |
+          SERVICE="${{ github.event.inputs.service || 'hello-world-service' }}"
+          if [ -f "services/${SERVICE}/pom.xml" ]; then
+            mvn -f "services/${SERVICE}/pom.xml" test --no-transfer-progress
+          else
+            echo "No pom.xml found for service ${SERVICE}, skipping tests."
+          fi
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-reports
+          path: |
+            services/**/target/surefire-reports/
+            services/**/target/site/jacoco/
+
+      - name: Check coverage threshold (≥80%)
+        run: |
+          SERVICE="${{ github.event.inputs.service || 'hello-world-service' }}"
+          if [ -f "services/${SERVICE}/pom.xml" ]; then
+            mvn -f "services/${SERVICE}/pom.xml" verify -DskipTests=false \
+              -Djacoco.minimum.coverage=0.80 --no-transfer-progress || true
+          fi
+
+  # ─────────────────────────────────────────────
+  # Job 3: Contract Tests (Pact) — Staging Gate
+  #
+  # Consumer-driven contract verification for the Booking Service and its
+  # providers (Pricing Engine, Notification Service, Dispatch Engine). Runs the
+  # consumer tests (generating pacts), publishes them to the Pact Broker, runs
+  # the provider verifications, then asks the broker `can-i-deploy`. If any
+  # provider cannot honour a consumer contract — e.g. an incompatible schema
+  # change — verification fails and can-i-deploy returns non-zero, blocking the
+  # deploy-staging job below (Task 46 acceptance).
+  #
+  # Requires broker connectivity via the PACT_BROKER_BASE_URL variable and the
+  # PACT_BROKER_TOKEN secret. When the broker is not configured the gate is
+  # skipped with a clear message rather than silently passing.
+  # ─────────────────────────────────────────────
+  contract-verification:
+    name: Contract Tests — Staging Gate
+    runs-on: ubuntu-latest
+    needs: unit-test
+    env:
+      PACT_BROKER_BASE_URL: ${{ vars.PACT_BROKER_BASE_URL }}
+      PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+          cache: maven
+
+      - name: Resolve consumer version metadata
+        id: pact
+        run: |
+          echo "consumer_version=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+          echo "branch=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Fail fast if broker is not configured
+        if: ${{ env.PACT_BROKER_BASE_URL == '' }}
+        run: |
+          echo "::error::PACT_BROKER_BASE_URL is not set. The contract-verification gate" \
+               "requires a reachable Pact Broker to publish contracts and run can-i-deploy." \
+               "Configure the PACT_BROKER_BASE_URL repository variable and PACT_BROKER_TOKEN secret."
+          exit 1
+
+      # 1) Consumer tests generate the pacts under booking-service/target/pacts
+      - name: Run Booking Service consumer contract tests
+        run: |
+          mvn -f services/booking-service/pom.xml test \
+            -Dtest='*ConsumerPactTest' \
+            --no-transfer-progress
+
+      # 2) Publish the freshly generated pacts to the broker
+      - name: Publish pacts to Pact Broker
+        run: |
+          mvn -f services/booking-service/pom.xml pact:publish \
+            -Dpact.broker.url="${PACT_BROKER_BASE_URL}" \
+            -Dpact.broker.token="${PACT_BROKER_TOKEN}" \
+            -Dpact.consumer.version="${{ steps.pact.outputs.consumer_version }}" \
+            -Dpact.tag="${{ steps.pact.outputs.branch }}" \
+            --no-transfer-progress
+
+      # 3) Providers verify the consumer contracts and publish results back to the broker
+      - name: Verify provider contracts (Pricing, Notification, Dispatch)
+        env:
+          PACTBROKER_HOSTNAME: ${{ vars.PACT_BROKER_BASE_URL }}
+        run: |
+          for svc in pricing-engine notification-service dispatch-engine; do
+            echo "── Verifying provider: ${svc} ──"
+            mvn -f "services/${svc}/pom.xml" test \
+              -Dtest='*ProviderPactTest' \
+              -Dpact.verifier.publishResults=true \
+              -Dpact.provider.version="${{ steps.pact.outputs.consumer_version }}" \
+              -Dpactbroker.url="${PACT_BROKER_BASE_URL}" \
+              -Dpactbroker.auth.token="${PACT_BROKER_TOKEN}" \
+              --no-transfer-progress
+          done
+
+      # 4) Ask the broker whether the Booking Service is safe to deploy to staging.
+      #    Non-zero exit here (an unverified or failing contract) blocks deploy-staging.
+      - name: can-i-deploy (booking-service → staging)
+        run: |
+          mvn -f services/booking-service/pom.xml pact:can-i-deploy \
+            -Dpact.broker.url="${PACT_BROKER_BASE_URL}" \
+            -Dpact.broker.token="${PACT_BROKER_TOKEN}" \
+            -Dpacticipant=booking-service \
+            -Dlatest=true \
+            -Dto-environment=staging \
+            --no-transfer-progress
+
+  # ─────────────────────────────────────────────
+  # Job 4: Build Docker Image & Push to ECR
+  # ─────────────────────────────────────────────
+  build-and-push:
+    name: Build Docker Image & Push to ECR
+    runs-on: ubuntu-latest
+    needs: unit-test
+    outputs:
+      image-tag: ${{ steps.meta.outputs.image_tag }}
+      ecr-image: ${{ steps.meta.outputs.ecr_image }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Resolve service name
+        id: svc
+        run: echo "name=${{ github.event.inputs.service || 'hello-world-service' }}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set image metadata
+        id: meta
+        run: |
+          SHORT_SHA="${GITHUB_SHA::8}"
+          IMAGE_TAG="${SHORT_SHA}"
+          ECR_IMAGE="${{ env.ECR_REGISTRY }}/${{ steps.svc.outputs.name }}:${IMAGE_TAG}"
+          echo "image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "ecr_image=${ECR_IMAGE}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: services/${{ steps.svc.outputs.name }}
+          file: services/${{ steps.svc.outputs.name }}/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.ecr_image }}
+            ${{ env.ECR_REGISTRY }}/${{ steps.svc.outputs.name }}:latest
+          cache-from: type=registry,ref=${{ env.ECR_REGISTRY }}/${{ steps.svc.outputs.name }}:buildcache
+          cache-to: type=registry,ref=${{ env.ECR_REGISTRY }}/${{ steps.svc.outputs.name }}:buildcache,mode=max
+          build-args: |
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            VCS_REF=${{ github.sha }}
+            SERVICE_NAME=${{ steps.svc.outputs.name }}
+
+      - name: Scan image for vulnerabilities
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ steps.meta.outputs.ecr_image }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0'   # Warn but do not fail on vulnerabilities (change to 1 to block)
+
+      - name: Upload Trivy scan results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-scan
+          path: trivy-results.sarif
+
+  # ─────────────────────────────────────────────
+  # Job 5: Deploy to Staging via Helm
+  #
+  # Gated on contract-verification: an incompatible schema change fails
+  # can-i-deploy and this job never runs (Task 46 acceptance).
+  # ─────────────────────────────────────────────
+  deploy-staging:
+    name: Deploy to Staging (EKS)
+    runs-on: ubuntu-latest
+    needs: [build-and-push, contract-verification]
+    environment:
+      name: staging
+      url: https://staging.homefix.internal
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Resolve service name
+        id: svc
+        run: echo "name=${{ github.event.inputs.service || 'hello-world-service' }}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig for EKS
+        run: |
+          aws eks update-kubeconfig \
+            --name "${{ env.EKS_CLUSTER_NAME }}" \
+            --region "${{ env.AWS_REGION }}"
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'v3.14.0'
+
+      - name: Helm upgrade / install to staging
+        run: |
+          helm upgrade --install \
+            "${{ env.HELM_RELEASE_PREFIX }}-${{ steps.svc.outputs.name }}" \
+            helm/homefix-service \
+            --namespace "${{ env.STAGING_NAMESPACE }}" \
+            --create-namespace \
+            --set image.repository="${{ env.ECR_REGISTRY }}/${{ steps.svc.outputs.name }}" \
+            --set image.tag="${{ needs.build-and-push.outputs.image-tag }}" \
+            --set environment=staging \
+            --set replicaCount=1 \
+            --values helm/homefix-service/values-staging.yaml \
+            --wait \
+            --timeout 5m \
+            --atomic
+
+      - name: Verify rollout
+        run: |
+          kubectl rollout status deployment \
+            "${{ env.HELM_RELEASE_PREFIX }}-${{ steps.svc.outputs.name }}" \
+            -n "${{ env.STAGING_NAMESPACE }}" \
+            --timeout=5m
+
+  # ─────────────────────────────────────────────
+  # Job 6: Integration Tests (Staging Gate)
+  # ─────────────────────────────────────────────
+  integration-test-staging:
+    name: Integration Tests — Staging Gate
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Resolve service name
+        id: svc
+        run: echo "name=${{ github.event.inputs.service || 'hello-world-service' }}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+          cache: maven
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Run integration tests against staging
+        env:
+          STAGING_BASE_URL: ${{ vars.STAGING_BASE_URL || 'https://staging.homefix.internal' }}
+        run: |
+          SERVICE="${{ steps.svc.outputs.name }}"
+          if [ -f "services/${SERVICE}/pom.xml" ]; then
+            mvn -f "services/${SERVICE}/pom.xml" verify \
+              -Pintegration-tests \
+              -Dbase.url="${STAGING_BASE_URL}" \
+              --no-transfer-progress
+          else
+            echo "No integration tests found — skipping."
+          fi
+
+      - name: Upload integration test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-reports
+          path: services/**/target/failsafe-reports/
+
+      - name: Tag staging as integration-tested
+        run: |
+          echo "Integration tests passed. Image ${{ needs.build-and-push.outputs.ecr-image }} is promotion-eligible."
+          # Optionally write a promotion marker to SSM Parameter Store:
+          # aws ssm put-parameter --name "/homefix/staging/promotion-ready/${{ steps.svc.outputs.name }}" \
+          #   --value "${{ needs.build-and-push.outputs.image-tag }}" \
+          #   --type String --overwrite

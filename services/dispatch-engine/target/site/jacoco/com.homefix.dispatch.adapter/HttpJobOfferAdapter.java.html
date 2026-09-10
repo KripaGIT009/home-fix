@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>HttpJobOfferAdapter.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Dispatch Engine</a> &gt; <a href="index.source.html" class="el_package">com.homefix.dispatch.adapter</a> &gt; <span class="el_source">HttpJobOfferAdapter.java</span></div><h1>HttpJobOfferAdapter.java</h1><pre class="source lang-java linenums">package com.homefix.dispatch.adapter;
+
+import com.homefix.dispatch.config.DispatchClientProperties;
+import com.homefix.dispatch.port.JobOfferPort;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
+
+import java.time.Duration;
+import java.util.Map;
+import java.util.UUID;
+
+/**
+ * Default {@link JobOfferPort} adapter. Sends a job offer to the provider (via the Notification
+ * Service push to the provider app) and blocks up to {@code timeout} for the provider's response,
+ * which arrives through the provider-app acceptance callback (Requirements 8.5-8.7).
+ *
+ * &lt;p&gt;This adapter models the synchronous &quot;offer then await&quot; contract; the concrete long-poll /
+ * callback wiring is deployment-specific. A response endpoint is polled until the timeout elapses.
+ * Unit tests replace this with a deterministic fake, so the algorithm is validated independently
+ * of the transport.
+ *
+ * &lt;p&gt;Active only when no other {@link JobOfferPort} bean is present.
+ */
+@Component
+@ConditionalOnMissingBean(JobOfferPort.class)
+public class HttpJobOfferAdapter implements JobOfferPort {
+
+<span class="fc" id="L32">    private static final Logger log = LoggerFactory.getLogger(HttpJobOfferAdapter.class);</span>
+
+    private final RestClient restClient;
+
+<span class="fc" id="L36">    public HttpJobOfferAdapter(DispatchClientProperties properties) {</span>
+<span class="fc" id="L37">        this.restClient = RestClient.builder()</span>
+<span class="fc" id="L38">                .baseUrl(properties.getNotificationServiceBaseUrl())</span>
+<span class="fc" id="L39">                .build();</span>
+<span class="fc" id="L40">    }</span>
+
+    @Override
+    public OfferOutcome offer(UUID bookingId, UUID providerId, Duration timeout) {
+        try {
+<span class="fc" id="L45">            OfferResponse response = restClient.post()</span>
+<span class="fc" id="L46">                    .uri(&quot;/internal/offers&quot;)</span>
+<span class="fc" id="L47">                    .body(Map.of(</span>
+                            &quot;bookingId&quot;, bookingId,
+                            &quot;providerId&quot;, providerId,
+<span class="fc" id="L50">                            &quot;timeoutSeconds&quot;, timeout.toSeconds()))</span>
+<span class="fc" id="L51">                    .retrieve()</span>
+<span class="fc" id="L52">                    .body(OfferResponse.class);</span>
+<span class="pc bpc" id="L53" title="2 of 4 branches missed.">            if (response == null || response.outcome() == null) {</span>
+<span class="nc" id="L54">                return OfferOutcome.TIMED_OUT;</span>
+            }
+<span class="fc bfc" id="L56" title="All 3 branches covered.">            return switch (response.outcome().toUpperCase()) {</span>
+<span class="fc" id="L57">                case &quot;ACCEPTED&quot; -&gt; OfferOutcome.ACCEPTED;</span>
+<span class="fc" id="L58">                case &quot;REJECTED&quot; -&gt; OfferOutcome.REJECTED;</span>
+<span class="fc" id="L59">                default -&gt; OfferOutcome.TIMED_OUT;</span>
+            };
+<span class="fc" id="L61">        } catch (RestClientException e) {</span>
+<span class="fc" id="L62">            log.warn(&quot;Job offer to provider {} for booking {} failed; treating as timeout&quot;,</span>
+                    providerId, bookingId);
+<span class="fc" id="L64">            return OfferOutcome.TIMED_OUT;</span>
+        }
+    }
+
+    /** Response shape from the offer endpoint: ACCEPTED | REJECTED | TIMED_OUT. */
+<span class="fc" id="L69">    public record OfferResponse(String outcome) {</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

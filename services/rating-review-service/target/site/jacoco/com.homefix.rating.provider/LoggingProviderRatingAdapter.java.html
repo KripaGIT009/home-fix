@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>LoggingProviderRatingAdapter.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Rating &amp; Review Service</a> &gt; <a href="index.source.html" class="el_package">com.homefix.rating.provider</a> &gt; <span class="el_source">LoggingProviderRatingAdapter.java</span></div><h1>LoggingProviderRatingAdapter.java</h1><pre class="source lang-java linenums">package com.homefix.rating.provider;
+
+import java.math.BigDecimal;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+/**
+ * Default {@link ProviderRatingPort} that logs the propagation and tracks UNDER_REVIEW status in
+ * memory so repeated drops below threshold do not re-alert. A production adapter would call the
+ * Provider Service (or publish an event) instead of holding local state.
+ */
+@Component
+<span class="fc" id="L18">public class LoggingProviderRatingAdapter implements ProviderRatingPort {</span>
+
+<span class="fc" id="L20">    private static final Logger log = LoggerFactory.getLogger(LoggingProviderRatingAdapter.class);</span>
+
+<span class="fc" id="L22">    private final Set&lt;UUID&gt; underReview = ConcurrentHashMap.newKeySet();</span>
+
+    @Override
+    public void updateAggregateRating(UUID providerId, BigDecimal aggregateRating) {
+<span class="fc" id="L26">        log.debug(&quot;Propagating aggregate rating {} for provider {}&quot;, aggregateRating, providerId);</span>
+<span class="fc" id="L27">    }</span>
+
+    @Override
+    public boolean flagUnderReview(UUID providerId) {
+<span class="fc" id="L31">        boolean newlyFlagged = underReview.add(providerId);</span>
+<span class="fc bfc" id="L32" title="All 2 branches covered.">        if (newlyFlagged) {</span>
+<span class="fc" id="L33">            log.warn(&quot;Provider {} flagged UNDER_REVIEW&quot;, providerId);</span>
+        }
+<span class="fc" id="L35">        return newlyFlagged;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

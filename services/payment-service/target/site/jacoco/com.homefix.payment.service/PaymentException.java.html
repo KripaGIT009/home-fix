@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PaymentException.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Payment Service</a> &gt; <a href="index.source.html" class="el_package">com.homefix.payment.service</a> &gt; <span class="el_source">PaymentException.java</span></div><h1>PaymentException.java</h1><pre class="source lang-java linenums">package com.homefix.payment.service;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import org.springframework.http.HttpStatus;
+
+/**
+ * Domain exception for payment, refund, and settlement failures, carrying the HTTP status, a
+ * stable error code, and optional detail messages that the REST layer surfaces via the shared
+ * {@code ErrorResponseDto}.
+ */
+public class PaymentException extends RuntimeException {
+
+    private final HttpStatus status;
+    private final String errorCode;
+<span class="fc" id="L17">    private final List&lt;String&gt; details = new ArrayList&lt;&gt;();</span>
+
+    public PaymentException(HttpStatus status, String errorCode, String message) {
+<span class="fc" id="L20">        super(message);</span>
+<span class="fc" id="L21">        this.status = status;</span>
+<span class="fc" id="L22">        this.errorCode = errorCode;</span>
+<span class="fc" id="L23">    }</span>
+
+    public PaymentException(HttpStatus status, String errorCode, String message, List&lt;String&gt; details) {
+<span class="nc" id="L26">        this(status, errorCode, message);</span>
+<span class="nc bnc" id="L27" title="All 2 branches missed.">        if (details != null) {</span>
+<span class="nc" id="L28">            this.details.addAll(details);</span>
+        }
+<span class="nc" id="L30">    }</span>
+
+    public static PaymentException validation(String message) {
+<span class="fc" id="L33">        return new PaymentException(HttpStatus.BAD_REQUEST, &quot;VALIDATION_ERROR&quot;, message);</span>
+    }
+
+    public static PaymentException notFound(String message) {
+<span class="nc" id="L37">        return new PaymentException(HttpStatus.NOT_FOUND, &quot;TRANSACTION_NOT_FOUND&quot;, message);</span>
+    }
+
+    /** Requirement 12.4 / Property 12: an invalid state transition is a 409 Conflict. */
+    public static PaymentException invalidTransition(String message) {
+<span class="fc" id="L42">        return new PaymentException(HttpStatus.CONFLICT, &quot;INVALID_STATE_TRANSITION&quot;, message);</span>
+    }
+
+    /** Requirement 12.5: an invalid gateway callback signature is a 400 Bad Request. */
+    public static PaymentException invalidSignature(String message) {
+<span class="fc" id="L47">        return new PaymentException(HttpStatus.BAD_REQUEST, &quot;INVALID_CALLBACK_SIGNATURE&quot;, message);</span>
+    }
+
+    public HttpStatus getStatus() {
+<span class="fc" id="L51">        return status;</span>
+    }
+
+    public String getErrorCode() {
+<span class="fc" id="L55">        return errorCode;</span>
+    }
+
+    public List&lt;String&gt; getDetails() {
+<span class="fc" id="L59">        return details;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

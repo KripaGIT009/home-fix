@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PartsLineItem.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Booking Service</a> &gt; <a href="index.source.html" class="el_package">com.homefix.booking.domain</a> &gt; <span class="el_source">PartsLineItem.java</span></div><h1>PartsLineItem.java</h1><pre class="source lang-java linenums">package com.homefix.booking.domain;
+
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.UUID;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.Id;
+import jakarta.persistence.Index;
+import jakarta.persistence.Table;
+
+/**
+ * A parts or materials line item added by a provider during job execution (Requirement 6.8,
+ * 11.3). Records item name, quantity (minimum 1), and unit cost (minimum 0.01). The line total
+ * is {@code quantity × unitCost}; the sum of all line totals is submitted to the Pricing
+ * Engine for recalculation.
+ */
+@Entity
+@Table(name = &quot;parts_line_item&quot;, indexes = {
+        @Index(name = &quot;idx_parts_booking&quot;, columnList = &quot;booking_id&quot;)
+})
+public class PartsLineItem {
+
+    @Id
+    @Column(name = &quot;id&quot;, nullable = false, updatable = false)
+    private UUID id;
+
+    @Column(name = &quot;booking_id&quot;, nullable = false, updatable = false)
+    private UUID bookingId;
+
+    @Column(name = &quot;item_name&quot;, nullable = false, length = 200)
+    private String itemName;
+
+    @Column(name = &quot;quantity&quot;, nullable = false)
+    private int quantity;
+
+    @Column(name = &quot;unit_cost&quot;, nullable = false, precision = 12, scale = 2)
+    private BigDecimal unitCost;
+
+    @Column(name = &quot;added_at&quot;, nullable = false, updatable = false)
+    private Instant addedAt;
+
+<span class="nc" id="L44">    protected PartsLineItem() {</span>
+        // JPA
+<span class="nc" id="L46">    }</span>
+
+<span class="fc" id="L48">    private PartsLineItem(UUID bookingId, String itemName, int quantity, BigDecimal unitCost, Instant addedAt) {</span>
+<span class="fc" id="L49">        this.id = UUID.randomUUID();</span>
+<span class="fc" id="L50">        this.bookingId = bookingId;</span>
+<span class="fc" id="L51">        this.itemName = itemName;</span>
+<span class="fc" id="L52">        this.quantity = quantity;</span>
+<span class="fc" id="L53">        this.unitCost = unitCost;</span>
+<span class="fc" id="L54">        this.addedAt = addedAt;</span>
+<span class="fc" id="L55">    }</span>
+
+    public static PartsLineItem of(UUID bookingId, String itemName, int quantity,
+                                   BigDecimal unitCost, Instant addedAt) {
+<span class="fc" id="L59">        return new PartsLineItem(bookingId, itemName, quantity, unitCost, addedAt);</span>
+    }
+
+    /** Line total = quantity × unit cost, scaled to 2 decimals. */
+    public BigDecimal lineTotal() {
+<span class="fc" id="L64">        return unitCost.multiply(BigDecimal.valueOf(quantity)).setScale(2, java.math.RoundingMode.HALF_UP);</span>
+    }
+
+    public UUID getId() {
+<span class="fc" id="L68">        return id;</span>
+    }
+
+    public UUID getBookingId() {
+<span class="fc" id="L72">        return bookingId;</span>
+    }
+
+    public String getItemName() {
+<span class="fc" id="L76">        return itemName;</span>
+    }
+
+    public int getQuantity() {
+<span class="fc" id="L80">        return quantity;</span>
+    }
+
+    public BigDecimal getUnitCost() {
+<span class="fc" id="L84">        return unitCost;</span>
+    }
+
+    public Instant getAddedAt() {
+<span class="fc" id="L88">        return addedAt;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

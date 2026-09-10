@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ComplaintEventPublisher.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Complaint Service</a> &gt; <a href="index.source.html" class="el_package">com.homefix.complaint.event</a> &gt; <span class="el_source">ComplaintEventPublisher.java</span></div><h1>ComplaintEventPublisher.java</h1><pre class="source lang-java linenums">package com.homefix.complaint.event;
+
+import java.time.Instant;
+import java.util.UUID;
+
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.homefix.complaint.domain.Complaint;
+import com.homefix.complaint.domain.ComplaintStatus;
+import com.homefix.shared.outbox.OutboxEventPublisher;
+
+/**
+ * Publishes complaint domain events through the shared outbox (Requirement 16.1, 16.3, 16.9). Runs
+ * with {@link Propagation#MANDATORY} so it always joins the caller's transaction, guaranteeing the
+ * PENDING outbox row commits atomically with the complaint write; the shared Outbox Processor then
+ * relays it to Kafka exactly-once.
+ *
+ * &lt;p&gt;Thin seam over {@link OutboxEventPublisher} so {@code ComplaintService} can publish without
+ * carrying serialization concerns, and so tests can substitute a fake publisher.
+ */
+@Component
+public class ComplaintEventPublisher {
+
+    private final OutboxEventPublisher outboxEventPublisher;
+
+<span class="fc" id="L28">    public ComplaintEventPublisher(OutboxEventPublisher outboxEventPublisher) {</span>
+<span class="fc" id="L29">        this.outboxEventPublisher = outboxEventPublisher;</span>
+<span class="fc" id="L30">    }</span>
+
+    /** Publishes {@link ComplaintCreatedEvent} for a newly-created complaint (Requirement 16.1). */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void publishCreated(Complaint complaint) {
+<span class="fc" id="L35">        ComplaintCreatedEvent event = new ComplaintCreatedEvent(</span>
+<span class="fc" id="L36">                complaint.getId(),</span>
+<span class="fc" id="L37">                complaint.getBookingId(),</span>
+<span class="fc" id="L38">                complaint.getCustomerId(),</span>
+<span class="fc" id="L39">                complaint.getAgentId(),</span>
+<span class="fc" id="L40">                complaint.getCategory().name(),</span>
+<span class="fc" id="L41">                complaint.getCreatedAt());</span>
+<span class="fc" id="L42">        outboxEventPublisher.publish(</span>
+                ComplaintCreatedEvent.AGGREGATE_TYPE,
+<span class="fc" id="L44">                complaint.getId(),</span>
+                ComplaintCreatedEvent.EVENT_TYPE,
+                event);
+<span class="fc" id="L47">    }</span>
+
+    /** Publishes {@link ComplaintStatusChangedEvent} for a status transition (16.3, 16.9). */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void publishStatusChanged(Complaint complaint, ComplaintStatus previousStatus,
+                                     Instant changedAt) {
+<span class="fc" id="L53">        ComplaintStatusChangedEvent event = new ComplaintStatusChangedEvent(</span>
+<span class="fc" id="L54">                complaint.getId(),</span>
+<span class="fc" id="L55">                complaint.getBookingId(),</span>
+<span class="fc" id="L56">                complaint.getCustomerId(),</span>
+<span class="pc bpc" id="L57" title="1 of 2 branches missed.">                previousStatus == null ? null : previousStatus.name(),</span>
+<span class="fc" id="L58">                complaint.getStatus().name(),</span>
+                changedAt);
+<span class="fc" id="L60">        outboxEventPublisher.publish(</span>
+                ComplaintStatusChangedEvent.AGGREGATE_TYPE,
+<span class="fc" id="L62">                complaint.getId(),</span>
+                ComplaintStatusChangedEvent.EVENT_TYPE,
+                event);
+<span class="fc" id="L65">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

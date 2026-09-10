@@ -1,0 +1,220 @@
+# PrometheusRule — HomeFix platform alerting rules
+# Applied by the Prometheus Operator (kube-prometheus-stack).
+# The `release: kube-prometheus-stack` label lets the operator's default
+# ruleSelector pick this up; with ruleSelectorNilUsesHelmValues=false in
+# prometheus-values.yaml all PrometheusRules are picked up regardless.
+#
+# Deploy: kubectl apply -f prometheus-alert-rules.yaml
+#
+# Core SLO alerts (Task 2 acceptance):
+#   - p99 latency > 2s over any 5-minute window  -> critical -> PagerDuty
+#   - error rate  > 1% over any 5-minute window  -> critical -> PagerDuty
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: homefix-platform-alerts
+  namespace: monitoring
+  labels:
+    app: homefix
+    release: kube-prometheus-stack
+    role: alert-rules
+spec:
+  groups:
+    # ---------------------------------------------------------------------
+    # Latency SLO — p99 > 2s over a 5-minute window
+    # ---------------------------------------------------------------------
+    - name: homefix.latency.slo
+      rules:
+        - alert: HighP99LatencyPerService
+          # Uses Spring Boot / Micrometer http_server_requests_seconds histogram.
+          expr: |
+            histogram_quantile(
+              0.99,
+              sum by (namespace, service, le) (
+                rate(http_server_requests_seconds_bucket[5m])
+              )
+            ) > 2
+          for: 5m
+          labels:
+            severity: critical
+            slo: latency
+          annotations:
+            summary: "p99 latency above 2s for {{ $labels.service }}"
+            description: >
+              Service {{ $labels.service }} (namespace {{ $labels.namespace }})
+              has a p99 request latency of {{ $value | humanize }}s over the last
+              5 minutes, exceeding the 2s SLO threshold.
+
+        - alert: HighP95LatencyPerService
+          expr: |
+            histogram_quantile(
+              0.95,
+              sum by (namespace, service, le) (
+                rate(http_server_requests_seconds_bucket[5m])
+              )
+            ) > 1.5
+          for: 10m
+          labels:
+            severity: warning
+            slo: latency
+          annotations:
+            summary: "p95 latency above 1.5s for {{ $labels.service }}"
+            description: >
+              Service {{ $labels.service }} has a p95 latency of
+              {{ $value | humanize }}s over the last 5 minutes.
+
+    # ---------------------------------------------------------------------
+    # Error-rate SLO — 5xx error ratio > 1% over a 5-minute window
+    # ---------------------------------------------------------------------
+    - name: homefix.errors.slo
+      rules:
+        - alert: HighErrorRatePerService
+          expr: |
+            (
+              sum by (namespace, service) (
+                rate(http_server_requests_seconds_count{status=~"5.."}[5m])
+              )
+              /
+              sum by (namespace, service) (
+                rate(http_server_requests_seconds_count[5m])
+              )
+            ) > 0.01
+          for: 5m
+          labels:
+            severity: critical
+            slo: availability
+          annotations:
+            summary: "Error rate above 1% for {{ $labels.service }}"
+            description: >
+              Service {{ $labels.service }} (namespace {{ $labels.namespace }})
+              is returning 5xx responses at {{ $value | humanizePercentage }} of
+              total traffic over the last 5 minutes, exceeding the 1% SLO.
+
+    # ---------------------------------------------------------------------
+    # Kafka consumer lag — event-driven services falling behind
+    # ---------------------------------------------------------------------
+    - name: homefix.kafka.consumer
+      rules:
+        - alert: KafkaConsumerLagHigh
+          expr: |
+            sum by (consumergroup, topic) (
+              kafka_consumergroup_lag
+            ) > 1000
+          for: 10m
+          labels:
+            severity: warning
+            component: kafka
+          annotations:
+            summary: "Kafka consumer lag high on {{ $labels.consumergroup }}"
+            description: >
+              Consumer group {{ $labels.consumergroup }} is lagging by
+              {{ $value }} messages on topic {{ $labels.topic }} for over 10
+              minutes.
+
+        - alert: KafkaConsumerLagCritical
+          expr: |
+            sum by (consumergroup, topic) (
+              kafka_consumergroup_lag
+            ) > 10000
+          for: 5m
+          labels:
+            severity: critical
+            component: kafka
+          annotations:
+            summary: "Kafka consumer lag critical on {{ $labels.consumergroup }}"
+            description: >
+              Consumer group {{ $labels.consumergroup }} is lagging by
+              {{ $value }} messages on topic {{ $labels.topic }} — consumers may
+              be stuck or under-provisioned.
+
+        - alert: KafkaDlqMessagesPresent
+          expr: |
+            sum by (topic) (
+              rate(kafka_topic_partition_current_offset{topic=~".*\\.DLQ|.*-dlq|.*dead-letter.*"}[5m])
+            ) > 0
+          for: 1m
+          labels:
+            severity: warning
+            component: kafka
+          annotations:
+            summary: "Messages arriving in DLQ topic {{ $labels.topic }}"
+            description: >
+              Dead-letter topic {{ $labels.topic }} is receiving messages,
+              indicating repeated consumer processing failures.
+
+    # ---------------------------------------------------------------------
+    # Resource saturation — DB pool, JVM, pods
+    # ---------------------------------------------------------------------
+    - name: homefix.resources
+      rules:
+        - alert: DbConnectionPoolNearExhaustion
+          expr: |
+            (
+              hikaricp_connections_active
+              /
+              hikaricp_connections_max
+            ) > 0.9
+          for: 5m
+          labels:
+            severity: warning
+            component: database
+          annotations:
+            summary: "DB connection pool >90% utilised for {{ $labels.service }}"
+            description: >
+              HikariCP active connections are above 90% of the pool maximum for
+              {{ $labels.service }} over the last 5 minutes.
+
+        - alert: PodCrashLooping
+          expr: |
+            increase(kube_pod_container_status_restarts_total{namespace=~".*(auth-customer-provider|booking-dispatch-location|payment-invoice-rating|notification-chat-complaint|admin-reporting-promotion|catalog-pricing-verification).*"}[15m]) > 3
+          for: 5m
+          labels:
+            severity: critical
+            component: workload
+          annotations:
+            summary: "Pod {{ $labels.pod }} is crash-looping"
+            description: >
+              Pod {{ $labels.pod }} in namespace {{ $labels.namespace }} has
+              restarted more than 3 times in the last 15 minutes.
+
+        - alert: HighJvmHeapUsage
+          expr: |
+            (
+              sum by (namespace, service) (jvm_memory_used_bytes{area="heap"})
+              /
+              sum by (namespace, service) (jvm_memory_max_bytes{area="heap"})
+            ) > 0.9
+          for: 10m
+          labels:
+            severity: warning
+            component: jvm
+          annotations:
+            summary: "JVM heap >90% for {{ $labels.service }}"
+            description: >
+              {{ $labels.service }} JVM heap usage has exceeded 90% of maximum
+              for over 10 minutes.
+
+    # ---------------------------------------------------------------------
+    # Cache — Redis hit ratio degradation
+    # ---------------------------------------------------------------------
+    - name: homefix.cache
+      rules:
+        - alert: RedisCacheHitRatioLow
+          expr: |
+            (
+              rate(redis_keyspace_hits_total[5m])
+              /
+              clamp_min(
+                rate(redis_keyspace_hits_total[5m]) + rate(redis_keyspace_misses_total[5m]),
+                1
+              )
+            ) < 0.7
+          for: 15m
+          labels:
+            severity: warning
+            component: cache
+          annotations:
+            summary: "Redis cache hit ratio below 70%"
+            description: >
+              Redis cache hit ratio has dropped below 70% over the last 15
+              minutes ({{ $value | humanizePercentage }}).

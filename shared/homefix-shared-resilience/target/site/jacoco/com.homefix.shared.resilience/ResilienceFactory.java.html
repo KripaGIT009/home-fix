@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ResilienceFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Shared Resilience</a> &gt; <a href="index.source.html" class="el_package">com.homefix.shared.resilience</a> &gt; <span class="el_source">ResilienceFactory.java</span></div><h1>ResilienceFactory.java</h1><pre class="source lang-java linenums">package com.homefix.shared.resilience;
+
+import java.time.Duration;
+
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+import io.github.resilience4j.core.IntervalFunction;
+import io.github.resilience4j.retry.Retry;
+import io.github.resilience4j.retry.RetryConfig;
+import io.github.resilience4j.retry.RetryRegistry;
+
+/**
+ * Builds the shared Resilience4j primitives with the platform-wide configuration mandated by
+ * Requirement 24. A single factory instance is shared per service so every dependency gets a
+ * consistently configured, independently-tracked circuit breaker and retry.
+ *
+ * &lt;p&gt;Configuration (identical across all services, per Requirements 24.1 and 24.2):
+ * &lt;ul&gt;
+ *   &lt;li&gt;&lt;b&gt;Circuit breaker&lt;/b&gt; — 50% failure-rate threshold over a count-based sliding window of
+ *       10 calls; 30 seconds in the open state before transitioning to half-open.&lt;/li&gt;
+ *   &lt;li&gt;&lt;b&gt;Retry&lt;/b&gt; — maximum 3 attempts, exponential backoff starting at 500 ms capped at 8 s,
+ *       only for transient failures ({@link TransientFailures#isTransient}).&lt;/li&gt;
+ * &lt;/ul&gt;
+ */
+public class ResilienceFactory {
+
+    /** Failure-rate threshold, in percent, at which the breaker opens (Requirement 24.1). */
+    public static final float FAILURE_RATE_THRESHOLD = 50.0f;
+
+    /** Number of calls in the count-based sliding window (Requirement 24.1). */
+    public static final int SLIDING_WINDOW_SIZE = 10;
+
+    /** How long the breaker stays open before probing half-open (Requirement 24.1). */
+<span class="fc" id="L35">    public static final Duration OPEN_STATE_WAIT = Duration.ofSeconds(30);</span>
+
+    /** Total attempts including the first call: 1 initial + up to 2 retries = 3 (Requirement 24.2). */
+    public static final int MAX_ATTEMPTS = 3;
+
+    /** Initial backoff before the first retry (Requirement 24.2). */
+<span class="fc" id="L41">    public static final Duration INITIAL_BACKOFF = Duration.ofMillis(500);</span>
+
+    /** Backoff ceiling — no wait between attempts exceeds this (Requirement 24.2). */
+<span class="fc" id="L44">    public static final Duration MAX_BACKOFF = Duration.ofSeconds(8);</span>
+
+<span class="fc" id="L46">    private static final double BACKOFF_MULTIPLIER = 2.0;</span>
+
+    private final CircuitBreakerRegistry circuitBreakerRegistry;
+    private final RetryRegistry retryRegistry;
+
+<span class="fc" id="L51">    public ResilienceFactory() {</span>
+<span class="fc" id="L52">        this.circuitBreakerRegistry = CircuitBreakerRegistry.of(defaultCircuitBreakerConfig());</span>
+<span class="fc" id="L53">        this.retryRegistry = RetryRegistry.of(defaultRetryConfig());</span>
+<span class="fc" id="L54">    }</span>
+
+    /**
+     * Returns the circuit breaker for the named dependency, creating it on first use. Names should
+     * identify the downstream by service (e.g. {@code &quot;pricing-engine&quot;}) so metrics and the
+     * fallback WARN log (Requirement 24.4) can attribute the failure.
+     */
+    public CircuitBreaker circuitBreaker(String dependencyName) {
+<span class="fc" id="L62">        return circuitBreakerRegistry.circuitBreaker(dependencyName);</span>
+    }
+
+    /** Returns the retry policy for the named dependency, creating it on first use. */
+    public Retry retry(String dependencyName) {
+<span class="fc" id="L67">        return retryRegistry.retry(dependencyName);</span>
+    }
+
+    /** Exposed so services can register the Micrometer breaker-state gauges (Requirement 25.4). */
+    public CircuitBreakerRegistry circuitBreakerRegistry() {
+<span class="nc" id="L72">        return circuitBreakerRegistry;</span>
+    }
+
+    public RetryRegistry retryRegistry() {
+<span class="nc" id="L76">        return retryRegistry;</span>
+    }
+
+    static CircuitBreakerConfig defaultCircuitBreakerConfig() {
+<span class="fc" id="L80">        return CircuitBreakerConfig.custom()</span>
+<span class="fc" id="L81">                .failureRateThreshold(FAILURE_RATE_THRESHOLD)</span>
+<span class="fc" id="L82">                .slidingWindowType(CircuitBreakerConfig.SlidingWindowType.COUNT_BASED)</span>
+<span class="fc" id="L83">                .slidingWindowSize(SLIDING_WINDOW_SIZE)</span>
+                // Require the full window before computing the failure rate so the breaker opens
+                // deterministically at &quot;50% of 10 calls&quot; rather than on the very first failures.
+<span class="fc" id="L86">                .minimumNumberOfCalls(SLIDING_WINDOW_SIZE)</span>
+<span class="fc" id="L87">                .waitDurationInOpenState(OPEN_STATE_WAIT)</span>
+<span class="fc" id="L88">                .permittedNumberOfCallsInHalfOpenState(SLIDING_WINDOW_SIZE / 2)</span>
+<span class="fc" id="L89">                .automaticTransitionFromOpenToHalfOpenEnabled(true)</span>
+                // Only transient failures should trip the breaker; a 4xx is a caller error.
+<span class="fc" id="L91">                .recordException(TransientFailures::isTransient)</span>
+<span class="fc" id="L92">                .build();</span>
+    }
+
+    static RetryConfig defaultRetryConfig() {
+<span class="fc" id="L96">        IntervalFunction backoff = IntervalFunction.ofExponentialBackoff(</span>
+<span class="fc" id="L97">                INITIAL_BACKOFF, BACKOFF_MULTIPLIER, MAX_BACKOFF);</span>
+<span class="fc" id="L98">        return RetryConfig.custom()</span>
+<span class="fc" id="L99">                .maxAttempts(MAX_ATTEMPTS)</span>
+<span class="fc" id="L100">                .intervalFunction(backoff)</span>
+<span class="fc" id="L101">                .retryOnException(TransientFailures::isTransient)</span>
+<span class="fc" id="L102">                .build();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

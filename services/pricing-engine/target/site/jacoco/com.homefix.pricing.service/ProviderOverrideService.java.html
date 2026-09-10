@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ProviderOverrideService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Pricing Engine</a> &gt; <a href="index.source.html" class="el_package">com.homefix.pricing.service</a> &gt; <span class="el_source">ProviderOverrideService.java</span></div><h1>ProviderOverrideService.java</h1><pre class="source lang-java linenums">package com.homefix.pricing.service;
+
+import java.math.BigDecimal;
+import java.util.List;
+
+import org.springframework.stereotype.Service;
+
+import com.homefix.pricing.domain.PricingParameters;
+
+/**
+ * Validation of provider-specific pricing overrides (Requirement 6.12, Property 7).
+ *
+ * &lt;p&gt;A provider may propose a custom base price for a subcategory. The override is rejected if
+ * and only if the proposed price is below the platform-defined floor or above the ceiling for
+ * that subcategory; otherwise it is accepted. On rejection the error specifies the permitted
+ * range.
+ */
+@Service
+<span class="fc" id="L19">public class ProviderOverrideService {</span>
+
+    /**
+     * Validates a provider-specific override against the subcategory floor/ceiling.
+     *
+     * @return the accepted override price (unchanged) when within range.
+     * @throws PricingException with error code {@code OVERRIDE_OUT_OF_RANGE} when out of range.
+     */
+    public BigDecimal validateOverride(BigDecimal proposedPrice, PricingParameters params) {
+<span class="pc bpc" id="L28" title="1 of 2 branches missed.">        if (proposedPrice == null) {</span>
+<span class="nc" id="L29">            throw PricingException.validation(&quot;Override price is required&quot;);</span>
+        }
+<span class="fc" id="L31">        BigDecimal floor = params.overrideFloor();</span>
+<span class="fc" id="L32">        BigDecimal ceiling = params.overrideCeiling();</span>
+
+<span class="pc bpc" id="L34" title="1 of 4 branches missed.">        boolean belowFloor = floor != null &amp;&amp; proposedPrice.compareTo(floor) &lt; 0;</span>
+<span class="pc bpc" id="L35" title="1 of 4 branches missed.">        boolean aboveCeiling = ceiling != null &amp;&amp; proposedPrice.compareTo(ceiling) &gt; 0;</span>
+
+<span class="fc bfc" id="L37" title="All 4 branches covered.">        if (belowFloor || aboveCeiling) {</span>
+<span class="fc" id="L38">            throw PricingException.overrideOutOfRange(</span>
+                    &quot;Provider-specific price &quot; + proposedPrice + &quot; is outside the permitted range [&quot;
+<span class="fc" id="L40">                            + floor + &quot;, &quot; + ceiling + &quot;] for subcategory &quot; + params.subcategoryId(),</span>
+<span class="fc" id="L41">                    List.of(&quot;floor=&quot; + floor, &quot;ceiling=&quot; + ceiling, &quot;proposed=&quot; + proposedPrice));</span>
+        }
+<span class="fc" id="L43">        return proposedPrice;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

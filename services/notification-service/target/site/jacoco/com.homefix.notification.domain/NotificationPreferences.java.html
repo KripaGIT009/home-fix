@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>NotificationPreferences.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Notification Service</a> &gt; <a href="index.source.html" class="el_package">com.homefix.notification.domain</a> &gt; <span class="el_source">NotificationPreferences.java</span></div><h1>NotificationPreferences.java</h1><pre class="source lang-java linenums">package com.homefix.notification.domain;
+
+import java.util.EnumSet;
+import java.util.Set;
+
+/**
+ * A user's per-channel notification preferences (Requirement 17.6).
+ *
+ * &lt;p&gt;A channel is delivered to only if the user has it enabled. When preference data is
+ * unavailable at dispatch time, the service defaults to treating &lt;em&gt;all&lt;/em&gt; channels as enabled
+ * — use {@link #allEnabled()} for that case.
+ *
+ * &lt;p&gt;This is an immutable value object with no framework dependencies, so it is trivially unit-
+ * and property-testable.
+ */
+public final class NotificationPreferences {
+
+    private final Set&lt;NotificationChannel&gt; enabledChannels;
+
+<span class="fc" id="L20">    private NotificationPreferences(Set&lt;NotificationChannel&gt; enabledChannels) {</span>
+        // Defensive copy into an EnumSet so callers cannot mutate internal state.
+<span class="pc bpc" id="L22" title="1 of 2 branches missed.">        this.enabledChannels = enabledChannels.isEmpty()</span>
+<span class="nc" id="L23">                ? EnumSet.noneOf(NotificationChannel.class)</span>
+<span class="fc" id="L24">                : EnumSet.copyOf(enabledChannels);</span>
+<span class="fc" id="L25">    }</span>
+
+    /** Preferences that enable every channel — the default when preference data is unavailable. */
+    public static NotificationPreferences allEnabled() {
+<span class="fc" id="L29">        return new NotificationPreferences(EnumSet.allOf(NotificationChannel.class));</span>
+    }
+
+    /** Preferences enabling exactly the supplied channels. */
+    public static NotificationPreferences of(Set&lt;NotificationChannel&gt; enabledChannels) {
+<span class="nc" id="L34">        return new NotificationPreferences(enabledChannels);</span>
+    }
+
+    /** Preferences enabling exactly the supplied channels. */
+    public static NotificationPreferences of(NotificationChannel... enabledChannels) {
+<span class="fc" id="L39">        Set&lt;NotificationChannel&gt; set = EnumSet.noneOf(NotificationChannel.class);</span>
+<span class="fc bfc" id="L40" title="All 2 branches covered.">        for (NotificationChannel channel : enabledChannels) {</span>
+<span class="fc" id="L41">            set.add(channel);</span>
+        }
+<span class="fc" id="L43">        return new NotificationPreferences(set);</span>
+    }
+
+    /** Preferences that disable every channel. */
+    public static NotificationPreferences none() {
+<span class="nc" id="L48">        return new NotificationPreferences(EnumSet.noneOf(NotificationChannel.class));</span>
+    }
+
+    /** Whether the given channel is enabled for the user. */
+    public boolean isEnabled(NotificationChannel channel) {
+<span class="fc" id="L53">        return enabledChannels.contains(channel);</span>
+    }
+
+    /** An immutable snapshot of the enabled channels. */
+    public Set&lt;NotificationChannel&gt; enabledChannels() {
+<span class="nc bnc" id="L58" title="All 2 branches missed.">        return EnumSet.copyOf(enabledChannels.isEmpty()</span>
+<span class="nc" id="L59">                ? EnumSet.noneOf(NotificationChannel.class)</span>
+<span class="nc" id="L60">                : enabledChannels);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

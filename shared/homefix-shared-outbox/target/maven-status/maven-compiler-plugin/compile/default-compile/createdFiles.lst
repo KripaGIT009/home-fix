@@ -1,0 +1,13 @@
+com\homefix\shared\outbox\OutboxEventPublisher.class
+com\homefix\shared\outbox\kafka\IdempotentKafkaConsumer$Sleeper.class
+com\homefix\shared\outbox\OutboxEventRepository.class
+com\homefix\shared\outbox\kafka\KafkaProducerTemplate.class
+com\homefix\shared\outbox\kafka\ProcessedEventEntity.class
+com\homefix\shared\outbox\kafka\ProcessedEventEntity$ProcessedEventId.class
+com\homefix\shared\outbox\HomefixOutboxAutoConfiguration.class
+com\homefix\shared\outbox\kafka\ProcessedEventRepository.class
+com\homefix\shared\outbox\kafka\DlqForwarder.class
+com\homefix\shared\outbox\OutboxEventStatus.class
+com\homefix\shared\outbox\OutboxEventEntity.class
+com\homefix\shared\outbox\kafka\KafkaProducerTemplate$KafkaPublishException.class
+com\homefix\shared\outbox\kafka\IdempotentKafkaConsumer.class

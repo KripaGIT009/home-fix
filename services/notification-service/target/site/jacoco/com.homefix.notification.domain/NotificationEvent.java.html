@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>NotificationEvent.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Notification Service</a> &gt; <a href="index.source.html" class="el_package">com.homefix.notification.domain</a> &gt; <span class="el_source">NotificationEvent.java</span></div><h1>NotificationEvent.java</h1><pre class="source lang-java linenums">package com.homefix.notification.domain;
+
+import java.util.Map;
+import java.util.Objects;
+import java.util.UUID;
+
+/**
+ * Normalised, in-domain representation of an inbound lifecycle event after it has been parsed
+ * from Kafka and its recipient resolved.
+ *
+ * @param eventType       which of the 11 lifecycle events this is (Requirement 17.5)
+ * @param kafkaEventId    the stable Kafka event id, used as the first half of the dedup key
+ *                        (Requirement 17.7, Property 22)
+ * @param recipientUserId the user who should receive the notification
+ * @param contact         the recipient's per-channel contact details (mobile/email/device token)
+ * @param attributes      non-PII template attributes (e.g. booking reference) for rendering
+ */
+public record NotificationEvent(
+        NotificationEventType eventType,
+        UUID kafkaEventId,
+        UUID recipientUserId,
+        NotificationContact contact,
+        Map&lt;String, String&gt; attributes) {
+
+<span class="fc" id="L25">    public NotificationEvent {</span>
+<span class="fc" id="L26">        Objects.requireNonNull(eventType, &quot;eventType&quot;);</span>
+<span class="fc" id="L27">        Objects.requireNonNull(kafkaEventId, &quot;kafkaEventId&quot;);</span>
+<span class="fc" id="L28">        Objects.requireNonNull(recipientUserId, &quot;recipientUserId&quot;);</span>
+<span class="pc bpc" id="L29" title="1 of 2 branches missed.">        contact = contact == null ? NotificationContact.empty() : contact;</span>
+<span class="pc bpc" id="L30" title="1 of 2 branches missed.">        attributes = attributes == null ? Map.of() : Map.copyOf(attributes);</span>
+<span class="fc" id="L31">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

@@ -1,0 +1,5 @@
+# Send only the fat jar the Dockerfile copies: everything else in target/
+# (exploded classes, test reports, the pre-repackage jar) would be uploaded as
+# build context on every build for nothing.
+*
+!target/*-1.0.0-SNAPSHOT.jar

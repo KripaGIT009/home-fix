@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RedisOtpStore.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Auth Service</a> &gt; <a href="index.source.html" class="el_package">com.homefix.auth.otp</a> &gt; <span class="el_source">RedisOtpStore.java</span></div><h1>RedisOtpStore.java</h1><pre class="source lang-java linenums">package com.homefix.auth.otp;
+
+import java.time.Duration;
+import java.util.Optional;
+
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.stereotype.Repository;
+
+/**
+ * Redis-backed {@link OtpStore}.
+ *
+ * &lt;p&gt;Key layout (all namespaced under {@code auth:otp:}):
+ * &lt;ul&gt;
+ *   &lt;li&gt;{@code auth:otp:session:{phone}}  -&gt; hash {codeHash, attempts, role}, TTL = OTP window&lt;/li&gt;
+ *   &lt;li&gt;{@code auth:otp:lock:{phone}}     -&gt; &quot;1&quot;, TTL = lockout window (Property 25)&lt;/li&gt;
+ *   &lt;li&gt;{@code auth:otp:rate:{phone}}     -&gt; counter, TTL = rate-limit window (Requirement 23.4)&lt;/li&gt;
+ * &lt;/ul&gt;
+ *
+ * &lt;p&gt;Using Redis TTLs means the 5-minute OTP expiry and the exact 30-minute lockout are
+ * enforced by key expiry rather than application-side clock checks.
+ */
+@Repository
+public class RedisOtpStore implements OtpStore {
+
+    private static final String SESSION_PREFIX = &quot;auth:otp:session:&quot;;
+    private static final String LOCK_PREFIX = &quot;auth:otp:lock:&quot;;
+    private static final String RATE_PREFIX = &quot;auth:otp:rate:&quot;;
+
+    private static final String FIELD_CODE_HASH = &quot;codeHash&quot;;
+    private static final String FIELD_ATTEMPTS = &quot;attempts&quot;;
+    private static final String FIELD_ROLE = &quot;role&quot;;
+
+    private final StringRedisTemplate redis;
+
+<span class="fc" id="L35">    public RedisOtpStore(StringRedisTemplate redis) {</span>
+<span class="fc" id="L36">        this.redis = redis;</span>
+<span class="fc" id="L37">    }</span>
+
+    @Override
+    public void saveSession(String mobileNumber, OtpSession session, Duration ttl) {
+<span class="fc" id="L41">        String key = sessionKey(mobileNumber);</span>
+<span class="fc" id="L42">        redis.delete(key);</span>
+<span class="fc" id="L43">        redis.opsForHash().put(key, FIELD_CODE_HASH, session.codeHash());</span>
+<span class="fc" id="L44">        redis.opsForHash().put(key, FIELD_ATTEMPTS, Integer.toString(session.attempts()));</span>
+<span class="fc" id="L45">        redis.opsForHash().put(key, FIELD_ROLE, session.role());</span>
+<span class="fc" id="L46">        redis.expire(key, ttl);</span>
+<span class="fc" id="L47">    }</span>
+
+    @Override
+    public Optional&lt;OtpSession&gt; findSession(String mobileNumber) {
+<span class="fc" id="L51">        String key = sessionKey(mobileNumber);</span>
+<span class="fc" id="L52">        Object codeHash = redis.opsForHash().get(key, FIELD_CODE_HASH);</span>
+<span class="fc bfc" id="L53" title="All 2 branches covered.">        if (codeHash == null) {</span>
+<span class="fc" id="L54">            return Optional.empty();</span>
+        }
+<span class="fc" id="L56">        Object attempts = redis.opsForHash().get(key, FIELD_ATTEMPTS);</span>
+<span class="fc" id="L57">        Object role = redis.opsForHash().get(key, FIELD_ROLE);</span>
+<span class="fc bfc" id="L58" title="All 2 branches covered.">        int attemptCount = attempts == null ? 0 : Integer.parseInt(attempts.toString());</span>
+<span class="fc" id="L59">        return Optional.of(new OtpSession(codeHash.toString(), attemptCount,</span>
+<span class="fc bfc" id="L60" title="All 2 branches covered.">                role == null ? null : role.toString()));</span>
+    }
+
+    @Override
+    public int incrementAttempts(String mobileNumber) {
+<span class="fc" id="L65">        String key = sessionKey(mobileNumber);</span>
+<span class="fc" id="L66">        Long updated = redis.opsForHash().increment(key, FIELD_ATTEMPTS, 1L);</span>
+<span class="fc bfc" id="L67" title="All 2 branches covered.">        return updated == null ? 0 : updated.intValue();</span>
+    }
+
+    @Override
+    public void clearSession(String mobileNumber) {
+<span class="fc" id="L72">        redis.delete(sessionKey(mobileNumber));</span>
+<span class="fc" id="L73">    }</span>
+
+    @Override
+    public void lock(String mobileNumber, Duration lockout) {
+        // Clear the spent session and set the lock key with a TTL equal to the lockout window.
+<span class="fc" id="L78">        clearSession(mobileNumber);</span>
+<span class="fc" id="L79">        redis.opsForValue().set(lockKey(mobileNumber), &quot;1&quot;, lockout);</span>
+<span class="fc" id="L80">    }</span>
+
+    @Override
+    public boolean isLocked(String mobileNumber) {
+<span class="fc" id="L84">        return Boolean.TRUE.equals(redis.hasKey(lockKey(mobileNumber)));</span>
+    }
+
+    @Override
+    public Duration lockRemaining(String mobileNumber) {
+<span class="fc" id="L89">        Long seconds = redis.getExpire(lockKey(mobileNumber));</span>
+<span class="fc bfc" id="L90" title="All 4 branches covered.">        if (seconds == null || seconds &lt;= 0) {</span>
+<span class="fc" id="L91">            return Duration.ZERO;</span>
+        }
+<span class="fc" id="L93">        return Duration.ofSeconds(seconds);</span>
+    }
+
+    @Override
+    public long recordRequestAndCount(String mobileNumber, Duration window) {
+<span class="fc" id="L98">        String key = rateKey(mobileNumber);</span>
+<span class="fc" id="L99">        Long count = redis.opsForValue().increment(key);</span>
+<span class="fc bfc" id="L100" title="All 4 branches covered.">        if (count != null &amp;&amp; count == 1L) {</span>
+            // First request in this window — start the expiry clock.
+<span class="fc" id="L102">            redis.expire(key, window);</span>
+        }
+<span class="fc bfc" id="L104" title="All 2 branches covered.">        return count == null ? 0L : count;</span>
+    }
+
+    private String sessionKey(String mobileNumber) {
+<span class="fc" id="L108">        return SESSION_PREFIX + mobileNumber;</span>
+    }
+
+    private String lockKey(String mobileNumber) {
+<span class="fc" id="L112">        return LOCK_PREFIX + mobileNumber;</span>
+    }
+
+    private String rateKey(String mobileNumber) {
+<span class="fc" id="L116">        return RATE_PREFIX + mobileNumber;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

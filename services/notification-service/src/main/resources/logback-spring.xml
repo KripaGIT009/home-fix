@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  notification-service logging: reuse the shared structured-JSON base (Task 5) so every log line
+  carries the mandatory fields (timestamp, serviceName, traceId, spanId, logLevel, message) and
+  is PII-scrubbed. Notification payloads may contain a user's phone/email, so this service never
+  logs recipient addresses or message bodies (Requirement 26.4).
+-->
+<configuration>
+    <property name="SERVICE_NAME" value="${spring.application.name:-notification-service}"/>
+    <include resource="logback-json-base.xml"/>
+    <root level="INFO">
+        <appender-ref ref="JSON_STDOUT"/>
+    </root>
+</configuration>

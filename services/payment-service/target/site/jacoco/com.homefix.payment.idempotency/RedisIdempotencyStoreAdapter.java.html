@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RedisIdempotencyStoreAdapter.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Payment Service</a> &gt; <a href="index.source.html" class="el_package">com.homefix.payment.idempotency</a> &gt; <span class="el_source">RedisIdempotencyStoreAdapter.java</span></div><h1>RedisIdempotencyStoreAdapter.java</h1><pre class="source lang-java linenums">package com.homefix.payment.idempotency;
+
+import java.time.Duration;
+import java.util.Optional;
+import java.util.UUID;
+
+import org.springframework.data.redis.core.StringRedisTemplate;
+
+/**
+ * Redis-backed {@link IdempotencyStorePort} keyed by {@code payment:idem:{key}} with a TTL that
+ * covers the payment window (Requirement 12.3). Uses {@code SET key value NX EX ttl} semantics via
+ * {@code setIfAbsent} so a duplicate concurrent request cannot both create the entry.
+ */
+public class RedisIdempotencyStoreAdapter implements IdempotencyStorePort {
+
+    private static final String KEY_PREFIX = &quot;payment:idem:&quot;;
+
+    private final StringRedisTemplate redis;
+
+<span class="fc" id="L20">    public RedisIdempotencyStoreAdapter(StringRedisTemplate redis) {</span>
+<span class="fc" id="L21">        this.redis = redis;</span>
+<span class="fc" id="L22">    }</span>
+
+    @Override
+    public boolean putIfAbsent(String key, UUID transactionId, Duration ttl) {
+<span class="fc" id="L26">        Boolean created = redis.opsForValue()</span>
+<span class="fc" id="L27">                .setIfAbsent(redisKey(key), transactionId.toString(), ttl);</span>
+<span class="fc" id="L28">        return Boolean.TRUE.equals(created);</span>
+    }
+
+    @Override
+    public Optional&lt;UUID&gt; find(String key) {
+<span class="fc" id="L33">        String value = redis.opsForValue().get(redisKey(key));</span>
+<span class="fc bfc" id="L34" title="All 2 branches covered.">        return value == null ? Optional.empty() : Optional.of(UUID.fromString(value));</span>
+    }
+
+    private String redisKey(String key) {
+<span class="fc" id="L38">        return KEY_PREFIX + key;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

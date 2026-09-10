@@ -1,0 +1,10 @@
+com\homefix\location\subscription\InMemorySubscriberRegistryTest$1.class
+com\homefix\location\support\MutableClock.class
+com\homefix\location\eta\HaversineEtaCalculatorAdapterTest.class
+com\homefix\location\subscription\InMemorySubscriberRegistryTest$RecordingSession.class
+com\homefix\location\event\JobStartedConsumerTest.class
+com\homefix\location\service\LocationServiceTest.class
+com\homefix\location\support\InMemoryLocationStore.class
+com\homefix\location\subscription\InMemorySubscriberRegistryTest.class
+com\homefix\location\support\AbstractInMemoryTerminatedRepository.class
+com\homefix\location\service\LocationServiceTest$InMemoryTerminatedRepository.class

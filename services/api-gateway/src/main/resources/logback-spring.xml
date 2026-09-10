@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  api-gateway logging: reuse the shared structured-JSON base (Task 5) so every log line
+  carries the mandatory fields (timestamp, serviceName, traceId, spanId, logLevel, message,
+  correlationId) and is PII-scrubbed. No attacker payloads or phone numbers are ever logged
+  (Requirement 26.4).
+-->
+<configuration>
+    <property name="SERVICE_NAME" value="${spring.application.name:-api-gateway}"/>
+    <include resource="logback-json-base.xml"/>
+    <root level="INFO">
+        <appender-ref ref="JSON_STDOUT"/>
+    </root>
+</configuration>

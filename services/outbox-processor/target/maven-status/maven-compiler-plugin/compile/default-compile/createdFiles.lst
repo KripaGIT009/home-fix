@@ -1,0 +1,13 @@
+com\homefix\outbox\OutboxProcessorApplication.class
+com\homefix\outbox\backoff\ExponentialBackoff.class
+com\homefix\outbox\config\RelayConfig.class
+com\homefix\outbox\config\KafkaConfig.class
+com\homefix\outbox\relay\OutboxRelayService.class
+com\homefix\outbox\relay\EventTopicResolver.class
+com\homefix\outbox\alert\OutboxAlertPort.class
+com\homefix\outbox\relay\OutboxPoller.class
+com\homefix\outbox\config\OutboxProcessorProperties$Topics.class
+com\homefix\outbox\config\OutboxProcessorProperties.class
+com\homefix\outbox\config\OutboxProcessorProperties$Retry.class
+com\homefix\outbox\alert\LoggingOutboxAlertAdapter.class
+com\homefix\outbox\relay\Sleeper.class

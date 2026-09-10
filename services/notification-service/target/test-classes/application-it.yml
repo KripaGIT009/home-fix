@@ -1,0 +1,56 @@
+# Integration-test profile for the Notification Service Kafka consumer tests (Task 45).
+#
+# Boots the full Notification Service Spring context (Kafka listeners + JPA + delivery pipeline)
+# against an in-memory H2 database and a real embedded Kafka broker (supplied by @EmbeddedKafka,
+# which overrides spring.kafka.bootstrap-servers). This exercises the genuine consume path:
+# @KafkaListener -> shared IdempotentKafkaConsumer (dedup + DLQ) -> NotificationDeliveryService.
+spring:
+  main:
+    # The app declares @EnableJpaRepositories over both its own package and the shared-outbox
+    # package (which also self-registers ProcessedEventRepository), yielding a duplicate bean
+    # definition under the test bootstrapper. Allow overriding in the IT so the context loads;
+    # the effective repository bean is identical either way.
+    allow-bean-definition-overriding: true
+  datasource:
+    url: jdbc:h2:mem:notification_it;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    username: sa
+    password: ""
+    driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      # processed_event + delivery_log schema generated from the JPA entities for the test run.
+      ddl-auto: create-drop
+    properties:
+      hibernate:
+        default_schema: ""
+    open-in-view: false
+  kafka:
+    # bootstrap-servers is injected by @EmbeddedKafka; pin serializers + a small consumer group.
+    consumer:
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      properties:
+        enable.idempotence: true
+
+homefix:
+  security:
+    # The shared servlet security filter chain is disabled for the IT; these tests do not drive
+    # the HTTP surface, only the Kafka consumer path.
+    enabled: false
+    jwt-secret: it-signing-secret-key-0123456789-abcdefzz
+  outbox:
+    enabled: true
+  notification:
+    # Fast backoff so the delivery-retry path does not slow the test.
+    retry-initial-backoff: PT0.001S
+
+logging:
+  level:
+    org.apache.kafka: warn
+    org.springframework.kafka: warn
+    com.homefix.notification: info

@@ -1,0 +1,10 @@
+com\homefix\chat\support\TestDoubles$RecordingDeliveryPort.class
+com\homefix\chat\support\TestDoubles$InMemoryChatStore.class
+com\homefix\chat\consumer\ChannelLifecycleConsumerTest$TestableConsumer.class
+com\homefix\chat\consumer\ChannelLifecycleConsumerTest.class
+com\homefix\chat\domain\PhoneNumberMaskerTest.class
+com\homefix\chat\service\ChatServiceTest.class
+com\homefix\chat\support\TestDoubles.class
+com\homefix\chat\support\TestDoubles$RecordingPushPort.class
+com\homefix\chat\support\TestDoubles$FixedPresenceRegistry.class
+com\homefix\chat\domain\ChannelParticipantsTest.class

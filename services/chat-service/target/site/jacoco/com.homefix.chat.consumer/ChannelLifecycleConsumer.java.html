@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ChannelLifecycleConsumer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Chat Service</a> &gt; <a href="index.source.html" class="el_package">com.homefix.chat.consumer</a> &gt; <span class="el_source">ChannelLifecycleConsumer.java</span></div><h1>ChannelLifecycleConsumer.java</h1><pre class="source lang-java linenums">package com.homefix.chat.consumer;
+
+import java.time.Clock;
+import java.util.HashMap;
+import java.util.Map;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.homefix.chat.config.ChatProperties;
+import com.homefix.chat.service.ChatService;
+import com.homefix.shared.outbox.kafka.DlqForwarder;
+import com.homefix.shared.outbox.kafka.IdempotentKafkaConsumer;
+import com.homefix.shared.outbox.kafka.ProcessedEventRepository;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.stereotype.Component;
+
+/**
+ * Drives the chat channel lifecycle from booking-lifecycle Kafka events, idempotently
+ * (Requirement 18.1, 18.5):
+ * &lt;ul&gt;
+ *   &lt;li&gt;{@code ProviderAccepted} -&gt; activate the channel {@code (bookingId, customerId, providerId)}&lt;/li&gt;
+ *   &lt;li&gt;{@code PaymentCompleted} -&gt; deactivate the channel&lt;/li&gt;
+ *   &lt;li&gt;{@code BookingCancelled} -&gt; deactivate the channel&lt;/li&gt;
+ * &lt;/ul&gt;
+ *
+ * &lt;p&gt;Consumer-level exactly-once handling (dedup on {@code (consumerGroup, eventId)}), retry, and
+ * dead-letter forwarding are inherited from the shared {@link IdempotentKafkaConsumer} (Task 6).
+ * The service-level operations are themselves idempotent, so any residual duplicate is harmless.
+ */
+@Component
+public class ChannelLifecycleConsumer extends IdempotentKafkaConsumer {
+
+    /** Consumer group; also the dedup scope for the shared {@code ProcessedEventEntity}. */
+    public static final String CONSUMER_GROUP = &quot;chat-service.lifecycle&quot;;
+
+<span class="fc" id="L38">    private static final Logger log = LoggerFactory.getLogger(ChannelLifecycleConsumer.class);</span>
+
+<span class="fc" id="L40">    private enum Action { ACTIVATE, DEACTIVATE }</span>
+
+    private final ChatService chatService;
+    private final ObjectMapper objectMapper;
+    private final Clock clock;
+    private final Map&lt;String, Action&gt; topicToAction;
+
+    public ChannelLifecycleConsumer(ProcessedEventRepository processedEventRepository,
+                                    DlqForwarder dlqForwarder,
+                                    ChatService chatService,
+                                    ObjectMapper objectMapper,
+                                    Clock clock,
+                                    ChatProperties properties) {
+<span class="fc" id="L53">        super(CONSUMER_GROUP, processedEventRepository, dlqForwarder);</span>
+<span class="fc" id="L54">        this.chatService = chatService;</span>
+<span class="fc" id="L55">        this.objectMapper = objectMapper;</span>
+<span class="fc" id="L56">        this.clock = clock;</span>
+<span class="fc" id="L57">        this.topicToAction = buildTopicIndex(properties);</span>
+<span class="fc" id="L58">    }</span>
+
+    @KafkaListener(topics = &quot;${homefix.chat.topics.provider-accepted:ProviderAccepted}&quot;,
+            groupId = CONSUMER_GROUP)
+    public void onProviderAccepted(ConsumerRecord&lt;String, String&gt; record) {
+<span class="nc" id="L63">        consume(record);</span>
+<span class="nc" id="L64">    }</span>
+
+    @KafkaListener(topics = &quot;${homefix.chat.topics.payment-completed:PaymentCompleted}&quot;,
+            groupId = CONSUMER_GROUP)
+    public void onPaymentCompleted(ConsumerRecord&lt;String, String&gt; record) {
+<span class="nc" id="L69">        consume(record);</span>
+<span class="nc" id="L70">    }</span>
+
+    @KafkaListener(topics = &quot;${homefix.chat.topics.booking-cancelled:BookingCancelled}&quot;,
+            groupId = CONSUMER_GROUP)
+    public void onBookingCancelled(ConsumerRecord&lt;String, String&gt; record) {
+<span class="nc" id="L75">        consume(record);</span>
+<span class="nc" id="L76">    }</span>
+
+    @Override
+    protected void handle(ConsumerRecord&lt;String, String&gt; record) {
+<span class="fc" id="L80">        Action action = topicToAction.get(record.topic());</span>
+<span class="pc bpc" id="L81" title="1 of 2 branches missed.">        if (action == null) {</span>
+            // Should never happen: every listener binds a topic present in the index. Treat an
+            // unknown topic as poison so it is dead-lettered rather than silently dropped.
+<span class="nc" id="L84">            throw new IllegalStateException(&quot;No chat lifecycle action for topic &quot; + record.topic());</span>
+        }
+<span class="fc" id="L86">        LifecycleEventPayload payload = parse(record.value());</span>
+<span class="pc bpc" id="L87" title="1 of 2 branches missed.">        if (payload.bookingId() == null) {</span>
+<span class="nc" id="L88">            throw new IllegalStateException(&quot;Lifecycle event payload is missing bookingId&quot;);</span>
+        }
+
+<span class="pc bpc" id="L91" title="1 of 3 branches missed.">        switch (action) {</span>
+            case ACTIVATE -&gt; {
+<span class="pc bpc" id="L93" title="1 of 4 branches missed.">                if (payload.customerId() == null || payload.providerId() == null) {</span>
+<span class="fc" id="L94">                    throw new IllegalStateException(</span>
+                            &quot;ProviderAccepted payload is missing customerId/providerId&quot;);
+                }
+<span class="pc bpc" id="L97" title="1 of 2 branches missed.">                var createdAt = payload.bookingCreatedAt() != null</span>
+<span class="pc" id="L98">                        ? payload.bookingCreatedAt() : clock.instant();</span>
+<span class="fc" id="L99">                chatService.activateChannel(payload.bookingId(), payload.customerId(),</span>
+<span class="fc" id="L100">                        payload.providerId(), createdAt);</span>
+<span class="fc" id="L101">            }</span>
+<span class="fc" id="L102">            case DEACTIVATE -&gt; chatService.deactivateChannel(payload.bookingId());</span>
+        }
+<span class="fc" id="L104">        log.debug(&quot;Applied {} for booking {} from topic {}&quot;,</span>
+<span class="fc" id="L105">                action, payload.bookingId(), record.topic());</span>
+<span class="fc" id="L106">    }</span>
+
+    private LifecycleEventPayload parse(String json) {
+        try {
+<span class="fc" id="L110">            return objectMapper.readValue(json, LifecycleEventPayload.class);</span>
+<span class="nc" id="L111">        } catch (Exception e) {</span>
+<span class="nc" id="L112">            throw new IllegalStateException(&quot;Unparseable lifecycle event payload&quot;, e);</span>
+        }
+    }
+
+    private static Map&lt;String, Action&gt; buildTopicIndex(ChatProperties properties) {
+<span class="fc" id="L117">        ChatProperties.Topics t = properties.getTopics();</span>
+<span class="fc" id="L118">        Map&lt;String, Action&gt; index = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L119">        index.put(t.getProviderAccepted(), Action.ACTIVATE);</span>
+<span class="fc" id="L120">        index.put(t.getPaymentCompleted(), Action.DEACTIVATE);</span>
+<span class="fc" id="L121">        index.put(t.getBookingCancelled(), Action.DEACTIVATE);</span>
+<span class="fc" id="L122">        return Map.copyOf(index);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

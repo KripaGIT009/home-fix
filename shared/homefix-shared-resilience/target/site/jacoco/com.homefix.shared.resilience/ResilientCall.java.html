@@ -1,0 +1,142 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ResilientCall.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Shared Resilience</a> &gt; <a href="index.source.html" class="el_package">com.homefix.shared.resilience</a> &gt; <span class="el_source">ResilientCall.java</span></div><h1>ResilientCall.java</h1><pre class="source lang-java linenums">package com.homefix.shared.resilience;
+
+import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.function.Supplier;
+
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import io.github.resilience4j.retry.Retry;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * Executes a synchronous outbound call to a named dependency under the full HomeFix resilience
+ * stack (Requirement 24): a per-call timeout ({@link TimeoutProfile}), retry with exponential
+ * backoff for transient failures, and a circuit breaker. When the breaker is open — or when every
+ * attempt has been exhausted — the configured {@link FallbackDecision} produces a degraded
+ * response and a WARN log naming the failed dependency is emitted (Requirement 24.4).
+ *
+ * &lt;p&gt;Decoration order (innermost first): {@code timeout → retry → circuit breaker}. The timeout is
+ * innermost so each individual attempt is bounded; the retry then re-issues timed-out or 5xx
+ * attempts; the breaker observes the final outcome of the retried call and trips when the failure
+ * rate crosses the threshold.
+ *
+ * &lt;p&gt;Instances are cheap and thread-safe; create one per dependency and reuse it.
+ *
+ * @param &lt;T&gt; the type returned by the guarded call
+ */
+public final class ResilientCall&lt;T&gt; {
+
+<span class="fc" id="L36">    private static final Logger log = LoggerFactory.getLogger(ResilientCall.class);</span>
+
+    // A small shared pool used only to bound each attempt with a hard timeout.
+<span class="fc" id="L39">    private static final ExecutorService TIMEOUT_POOL = Executors.newCachedThreadPool(r -&gt; {</span>
+<span class="fc" id="L40">        Thread t = new Thread(r, &quot;resilient-call-timeout&quot;);</span>
+<span class="fc" id="L41">        t.setDaemon(true);</span>
+<span class="fc" id="L42">        return t;</span>
+<span class="fc" id="L43">    });</span>
+
+    private final String dependencyName;
+    private final java.time.Duration timeout;
+    private final CircuitBreaker circuitBreaker;
+    private final Retry retry;
+    private final FallbackDecision&lt;T&gt; fallback;
+
+<span class="fc" id="L51">    private ResilientCall(String dependencyName, java.time.Duration timeout,</span>
+                          CircuitBreaker circuitBreaker, Retry retry, FallbackDecision&lt;T&gt; fallback) {
+<span class="fc" id="L53">        this.dependencyName = dependencyName;</span>
+<span class="fc" id="L54">        this.timeout = timeout;</span>
+<span class="fc" id="L55">        this.circuitBreaker = circuitBreaker;</span>
+<span class="fc" id="L56">        this.retry = retry;</span>
+<span class="fc" id="L57">        this.fallback = fallback;</span>
+<span class="fc" id="L58">    }</span>
+
+    /**
+     * Creates a resilient call for {@code dependencyName} using the given factory and timeout
+     * profile. The {@code fallback} supplies the degraded value returned when the breaker is open
+     * or all attempts fail.
+     */
+    public static &lt;T&gt; ResilientCall&lt;T&gt; forDependency(ResilienceFactory factory, String dependencyName,
+                                                     TimeoutProfile timeoutProfile,
+                                                     FallbackDecision&lt;T&gt; fallback) {
+<span class="fc" id="L68">        return forDependency(factory, dependencyName, timeoutProfile.timeout(), fallback);</span>
+    }
+
+    /**
+     * Creates a resilient call with an explicit per-attempt timeout. Prefer the
+     * {@link TimeoutProfile} overload in production code; this exists for callers that need a
+     * bespoke ceiling and for deterministic tests.
+     */
+    public static &lt;T&gt; ResilientCall&lt;T&gt; forDependency(ResilienceFactory factory, String dependencyName,
+                                                     java.time.Duration timeout,
+                                                     FallbackDecision&lt;T&gt; fallback) {
+<span class="fc" id="L79">        return new ResilientCall&lt;&gt;(dependencyName, timeout,</span>
+<span class="fc" id="L80">                factory.circuitBreaker(dependencyName), factory.retry(dependencyName), fallback);</span>
+    }
+
+    /**
+     * Runs {@code action} under the resilience stack. On success returns its value; on breaker-open
+     * or exhausted-retry failure returns the fallback value and logs a WARN naming the dependency.
+     */
+    public T execute(Callable&lt;T&gt; action) {
+<span class="fc" id="L88">        Supplier&lt;T&gt; timed = () -&gt; callWithTimeout(action);</span>
+<span class="fc" id="L89">        Supplier&lt;T&gt; retrying = Retry.decorateSupplier(retry, timed);</span>
+<span class="fc" id="L90">        Supplier&lt;T&gt; guarded = CircuitBreaker.decorateSupplier(circuitBreaker, retrying);</span>
+        try {
+<span class="fc" id="L92">            return guarded.get();</span>
+<span class="fc" id="L93">        } catch (CallNotPermittedException open) {</span>
+            // Breaker is open: fail fast to a degraded response without touching the dependency.
+<span class="fc" id="L95">            log.warn(&quot;Circuit breaker OPEN for dependency '{}'; returning degraded fallback response&quot;,</span>
+<span class="fc" id="L96">                    dependencyName);</span>
+<span class="fc" id="L97">            return fallback.apply(open);</span>
+<span class="fc" id="L98">        } catch (Exception failure) {</span>
+            // All retries exhausted (or a non-transient error): degrade and name the dependency.
+<span class="fc" id="L100">            log.warn(&quot;Call to dependency '{}' failed after retries; returning degraded fallback response&quot;,</span>
+<span class="fc" id="L101">                    dependencyName);</span>
+<span class="fc" id="L102">            return fallback.apply(failure);</span>
+        }
+    }
+
+    private T callWithTimeout(Callable&lt;T&gt; action) {
+<span class="fc" id="L107">        CompletableFuture&lt;T&gt; future = new CompletableFuture&lt;&gt;();</span>
+<span class="fc" id="L108">        var task = TIMEOUT_POOL.submit(() -&gt; {</span>
+            try {
+<span class="fc" id="L110">                future.complete(action.call());</span>
+<span class="fc" id="L111">            } catch (Throwable t) {</span>
+<span class="fc" id="L112">                future.completeExceptionally(t);</span>
+            }
+<span class="fc" id="L114">        });</span>
+        try {
+<span class="fc" id="L116">            return future.get(timeout.toMillis(), TimeUnit.MILLISECONDS);</span>
+<span class="fc" id="L117">        } catch (TimeoutException te) {</span>
+<span class="fc" id="L118">            task.cancel(true);</span>
+            // Surface as a transient failure so retry/breaker treat it consistently (Req 24.2/24.3).
+<span class="fc" id="L120">            throw new TransientFailures.ServerErrorException(504,</span>
+<span class="fc" id="L121">                    &quot;Call to '&quot; + dependencyName + &quot;' exceeded &quot; + timeout);</span>
+<span class="fc" id="L122">        } catch (ExecutionException ee) {</span>
+<span class="pc bpc" id="L123" title="1 of 2 branches missed.">            Throwable cause = ee.getCause() != null ? ee.getCause() : ee;</span>
+<span class="pc bpc" id="L124" title="1 of 2 branches missed.">            if (cause instanceof RuntimeException re) {</span>
+<span class="fc" id="L125">                throw re;</span>
+            }
+<span class="nc" id="L127">            throw new RuntimeException(cause);</span>
+<span class="nc" id="L128">        } catch (InterruptedException ie) {</span>
+<span class="nc" id="L129">            Thread.currentThread().interrupt();</span>
+<span class="nc" id="L130">            throw new RuntimeException(&quot;Interrupted calling '&quot; + dependencyName + &quot;'&quot;, ie);</span>
+        }
+    }
+
+    public String dependencyName() {
+<span class="nc" id="L135">        return dependencyName;</span>
+    }
+
+    public CircuitBreaker circuitBreaker() {
+<span class="nc" id="L139">        return circuitBreaker;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

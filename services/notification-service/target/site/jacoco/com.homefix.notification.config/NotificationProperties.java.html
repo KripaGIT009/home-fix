@@ -1,0 +1,213 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>NotificationProperties.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Notification Service</a> &gt; <a href="index.source.html" class="el_package">com.homefix.notification.config</a> &gt; <span class="el_source">NotificationProperties.java</span></div><h1>NotificationProperties.java</h1><pre class="source lang-java linenums">package com.homefix.notification.config;
+
+import java.time.Duration;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.NestedConfigurationProperty;
+
+/**
+ * Tunable notification-domain limits and vendor selectors (Requirement 17).
+ *
+ * &lt;p&gt;Defaults match the acceptance criteria; all values are overridable via configuration so
+ * operations can tune limits and swap vendors without a code change.
+ */
+@ConfigurationProperties(prefix = &quot;homefix.notification&quot;)
+<span class="fc" id="L15">public class NotificationProperties {</span>
+
+    /** Maximum delivery attempts per (event, channel) before permanent failure (Requirement 17.8). */
+<span class="fc" id="L18">    private int maxAttempts = 3;</span>
+
+    /**
+     * Backoff before the first retry; each subsequent retry doubles it, yielding the
+     * 1 s -&gt; 2 s -&gt; 4 s schedule mandated by Requirement 17.8.
+     */
+<span class="fc" id="L24">    private Duration retryInitialBackoff = Duration.ofSeconds(1);</span>
+
+    /** SMS vendor adapter selector: {@code log} (dev/test), {@code twilio}, {@code vonage}. */
+<span class="fc" id="L27">    private String smsProvider = &quot;log&quot;;</span>
+
+    /** Email vendor adapter selector: {@code log} (dev/test), {@code ses}, {@code sendgrid}. */
+<span class="fc" id="L30">    private String emailProvider = &quot;log&quot;;</span>
+
+    /** Push vendor adapter selector: {@code log} (dev/test), {@code fcm}. */
+<span class="fc" id="L33">    private String pushProvider = &quot;log&quot;;</span>
+
+<span class="fc" id="L35">    @NestedConfigurationProperty</span>
+    private Topics topics = new Topics();
+
+<span class="fc" id="L38">    @NestedConfigurationProperty</span>
+    private Clients clients = new Clients();
+
+    public int getMaxAttempts() {
+<span class="fc" id="L42">        return maxAttempts;</span>
+    }
+
+    public void setMaxAttempts(int maxAttempts) {
+<span class="fc" id="L46">        this.maxAttempts = maxAttempts;</span>
+<span class="fc" id="L47">    }</span>
+
+    public Duration getRetryInitialBackoff() {
+<span class="fc" id="L50">        return retryInitialBackoff;</span>
+    }
+
+    public void setRetryInitialBackoff(Duration retryInitialBackoff) {
+<span class="fc" id="L54">        this.retryInitialBackoff = retryInitialBackoff;</span>
+<span class="fc" id="L55">    }</span>
+
+    public String getSmsProvider() {
+<span class="fc" id="L58">        return smsProvider;</span>
+    }
+
+    public void setSmsProvider(String smsProvider) {
+<span class="fc" id="L62">        this.smsProvider = smsProvider;</span>
+<span class="fc" id="L63">    }</span>
+
+    public String getEmailProvider() {
+<span class="fc" id="L66">        return emailProvider;</span>
+    }
+
+    public void setEmailProvider(String emailProvider) {
+<span class="fc" id="L70">        this.emailProvider = emailProvider;</span>
+<span class="fc" id="L71">    }</span>
+
+    public String getPushProvider() {
+<span class="fc" id="L74">        return pushProvider;</span>
+    }
+
+    public void setPushProvider(String pushProvider) {
+<span class="fc" id="L78">        this.pushProvider = pushProvider;</span>
+<span class="fc" id="L79">    }</span>
+
+    public Topics getTopics() {
+<span class="fc" id="L82">        return topics;</span>
+    }
+
+    public void setTopics(Topics topics) {
+<span class="fc" id="L86">        this.topics = topics;</span>
+<span class="fc" id="L87">    }</span>
+
+    public Clients getClients() {
+<span class="fc" id="L90">        return clients;</span>
+    }
+
+    public void setClients(Clients clients) {
+<span class="fc" id="L94">        this.clients = clients;</span>
+<span class="fc" id="L95">    }</span>
+
+    /** Kafka topic names this service consumes (one per lifecycle event, Requirement 17.5). */
+<span class="fc" id="L98">    public static class Topics {</span>
+<span class="fc" id="L99">        private String bookingCreated = &quot;BookingCreated&quot;;</span>
+<span class="fc" id="L100">        private String providerAssigned = &quot;ProviderAssigned&quot;;</span>
+<span class="fc" id="L101">        private String providerAccepted = &quot;ProviderAccepted&quot;;</span>
+<span class="fc" id="L102">        private String providerRejected = &quot;ProviderRejected&quot;;</span>
+<span class="fc" id="L103">        private String providerArriving = &quot;ProviderArriving&quot;;</span>
+<span class="fc" id="L104">        private String providerArrived = &quot;ProviderArrived&quot;;</span>
+<span class="fc" id="L105">        private String jobStarted = &quot;JobStarted&quot;;</span>
+<span class="fc" id="L106">        private String jobCompleted = &quot;JobCompleted&quot;;</span>
+<span class="fc" id="L107">        private String paymentCompleted = &quot;PaymentCompleted&quot;;</span>
+<span class="fc" id="L108">        private String bookingCancelled = &quot;BookingCancelled&quot;;</span>
+<span class="fc" id="L109">        private String reviewSubmitted = &quot;ReviewSubmitted&quot;;</span>
+
+        public String getBookingCreated() {
+<span class="fc" id="L112">            return bookingCreated;</span>
+        }
+
+        public void setBookingCreated(String bookingCreated) {
+<span class="fc" id="L116">            this.bookingCreated = bookingCreated;</span>
+<span class="fc" id="L117">        }</span>
+
+        public String getProviderAssigned() {
+<span class="fc" id="L120">            return providerAssigned;</span>
+        }
+
+        public void setProviderAssigned(String providerAssigned) {
+<span class="fc" id="L124">            this.providerAssigned = providerAssigned;</span>
+<span class="fc" id="L125">        }</span>
+
+        public String getProviderAccepted() {
+<span class="fc" id="L128">            return providerAccepted;</span>
+        }
+
+        public void setProviderAccepted(String providerAccepted) {
+<span class="fc" id="L132">            this.providerAccepted = providerAccepted;</span>
+<span class="fc" id="L133">        }</span>
+
+        public String getProviderRejected() {
+<span class="fc" id="L136">            return providerRejected;</span>
+        }
+
+        public void setProviderRejected(String providerRejected) {
+<span class="fc" id="L140">            this.providerRejected = providerRejected;</span>
+<span class="fc" id="L141">        }</span>
+
+        public String getProviderArriving() {
+<span class="fc" id="L144">            return providerArriving;</span>
+        }
+
+        public void setProviderArriving(String providerArriving) {
+<span class="fc" id="L148">            this.providerArriving = providerArriving;</span>
+<span class="fc" id="L149">        }</span>
+
+        public String getProviderArrived() {
+<span class="fc" id="L152">            return providerArrived;</span>
+        }
+
+        public void setProviderArrived(String providerArrived) {
+<span class="fc" id="L156">            this.providerArrived = providerArrived;</span>
+<span class="fc" id="L157">        }</span>
+
+        public String getJobStarted() {
+<span class="fc" id="L160">            return jobStarted;</span>
+        }
+
+        public void setJobStarted(String jobStarted) {
+<span class="fc" id="L164">            this.jobStarted = jobStarted;</span>
+<span class="fc" id="L165">        }</span>
+
+        public String getJobCompleted() {
+<span class="fc" id="L168">            return jobCompleted;</span>
+        }
+
+        public void setJobCompleted(String jobCompleted) {
+<span class="fc" id="L172">            this.jobCompleted = jobCompleted;</span>
+<span class="fc" id="L173">        }</span>
+
+        public String getPaymentCompleted() {
+<span class="fc" id="L176">            return paymentCompleted;</span>
+        }
+
+        public void setPaymentCompleted(String paymentCompleted) {
+<span class="fc" id="L180">            this.paymentCompleted = paymentCompleted;</span>
+<span class="fc" id="L181">        }</span>
+
+        public String getBookingCancelled() {
+<span class="fc" id="L184">            return bookingCancelled;</span>
+        }
+
+        public void setBookingCancelled(String bookingCancelled) {
+<span class="fc" id="L188">            this.bookingCancelled = bookingCancelled;</span>
+<span class="fc" id="L189">        }</span>
+
+        public String getReviewSubmitted() {
+<span class="fc" id="L192">            return reviewSubmitted;</span>
+        }
+
+        public void setReviewSubmitted(String reviewSubmitted) {
+<span class="fc" id="L196">            this.reviewSubmitted = reviewSubmitted;</span>
+<span class="fc" id="L197">        }</span>
+    }
+
+    /** Downstream service base URLs. */
+<span class="fc" id="L201">    public static class Clients {</span>
+<span class="fc" id="L202">        private String preferenceServiceBaseUrl = &quot;http://customer-service&quot;;</span>
+
+        public String getPreferenceServiceBaseUrl() {
+<span class="fc" id="L205">            return preferenceServiceBaseUrl;</span>
+        }
+
+        public void setPreferenceServiceBaseUrl(String preferenceServiceBaseUrl) {
+<span class="fc" id="L209">            this.preferenceServiceBaseUrl = preferenceServiceBaseUrl;</span>
+<span class="fc" id="L210">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

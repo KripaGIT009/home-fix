@@ -1,0 +1,11 @@
+com\homefix\dispatch\domain\MatchingWeightsTest.class
+com\homefix\dispatch\service\fake\InMemoryLock.class
+com\homefix\dispatch\service\DispatchServiceTest.class
+com\homefix\dispatch\api\DispatchWeightsControllerTest.class
+com\homefix\dispatch\service\fake\ScriptedProviderQuery.class
+com\homefix\dispatch\service\fake\RecordingBookingTransition.class
+com\homefix\dispatch\domain\MatchingWeightsStoreTest.class
+com\homefix\dispatch\service\fake\ScriptedJobOffer.class
+com\homefix\dispatch\service\fake\RecordingProviderAcceptedPublisher.class
+com\homefix\dispatch\config\BulkheadConfigTest.class
+com\homefix\dispatch\service\fake\RecordingNotification.class

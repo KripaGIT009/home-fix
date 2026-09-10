@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PricingException.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Pricing Engine</a> &gt; <a href="index.source.html" class="el_package">com.homefix.pricing.service</a> &gt; <span class="el_source">PricingException.java</span></div><h1>PricingException.java</h1><pre class="source lang-java linenums">package com.homefix.pricing.service;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import org.springframework.http.HttpStatus;
+
+/**
+ * Domain exception for pricing failures, carrying the HTTP status, a stable error code, and
+ * optional details (e.g. the violated coupon constraint or the permitted override range) that
+ * the REST layer surfaces via the shared {@code ErrorResponseDto}.
+ */
+public class PricingException extends RuntimeException {
+
+    private final HttpStatus status;
+    private final String errorCode;
+<span class="fc" id="L17">    private final List&lt;String&gt; details = new ArrayList&lt;&gt;();</span>
+
+    public PricingException(HttpStatus status, String errorCode, String message) {
+<span class="fc" id="L20">        super(message);</span>
+<span class="fc" id="L21">        this.status = status;</span>
+<span class="fc" id="L22">        this.errorCode = errorCode;</span>
+<span class="fc" id="L23">    }</span>
+
+    public PricingException(HttpStatus status, String errorCode, String message, List&lt;String&gt; details) {
+<span class="fc" id="L26">        this(status, errorCode, message);</span>
+<span class="pc bpc" id="L27" title="1 of 2 branches missed.">        if (details != null) {</span>
+<span class="fc" id="L28">            this.details.addAll(details);</span>
+        }
+<span class="fc" id="L30">    }</span>
+
+    public static PricingException validation(String message) {
+<span class="fc" id="L33">        return new PricingException(HttpStatus.BAD_REQUEST, &quot;VALIDATION_ERROR&quot;, message);</span>
+    }
+
+    public static PricingException parametersNotFound(String message) {
+<span class="fc" id="L37">        return new PricingException(HttpStatus.NOT_FOUND, &quot;PRICING_PARAMETERS_NOT_FOUND&quot;, message);</span>
+    }
+
+    /** A violated coupon constraint (Requirement 6.10). */
+    public static PricingException coupon(String errorCode, String message) {
+<span class="fc" id="L42">        return new PricingException(HttpStatus.UNPROCESSABLE_ENTITY, errorCode, message);</span>
+    }
+
+    /** A provider-specific override outside the permitted floor/ceiling (Requirement 6.12). */
+    public static PricingException overrideOutOfRange(String message, List&lt;String&gt; details) {
+<span class="fc" id="L47">        return new PricingException(HttpStatus.UNPROCESSABLE_ENTITY, &quot;OVERRIDE_OUT_OF_RANGE&quot;, message, details);</span>
+    }
+
+    public HttpStatus getStatus() {
+<span class="fc" id="L51">        return status;</span>
+    }
+
+    public String getErrorCode() {
+<span class="fc" id="L55">        return errorCode;</span>
+    }
+
+    public List&lt;String&gt; getDetails() {
+<span class="fc" id="L59">        return details;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

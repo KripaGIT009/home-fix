@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PricingParameters.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Pricing Engine</a> &gt; <a href="index.source.html" class="el_package">com.homefix.pricing.domain</a> &gt; <span class="el_source">PricingParameters.java</span></div><h1>PricingParameters.java</h1><pre class="source lang-java linenums">package com.homefix.pricing.domain;
+
+import java.math.BigDecimal;
+import java.util.UUID;
+
+/**
+ * Admin-configurable, per-Service_Subcategory economic parameters (Requirement 6.11).
+ *
+ * &lt;p&gt;These are the values an Admin tunes via the Admin portal; they are cached in Redis with a
+ * 60-second TTL so updates reach new bookings within the bound of Requirement 6.11. They also
+ * define the provider-override floor/ceiling for the subcategory (Requirement 6.12).
+ *
+ * &lt;p&gt;All monetary fields are {@link BigDecimal}. Percentage fields (platform-fee, tax) are
+ * expressed as fractions (e.g. {@code 0.15} for 15%).
+ */
+public record PricingParameters(
+        UUID subcategoryId,
+        BigDecimal basePrice,
+        BigDecimal perKmRate,
+        BigDecimal maxTravelCharge,
+        BigDecimal nightSurcharge,
+        BigDecimal weekendSurcharge,
+        BigDecimal platformFeeRate,
+        BigDecimal taxRate,
+        BigDecimal emergencyMultiplier,
+        BigDecimal surgeMultiplier,
+        BigDecimal overrideFloor,
+        BigDecimal overrideCeiling) {
+
+<span class="fc" id="L30">    public PricingParameters {</span>
+<span class="pc bpc" id="L31" title="1 of 2 branches missed.">        if (subcategoryId == null) {</span>
+<span class="nc" id="L32">            throw new IllegalArgumentException(&quot;subcategoryId is required&quot;);</span>
+        }
+<span class="fc" id="L34">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

@@ -1,0 +1,122 @@
+# Default values for the shared homefix-service chart.
+# Each microservice overrides these via values-<env>.yaml and/or --set flags.
+
+# Service identity — override per service.
+nameOverride: ""
+fullnameOverride: ""
+serviceName: homefix-service
+
+# Deployment environment: staging | production (also used as a label).
+environment: staging
+
+replicaCount: 2
+
+image:
+  repository: placeholder
+  tag: latest
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+serviceAccount:
+  create: true
+  # IRSA role ARN — set per service to grant scoped AWS permissions.
+  annotations: {}
+  name: ""
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8080"
+  prometheus.io/path: "/actuator/prometheus"
+
+podLabels:
+  prometheus.io/scrape: "true"
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+  # Named port used by ServiceMonitor scrape config.
+  portName: http
+
+# Container port the Spring Boot app listens on.
+containerPort: 8080
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+# Horizontal Pod Autoscaler (rendered only when enabled).
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# Liveness / readiness probes hitting Spring Boot Actuator.
+probes:
+  liveness:
+    path: /actuator/health/liveness
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+  readiness:
+    path: /actuator/health/readiness
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+  startup:
+    path: /actuator/health
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 30
+
+# Non-secret configuration surfaced as a ConfigMap and mounted as env vars.
+config:
+  SPRING_PROFILES_ACTIVE: staging
+  JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=75.0"
+  OTEL_TRACES_EXPORTER: otlp
+  OTEL_METRICS_EXPORTER: none
+  OTEL_LOGS_EXPORTER: none
+
+# Extra env vars (e.g. valueFrom secretKeyRef) appended verbatim.
+extraEnv: []
+
+# Volumes required because readOnlyRootFilesystem is true (tmp + Spring work dir).
+tmpVolumes:
+  enabled: true
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Spread replicas across zones/nodes for availability.
+topologySpreadConstraints:
+  enabled: true
+
+# PodDisruptionBudget to keep at least one replica during voluntary disruptions.
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1

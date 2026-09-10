@@ -1,0 +1,25 @@
+GROUP,PACKAGE,CLASS,INSTRUCTION_MISSED,INSTRUCTION_COVERED,BRANCH_MISSED,BRANCH_COVERED,LINE_MISSED,LINE_COVERED,COMPLEXITY_MISSED,COMPLEXITY_COVERED,METHOD_MISSED,METHOD_COVERED
+HomeFix Verification Service,com.homefix.verification.api,GlobalExceptionHandler,59,0,0,0,14,0,4,0,4,0
+HomeFix Verification Service,com.homefix.verification.api,VerificationController,11,79,0,2,3,18,0,6,0,5
+HomeFix Verification Service,com.homefix.verification.api,AdminVerificationController,0,105,1,5,0,21,1,10,0,8
+HomeFix Verification Service,com.homefix.verification.backgroundcheck,LoggingBackgroundCheckAdapter,0,18,0,0,0,5,0,3,0,3
+HomeFix Verification Service,com.homefix.verification.dispatch,LoggingDispatchPoolAdapter,0,12,0,0,0,4,0,3,0,3
+HomeFix Verification Service,com.homefix.verification.service,VerificationException,0,51,1,1,0,14,1,7,0,7
+HomeFix Verification Service,com.homefix.verification.service,VerificationService,12,331,6,20,1,70,7,22,1,15
+HomeFix Verification Service,com.homefix.verification.service,DocumentUpload,0,12,0,0,0,1,0,1,0,1
+HomeFix Verification Service,com.homefix.verification.storage,S3DocumentStorageAdapter,2,69,1,1,0,9,1,3,0,3
+HomeFix Verification Service,com.homefix.verification.config,WebSecurityConfig,51,0,0,0,11,0,4,0,4,0
+HomeFix Verification Service,com.homefix.verification.config,VerificationProperties,0,26,0,0,0,10,0,5,0,5
+HomeFix Verification Service,com.homefix.verification,VerificationServiceApplication,8,0,0,0,3,0,2,0,2,0
+HomeFix Verification Service,com.homefix.verification.domain,VerificationDocument,21,24,0,0,8,9,7,1,7,1
+HomeFix Verification Service,com.homefix.verification.domain,VerificationAuditEntry,6,45,0,0,3,16,2,7,2,7
+HomeFix Verification Service,com.homefix.verification.domain,VerificationStateMachine,0,73,0,0,0,20,0,3,0,3
+HomeFix Verification Service,com.homefix.verification.domain,Verification,16,140,0,2,3,39,2,16,2,15
+HomeFix Verification Service,com.homefix.verification.domain,DocumentType,0,21,0,0,0,4,0,1,0,1
+HomeFix Verification Service,com.homefix.verification.domain,VerificationStatus,0,51,0,0,0,9,0,1,0,1
+HomeFix Verification Service,com.homefix.verification.api.dto,VerificationResponse.AuditEntryResponse,0,21,0,0,0,1,0,1,0,1
+HomeFix Verification Service,com.homefix.verification.api.dto,VerificationResponse.DocumentSummary,12,0,0,0,1,0,1,0,1,0
+HomeFix Verification Service,com.homefix.verification.api.dto,VerificationResponse,11,73,0,0,0,10,1,3,1,3
+HomeFix Verification Service,com.homefix.verification.api.dto,AdminActionRequest,0,6,0,0,0,1,0,1,0,1
+HomeFix Verification Service,com.homefix.verification.api.dto,BackgroundCheckResultRequest,0,6,0,0,0,1,0,1,0,1
+HomeFix Verification Service,com.homefix.verification.notification,LoggingProviderNotificationAdapter,0,12,0,0,0,4,0,3,0,3

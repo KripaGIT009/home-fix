@@ -1,0 +1,29 @@
+GROUP,PACKAGE,CLASS,INSTRUCTION_MISSED,INSTRUCTION_COVERED,BRANCH_MISSED,BRANCH_COVERED,LINE_MISSED,LINE_COVERED,COMPLEXITY_MISSED,COMPLEXITY_COVERED,METHOD_MISSED,METHOD_COVERED
+HomeFix Invoice Service,com.homefix.invoice.alert,LoggingOpsAlertAdapter,0,25,0,0,0,4,0,3,0,3
+HomeFix Invoice Service,com.homefix.invoice.api,InvoiceController,0,20,0,0,0,5,0,3,0,3
+HomeFix Invoice Service,com.homefix.invoice.api.dto,InvoiceSummary,0,40,0,0,0,3,0,2,0,2
+HomeFix Invoice Service,com.homefix.invoice.api.dto,ProviderEarningsStatement,0,27,0,0,0,1,0,1,0,1
+HomeFix Invoice Service,com.homefix.invoice.notification,HttpInvoiceNotificationAdapter,65,0,0,0,18,0,3,0,3,0
+HomeFix Invoice Service,com.homefix.invoice.notification,HttpInvoiceNotificationAdapter.new SimpleClientHttpRequestFactory() {...},15,0,0,0,4,0,1,0,1,0
+HomeFix Invoice Service,com.homefix.invoice,InvoiceServiceApplication,8,0,0,0,3,0,2,0,2,0
+HomeFix Invoice Service,com.homefix.invoice.storage,SignedUrl,0,9,0,0,0,1,0,1,0,1
+HomeFix Invoice Service,com.homefix.invoice.storage,InMemoryInvoiceStorageAdapter,0,65,0,0,0,16,0,5,0,5
+HomeFix Invoice Service,com.homefix.invoice.config,InvoiceProperties.S3,0,33,0,0,0,13,0,7,0,7
+HomeFix Invoice Service,com.homefix.invoice.config,InvoiceProperties.Topics,0,13,0,0,0,5,0,3,0,3
+HomeFix Invoice Service,com.homefix.invoice.config,InvoiceProperties.Clients,0,13,0,0,0,5,0,3,0,3
+HomeFix Invoice Service,com.homefix.invoice.config,InvoiceProperties,0,92,0,0,0,33,0,17,0,17
+HomeFix Invoice Service,com.homefix.invoice.config,KafkaConfig,8,0,0,0,2,0,2,0,2,0
+HomeFix Invoice Service,com.homefix.invoice.config,WebSecurityConfig,51,0,0,0,11,0,4,0,4,0
+HomeFix Invoice Service,com.homefix.invoice.consumer,PaymentCompletedConsumer,0,53,0,0,0,15,0,5,0,5
+HomeFix Invoice Service,com.homefix.invoice.service,InvoiceQueryService,9,162,1,7,3,32,2,8,1,5
+HomeFix Invoice Service,com.homefix.invoice.service,InvoiceService,30,303,1,9,9,74,2,12,1,8
+HomeFix Invoice Service,com.homefix.invoice.pdf,OpenPdfInvoiceGeneratorAdapter,24,312,5,7,8,60,5,11,1,9
+HomeFix Invoice Service,com.homefix.invoice.pdf,InvoicePdfException,5,4,0,0,2,2,1,1,1,1
+HomeFix Invoice Service,com.homefix.invoice.domain,InvoiceNumberGenerator,16,64,0,0,3,13,1,6,1,6
+HomeFix Invoice Service,com.homefix.invoice.domain,InvoiceData,0,65,1,3,0,2,1,3,0,2
+HomeFix Invoice Service,com.homefix.invoice.domain,PriceLineItem,0,9,0,0,0,1,0,1,0,1
+HomeFix Invoice Service,com.homefix.invoice.domain,InvoiceSequence,6,28,0,0,3,9,2,4,2,4
+HomeFix Invoice Service,com.homefix.invoice.domain,Invoice,3,83,0,0,2,25,1,13,1,13
+HomeFix Invoice Service,com.homefix.invoice.details,StubInvoiceDetailsAdapter,0,34,0,0,0,3,0,2,0,2
+HomeFix Invoice Service,com.homefix.invoice.details,InvoiceDetails,0,27,0,0,0,1,0,1,0,1
+HomeFix Invoice Service,com.homefix.invoice.event,PaymentCompletedEvent,0,30,0,0,0,1,0,1,0,1

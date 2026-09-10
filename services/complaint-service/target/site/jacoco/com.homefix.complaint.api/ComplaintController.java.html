@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ComplaintController.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Complaint Service</a> &gt; <a href="index.source.html" class="el_package">com.homefix.complaint.api</a> &gt; <span class="el_source">ComplaintController.java</span></div><h1>ComplaintController.java</h1><pre class="source lang-java linenums">package com.homefix.complaint.api;
+
+import java.util.List;
+import java.util.UUID;
+import java.util.stream.Collectors;
+
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.homefix.complaint.api.dto.ChangeStatusRequest;
+import com.homefix.complaint.api.dto.ComplaintResponse;
+import com.homefix.complaint.api.dto.ComplaintStatsResponse;
+import com.homefix.complaint.api.dto.CreateComplaintRequest;
+import com.homefix.complaint.api.dto.RefundRequest;
+import com.homefix.complaint.domain.Complaint;
+import com.homefix.complaint.service.AttachmentMetadata;
+import com.homefix.complaint.service.ComplaintException;
+import com.homefix.complaint.service.ComplaintService;
+import com.homefix.complaint.service.CreateComplaintCommand;
+
+import jakarta.validation.Valid;
+
+/**
+ * REST surface for the Complaint Service (Requirement 16).
+ *
+ * &lt;p&gt;Complaint creation derives the authenticated customer from the JWT principal populated by the
+ * shared {@code JwtValidationFilter} (Task 4). Support_Agent operations (status change, refund
+ * approval, dispute, closure) and the Admin stats endpoint are additionally gated by the shared
+ * {@code RbacEnforcementFilter}.
+ */
+@RestController
+@RequestMapping(&quot;/complaints&quot;)
+public class ComplaintController {
+
+    private final ComplaintService complaintService;
+
+<span class="fc" id="L45">    public ComplaintController(ComplaintService complaintService) {</span>
+<span class="fc" id="L46">        this.complaintService = complaintService;</span>
+<span class="fc" id="L47">    }</span>
+
+    /** Raise a complaint against a completed booking (Requirement 16.1). */
+    @PostMapping
+    public ResponseEntity&lt;ComplaintResponse&gt; create(@Valid @RequestBody CreateComplaintRequest req) {
+<span class="pc bpc" id="L52" title="1 of 2 branches missed.">        List&lt;AttachmentMetadata&gt; attachments = req.attachments() == null ? List.of()</span>
+<span class="nc" id="L53">                : req.attachments().stream()</span>
+<span class="nc" id="L54">                        .map(a -&gt; new AttachmentMetadata(a.fileName(), a.sizeBytes()))</span>
+<span class="pc" id="L55">                        .collect(Collectors.toList());</span>
+<span class="fc" id="L56">        CreateComplaintCommand command = new CreateComplaintCommand(req.bookingId(), currentUser(),</span>
+<span class="fc" id="L57">                req.providerId(), req.category(), req.priority(), req.description(), attachments);</span>
+<span class="fc" id="L58">        Complaint complaint = complaintService.createComplaint(command);</span>
+<span class="fc" id="L59">        return ResponseEntity.status(HttpStatus.CREATED).body(ComplaintResponse.from(complaint));</span>
+    }
+
+    /** Support_Agent: update a complaint's status; customer is notified (Requirement 16.3). */
+    @PostMapping(&quot;/{complaintId}/status&quot;)
+    public ComplaintResponse changeStatus(@PathVariable UUID complaintId,
+                                          @Valid @RequestBody ChangeStatusRequest req) {
+<span class="fc" id="L66">        return ComplaintResponse.from(complaintService.changeStatus(complaintId, req.status()));</span>
+    }
+
+    /** Support_Agent: approve a refund; coordinates with the Payment Service (16.5, 16.6). */
+    @PostMapping(&quot;/{complaintId}/refund&quot;)
+    public ResponseEntity&lt;Void&gt; approveRefund(@PathVariable UUID complaintId,
+                                              @Valid @RequestBody RefundRequest req) {
+<span class="fc" id="L73">        complaintService.approveRefund(complaintId, req.amount());</span>
+<span class="fc" id="L74">        return ResponseEntity.accepted().build();</span>
+    }
+
+    /** Support_Agent: set the complaint to DISPUTED, holding the provider settlement (16.7). */
+    @PostMapping(&quot;/{complaintId}/dispute&quot;)
+    public ComplaintResponse dispute(@PathVariable UUID complaintId) {
+<span class="fc" id="L80">        return ComplaintResponse.from(complaintService.markDisputed(complaintId));</span>
+    }
+
+    /** Admin: aggregated complaint statistics for reports (Requirement 16.9). */
+    @GetMapping(&quot;/stats&quot;)
+    public ComplaintStatsResponse stats() {
+<span class="fc" id="L86">        return ComplaintStatsResponse.from(complaintService.aggregateStats());</span>
+    }
+
+    /**
+     * @return the authenticated user's ID, taken from the principal name populated by the shared
+     *         {@code JwtValidationFilter} (Task 4).
+     */
+    private UUID currentUser() {
+<span class="fc" id="L94">        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();</span>
+<span class="pc bpc" id="L95" title="1 of 4 branches missed.">        if (authentication == null || !authentication.isAuthenticated()) {</span>
+<span class="fc" id="L96">            throw new ComplaintException(HttpStatus.UNAUTHORIZED, &quot;UNAUTHENTICATED&quot;,</span>
+                    &quot;no authenticated principal&quot;);
+        }
+        try {
+<span class="fc" id="L100">            return UUID.fromString(authentication.getName());</span>
+<span class="fc" id="L101">        } catch (IllegalArgumentException e) {</span>
+<span class="fc" id="L102">            throw new ComplaintException(HttpStatus.UNAUTHORIZED, &quot;INVALID_PRINCIPAL&quot;,</span>
+                    &quot;authenticated principal is not a valid user ID&quot;);
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

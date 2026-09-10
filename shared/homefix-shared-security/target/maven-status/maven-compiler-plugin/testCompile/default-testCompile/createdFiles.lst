@@ -1,0 +1,5 @@
+com\homefix\shared\security\HomefixSecurityAutoConfigurationTest.class
+com\homefix\shared\security\RbacEnforcementFilterTest.class
+com\homefix\shared\security\CorrelationIdFilterTest.class
+com\homefix\shared\security\JwtValidationFilterTest.class
+com\homefix\shared\security\RbacPropertiesTest.class

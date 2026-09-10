@@ -1,0 +1,189 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>OutboxEventEntity.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Shared Outbox</a> &gt; <a href="index.source.html" class="el_package">com.homefix.shared.outbox</a> &gt; <span class="el_source">OutboxEventEntity.java</span></div><h1>OutboxEventEntity.java</h1><pre class="source lang-java linenums">package com.homefix.shared.outbox;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.Id;
+import jakarta.persistence.Index;
+import jakarta.persistence.Lob;
+import jakarta.persistence.Table;
+import jakarta.persistence.Version;
+
+import java.time.Instant;
+import java.util.UUID;
+
+/**
+ * JPA entity backing the transactional outbox table (Task 6).
+ *
+ * &lt;p&gt;The row is written within the &lt;em&gt;same&lt;/em&gt; {@code @Transactional} boundary as the
+ * business state change so that either both commit or neither does. A separate Outbox
+ * Processor later polls {@link OutboxEventStatus#PENDING} rows, publishes them to Kafka,
+ * and marks them {@link OutboxEventStatus#PUBLISHED}. This mirrors the design's
+ * {@code OUTBOX_EVENT} schema:
+ * {@code id, aggregate_type, aggregate_id, event_type, payload, status, created_at, published_at}.
+ */
+@Entity
+@Table(name = &quot;outbox_event&quot;, indexes = {
+        @Index(name = &quot;idx_outbox_status_created&quot;, columnList = &quot;status, created_at&quot;)
+})
+public class OutboxEventEntity {
+
+    /**
+     * Primary key. This value is also used as the Kafka {@code eventId} header so that
+     * downstream consumers can deduplicate redeliveries against a single stable identifier.
+     */
+    @Id
+    @Column(name = &quot;id&quot;, nullable = false, updatable = false)
+    private UUID id;
+
+    @Column(name = &quot;aggregate_type&quot;, nullable = false, length = 100)
+    private String aggregateType;
+
+    @Column(name = &quot;aggregate_id&quot;, nullable = false)
+    private UUID aggregateId;
+
+    @Column(name = &quot;event_type&quot;, nullable = false, length = 150)
+    private String eventType;
+
+    /**
+     * Serialised event payload (typically JSON). Stored as a large text/JSON column.
+     */
+    @Lob
+    @Column(name = &quot;payload&quot;, nullable = false)
+    private String payload;
+
+<span class="fc" id="L56">    @Enumerated(EnumType.STRING)</span>
+    @Column(name = &quot;status&quot;, nullable = false, length = 20)
+    private OutboxEventStatus status = OutboxEventStatus.PENDING;
+
+<span class="fc" id="L60">    @Column(name = &quot;retry_count&quot;, nullable = false)</span>
+    private int retryCount = 0;
+
+    @Column(name = &quot;created_at&quot;, nullable = false, updatable = false)
+    private Instant createdAt;
+
+    @Column(name = &quot;published_at&quot;)
+    private Instant publishedAt;
+
+    @Column(name = &quot;last_error&quot;, length = 2000)
+    private String lastError;
+
+    /**
+     * Optimistic-lock guard so concurrent Outbox Processor instances cannot double-publish
+     * the same row.
+     */
+    @Version
+    @Column(name = &quot;version&quot;, nullable = false)
+    private long version;
+
+<span class="fc" id="L80">    protected OutboxEventEntity() {</span>
+        // JPA
+<span class="fc" id="L82">    }</span>
+
+    public OutboxEventEntity(UUID id,
+                             String aggregateType,
+                             UUID aggregateId,
+                             String eventType,
+<span class="fc" id="L88">                             String payload) {</span>
+<span class="fc" id="L89">        this.id = id;</span>
+<span class="fc" id="L90">        this.aggregateType = aggregateType;</span>
+<span class="fc" id="L91">        this.aggregateId = aggregateId;</span>
+<span class="fc" id="L92">        this.eventType = eventType;</span>
+<span class="fc" id="L93">        this.payload = payload;</span>
+<span class="fc" id="L94">        this.status = OutboxEventStatus.PENDING;</span>
+<span class="fc" id="L95">        this.retryCount = 0;</span>
+<span class="fc" id="L96">        this.createdAt = Instant.now();</span>
+<span class="fc" id="L97">    }</span>
+
+    /**
+     * Factory that assigns a fresh random event ID.
+     */
+    public static OutboxEventEntity newEvent(String aggregateType,
+                                             UUID aggregateId,
+                                             String eventType,
+                                             String payload) {
+<span class="fc" id="L106">        return new OutboxEventEntity(UUID.randomUUID(), aggregateType, aggregateId, eventType, payload);</span>
+    }
+
+    /**
+     * Marks the row published and stamps the publication time.
+     */
+    public void markPublished(Instant when) {
+<span class="fc" id="L113">        this.status = OutboxEventStatus.PUBLISHED;</span>
+<span class="fc" id="L114">        this.publishedAt = when;</span>
+<span class="fc" id="L115">        this.lastError = null;</span>
+<span class="fc" id="L116">    }</span>
+
+    /**
+     * Records a failed relay attempt, incrementing the retry counter and capturing the error.
+     */
+    public void markFailedAttempt(String error) {
+<span class="fc" id="L122">        this.retryCount++;</span>
+<span class="fc" id="L123">        this.lastError = truncate(error);</span>
+<span class="fc" id="L124">    }</span>
+
+    /**
+     * Marks the row permanently failed after the retry budget is exhausted.
+     */
+    public void markFailed(String error) {
+<span class="fc" id="L130">        this.status = OutboxEventStatus.FAILED;</span>
+<span class="fc" id="L131">        this.lastError = truncate(error);</span>
+<span class="fc" id="L132">    }</span>
+
+    private static String truncate(String error) {
+<span class="pc bpc" id="L135" title="1 of 2 branches missed.">        if (error == null) {</span>
+<span class="nc" id="L136">            return null;</span>
+        }
+<span class="fc bfc" id="L138" title="All 2 branches covered.">        return error.length() &lt;= 2000 ? error : error.substring(0, 2000);</span>
+    }
+
+    public UUID getId() {
+<span class="fc" id="L142">        return id;</span>
+    }
+
+    public String getAggregateType() {
+<span class="fc" id="L146">        return aggregateType;</span>
+    }
+
+    public UUID getAggregateId() {
+<span class="fc" id="L150">        return aggregateId;</span>
+    }
+
+    public String getEventType() {
+<span class="fc" id="L154">        return eventType;</span>
+    }
+
+    public String getPayload() {
+<span class="fc" id="L158">        return payload;</span>
+    }
+
+    public OutboxEventStatus getStatus() {
+<span class="fc" id="L162">        return status;</span>
+    }
+
+    public void setStatus(OutboxEventStatus status) {
+<span class="fc" id="L166">        this.status = status;</span>
+<span class="fc" id="L167">    }</span>
+
+    public int getRetryCount() {
+<span class="fc" id="L170">        return retryCount;</span>
+    }
+
+    public Instant getCreatedAt() {
+<span class="fc" id="L174">        return createdAt;</span>
+    }
+
+    public Instant getPublishedAt() {
+<span class="fc" id="L178">        return publishedAt;</span>
+    }
+
+    public String getLastError() {
+<span class="fc" id="L182">        return lastError;</span>
+    }
+
+    public long getVersion() {
+<span class="fc" id="L186">        return version;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

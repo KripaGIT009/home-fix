@@ -1,0 +1,48 @@
+HomeFix end-to-end smoke test
+
+== Service readiness
+  FAIL  auth readiness                                       000 (expected 200)
+        
+  PASS  gateway readiness                                    200
+  PASS  customer readiness                                   200
+  PASS  provider readiness                                   200
+  PASS  booking readiness                                    200
+  PASS  catalog readiness                                    200
+  PASS  pricing readiness                                    200
+  PASS  dispatch readiness                                   200
+  PASS  payment readiness                                    200
+  PASS  invoice readiness                                    200
+  PASS  notification readiness                               200
+  PASS  complaint readiness                                  200
+  PASS  location readiness                                   200
+  PASS  chat readiness                                       200
+  PASS  verification readiness                               200
+  PASS  admin readiness                                      200
+  PASS  reporting readiness                                  200
+  PASS  rating readiness                                     200
+  PASS  promotion readiness                                  200
+  PASS  outbox readiness                                     200
+
+== Auth — OTP registration, refresh, RBAC (Requirement 1)
+  PASS  OTP register + verify issues a JWT                   200
+  PASS  wrong OTP is rejected                                400
+  PASS  refresh token rotates the access token               200
+  PASS  token introspection                                  200
+
+== Catalog — public listing (Requirement 3)
+  PASS  public catalog listing                               200
+  PASS  admin catalog CRUD needs auth                        403
+
+== Pricing — itemized estimate (Requirement 6)
+  PASS  estimate requires authentication                     403
+  PASS  standard estimate                                    200
+  FAIL  emergency estimate applies the multiplier            000 (expected 200)
+        
+  FAIL  emergency total exceeds standard                      !> 388.10
+  PASS  unknown subcategory has no parameters                404
+
+== Booking — creation and state machine (Requirements 7-9)
+  FAIL  scheduled booking is created                         000 (expected 201)
+        
+  PASS  emergency booking dispatches immediately             201
+  PASS  emergency booking enters SEARCHING_PROVIDER          ok

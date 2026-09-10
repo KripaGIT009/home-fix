@@ -1,0 +1,64 @@
+spring:
+  application:
+    name: chat-service
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/homefix}
+    username: ${DB_USERNAME:homefix}
+    password: ${DB_PASSWORD:homefix}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: chat
+    open-in-view: false
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: chat-service
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      # Reliability contract required by the shared KafkaProducerTemplate (Task 6).
+      acks: all
+      properties:
+        enable.idempotence: true
+
+server:
+  port: ${SERVER_PORT:8093}
+
+homefix:
+  security:
+    enabled: true
+    # HMAC-SHA256 signing secret shared with the shared JwtValidationFilter (Task 4).
+    # Must be >= 32 bytes. Injected from AWS Secrets Manager in production.
+    jwt-secret: ${JWT_SECRET:change-me-in-production-please-use-32-bytes-min}
+  chat:
+    # Minimum message retention from booking creation date, regardless of channel status
+    # (Requirement 18.4).
+    retention: ${CHAT_RETENTION:90d}
+    # Idle window after which a recipient counts as offline and gets a push (Requirement 18.3).
+    offline-push-window: ${CHAT_OFFLINE_PUSH_WINDOW:10s}
+    # Push vendor adapter selector: 'log' (dev/test) or a concrete Notification adapter.
+    push-provider: ${CHAT_PUSH_PROVIDER:log}
+    topics:
+      provider-accepted: ${CHAT_TOPIC_PROVIDER_ACCEPTED:ProviderAccepted}
+      payment-completed: ${CHAT_TOPIC_PAYMENT_COMPLETED:PaymentCompleted}
+      booking-cancelled: ${CHAT_TOPIC_BOOKING_CANCELLED:BookingCancelled}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus,metrics
+      base-path: /
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  metrics:
+    tags:
+      application: chat-service

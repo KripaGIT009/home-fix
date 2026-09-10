@@ -1,0 +1,4 @@
+-------------------------------------------------------------------------------
+Test set: com.homefix.dispatch.adapter.DispatchHttpAdaptersTest
+-------------------------------------------------------------------------------
+Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 7.754 s -- in com.homefix.dispatch.adapter.DispatchHttpAdaptersTest

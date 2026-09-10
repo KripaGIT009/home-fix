@@ -1,0 +1,10 @@
+com\homefix\rating\support\FixedReviewerAccountPort.class
+com\homefix\rating\support\InMemoryAuditLogRepository.class
+com\homefix\rating\service\ReviewServiceTest.class
+com\homefix\rating\support\InMemoryReviewPromptRepository.class
+com\homefix\rating\support\RecordingReviewSubmittedPublisher.class
+com\homefix\rating\domain\AggregateCalculatorTest.class
+com\homefix\rating\service\FraudDetectorTest.class
+com\homefix\rating\support\InMemoryReviewRepository.class
+com\homefix\rating\support\RecordingAdminAlertPort.class
+com\homefix\rating\support\RecordingProviderRatingPort.class

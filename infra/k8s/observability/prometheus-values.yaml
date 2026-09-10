@@ -1,0 +1,345 @@
+# kube-prometheus-stack Helm values
+# Chart: prometheus-community/kube-prometheus-stack
+# Version: >= 55.x
+# Deploy: helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+#           -n monitoring --create-namespace -f prometheus-values.yaml
+
+nameOverride: ""
+fullnameOverride: ""
+
+# ---------------------------------------------------------------------------
+# Prometheus Operator
+# ---------------------------------------------------------------------------
+prometheusOperator:
+  enabled: true
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# ---------------------------------------------------------------------------
+# Prometheus instance
+# ---------------------------------------------------------------------------
+prometheus:
+  enabled: true
+  prometheusSpec:
+    replicas: 2
+    retention: 15d
+    retentionSize: "40GiB"
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: 2000m
+        memory: 4Gi
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: gp3
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 50Gi
+    # Pick up ALL ServiceMonitors / PodMonitors in the cluster
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    # Remote-write to Grafana Cloud / Cortex (optional – fill in or remove)
+    # remoteWrite:
+    #   - url: https://<cortex-endpoint>/api/prom/push
+    #     basicAuth:
+    #       username: { name: remote-write-secret, key: username }
+    #       password: { name: remote-write-secret, key: password }
+    additionalScrapeConfigs:
+      # Kubernetes API server
+      - job_name: kubernetes-apiservers
+        kubernetes_sd_configs:
+          - role: endpoints
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+            action: keep
+            regex: default;kubernetes;https
+      # cAdvisor node metrics
+      - job_name: kubernetes-nodes-cadvisor
+        kubernetes_sd_configs:
+          - role: node
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          insecure_skip_verify: true
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_node_label_(.+)
+          - target_label: __address__
+            replacement: kubernetes.default.svc:443
+          - source_labels: [__meta_kubernetes_node_name]
+            regex: (.+)
+            target_label: __metrics_path__
+            replacement: /api/v1/nodes/$1/proxy/metrics/cadvisor
+
+# ---------------------------------------------------------------------------
+# ServiceMonitor definitions — one per microservice namespace
+# ---------------------------------------------------------------------------
+additionalServiceMonitors:
+  # Namespace: auth-customer-provider
+  - name: auth-customer-provider
+    selector:
+      matchLabels:
+        prometheus.io/scrape: "true"
+    namespaceSelector:
+      matchNames:
+        - auth-customer-provider
+    endpoints:
+      - port: http
+        path: /metrics
+        interval: 30s
+        scrapeTimeout: 10s
+
+  # Namespace: booking-dispatch-location
+  - name: booking-dispatch-location
+    selector:
+      matchLabels:
+        prometheus.io/scrape: "true"
+    namespaceSelector:
+      matchNames:
+        - booking-dispatch-location
+    endpoints:
+      - port: http
+        path: /metrics
+        interval: 30s
+        scrapeTimeout: 10s
+
+  # Namespace: payment-invoice-rating
+  - name: payment-invoice-rating
+    selector:
+      matchLabels:
+        prometheus.io/scrape: "true"
+    namespaceSelector:
+      matchNames:
+        - payment-invoice-rating
+    endpoints:
+      - port: http
+        path: /metrics
+        interval: 30s
+        scrapeTimeout: 10s
+
+  # Namespace: notification-chat-complaint
+  - name: notification-chat-complaint
+    selector:
+      matchLabels:
+        prometheus.io/scrape: "true"
+    namespaceSelector:
+      matchNames:
+        - notification-chat-complaint
+    endpoints:
+      - port: http
+        path: /metrics
+        interval: 30s
+        scrapeTimeout: 10s
+
+  # Namespace: admin-reporting-promotion
+  - name: admin-reporting-promotion
+    selector:
+      matchLabels:
+        prometheus.io/scrape: "true"
+    namespaceSelector:
+      matchNames:
+        - admin-reporting-promotion
+    endpoints:
+      - port: http
+        path: /metrics
+        interval: 30s
+        scrapeTimeout: 10s
+
+  # Namespace: catalog-pricing-verification
+  - name: catalog-pricing-verification
+    selector:
+      matchLabels:
+        prometheus.io/scrape: "true"
+    namespaceSelector:
+      matchNames:
+        - catalog-pricing-verification
+    endpoints:
+      - port: http
+        path: /metrics
+        interval: 30s
+        scrapeTimeout: 10s
+
+  # Kafka (MSK) JMX exporter
+  - name: kafka-jmx
+    selector:
+      matchLabels:
+        app: kafka-jmx-exporter
+    namespaceSelector:
+      matchNames:
+        - kafka
+    endpoints:
+      - port: metrics
+        path: /metrics
+        interval: 60s
+
+  # Redis exporter
+  - name: redis-exporter
+    selector:
+      matchLabels:
+        app: redis-exporter
+    namespaceSelector:
+      matchNames:
+        - redis
+    endpoints:
+      - port: metrics
+        path: /metrics
+        interval: 30s
+
+  # RDS (CloudWatch exporter)
+  - name: cloudwatch-rds
+    selector:
+      matchLabels:
+        app: cloudwatch-exporter
+    namespaceSelector:
+      matchNames:
+        - monitoring
+    endpoints:
+      - port: metrics
+        path: /metrics
+        interval: 60s
+
+# ---------------------------------------------------------------------------
+# Grafana
+# ---------------------------------------------------------------------------
+grafana:
+  enabled: true
+  replicas: 2
+  adminPassword: "changeme-in-secret"  # override with Secrets Manager / ESO
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  persistence:
+    enabled: true
+    storageClassName: gp3
+    size: 10Gi
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      searchNamespace: ALL
+    datasources:
+      enabled: true
+      label: grafana_datasource
+  grafana.ini:
+    server:
+      root_url: "%(protocol)s://%(domain)s/grafana"
+    auth.anonymous:
+      enabled: false
+    security:
+      allow_embedding: true
+  datasources:
+    datasources.yaml:
+      apiVersion: 1
+      datasources:
+        - name: Prometheus
+          type: prometheus
+          url: http://kube-prometheus-stack-prometheus:9090
+          isDefault: true
+          access: proxy
+          editable: false
+
+# ---------------------------------------------------------------------------
+# Alertmanager
+# ---------------------------------------------------------------------------
+alertmanager:
+  enabled: true
+  alertmanagerSpec:
+    replicas: 2
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
+    storage:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: gp3
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 5Gi
+  config:
+    global:
+      resolve_timeout: 5m
+      # PagerDuty service key injected via secret
+      pagerduty_url: "https://events.pagerduty.com/v2/enqueue"
+    route:
+      group_by: ["alertname", "namespace", "severity"]
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 12h
+      receiver: "pagerduty-critical"
+      routes:
+        - match:
+            severity: critical
+          receiver: "pagerduty-critical"
+          continue: true
+        - match:
+            severity: warning
+          receiver: "sns-warning"
+    receivers:
+      - name: "pagerduty-critical"
+        pagerduty_configs:
+          - service_key_file: /etc/alertmanager/secrets/pagerduty-key
+            description: '{{ template "pagerduty.default.description" . }}'
+            severity: "{{ .CommonLabels.severity }}"
+      - name: "sns-warning"
+        sns_configs:
+          - api_url: "https://sns.ap-south-1.amazonaws.com"
+            topic_arn: "arn:aws:sns:ap-south-1:ACCOUNT_ID:homefix-alerts"
+            attributes:
+              severity: "{{ .CommonLabels.severity }}"
+    templates:
+      - "/etc/alertmanager/config/*.tmpl"
+
+# ---------------------------------------------------------------------------
+# Node exporter, kube-state-metrics, etc.
+# ---------------------------------------------------------------------------
+nodeExporter:
+  enabled: true
+
+kubeStateMetrics:
+  enabled: true
+
+kubelet:
+  enabled: true
+
+kubeApiServer:
+  enabled: true
+
+kubeControllerManager:
+  enabled: true
+
+kubeScheduler:
+  enabled: true
+
+kubeEtcd:
+  enabled: true
+
+kubeProxy:
+  enabled: true
+
+coreDns:
+  enabled: true

@@ -1,0 +1,14 @@
+C:\projects\home-fix\services\rating-review-service\src\test\java\com\homefix\rating\adapter\RatingAdaptersTest.java
+C:\projects\home-fix\services\rating-review-service\src\test\java\com\homefix\rating\api\ReviewControllerTest.java
+C:\projects\home-fix\services\rating-review-service\src\test\java\com\homefix\rating\consumer\PaymentCompletedConsumerTest.java
+C:\projects\home-fix\services\rating-review-service\src\test\java\com\homefix\rating\domain\AggregateCalculatorTest.java
+C:\projects\home-fix\services\rating-review-service\src\test\java\com\homefix\rating\domain\RatingReviewPropertiesTest.java
+C:\projects\home-fix\services\rating-review-service\src\test\java\com\homefix\rating\service\FraudDetectorTest.java
+C:\projects\home-fix\services\rating-review-service\src\test\java\com\homefix\rating\service\ReviewServiceTest.java
+C:\projects\home-fix\services\rating-review-service\src\test\java\com\homefix\rating\support\FixedReviewerAccountPort.java
+C:\projects\home-fix\services\rating-review-service\src\test\java\com\homefix\rating\support\InMemoryAuditLogRepository.java
+C:\projects\home-fix\services\rating-review-service\src\test\java\com\homefix\rating\support\InMemoryReviewPromptRepository.java
+C:\projects\home-fix\services\rating-review-service\src\test\java\com\homefix\rating\support\InMemoryReviewRepository.java
+C:\projects\home-fix\services\rating-review-service\src\test\java\com\homefix\rating\support\RecordingAdminAlertPort.java
+C:\projects\home-fix\services\rating-review-service\src\test\java\com\homefix\rating\support\RecordingProviderRatingPort.java
+C:\projects\home-fix\services\rating-review-service\src\test\java\com\homefix\rating\support\RecordingReviewSubmittedPublisher.java

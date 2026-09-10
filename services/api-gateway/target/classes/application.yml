@@ -1,0 +1,132 @@
+spring:
+  application:
+    name: api-gateway
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+  cloud:
+    gateway:
+      # Routes to downstream microservices. TLS is terminated at the AWS edge (Task 1); the
+      # X-Forwarded-Proto header conveys the original scheme to the HTTPS-redirect filter.
+      routes:
+        - id: auth-service
+          uri: ${AUTH_SERVICE_URI:http://auth-service:8081}
+          predicates:
+            - Path=/auth/**
+        - id: customer-service
+          uri: ${CUSTOMER_SERVICE_URI:http://customer-service:8082}
+          predicates:
+            - Path=/customers/**
+        - id: provider-service
+          uri: ${PROVIDER_SERVICE_URI:http://provider-service:8083}
+          predicates:
+            - Path=/providers/**
+        - id: booking-service
+          uri: ${BOOKING_SERVICE_URI:http://booking-service:8084}
+          predicates:
+            - Path=/bookings/**
+        - id: catalog-service
+          uri: ${CATALOG_SERVICE_URI:http://catalog-service:8085}
+          predicates:
+            - Path=/catalog/**
+        - id: payment-service
+          uri: ${PAYMENT_SERVICE_URI:http://payment-service:8088}
+          predicates:
+            - Path=/payments/**
+        - id: pricing-engine
+          uri: ${PRICING_ENGINE_URI:http://pricing-engine:8086}
+          predicates:
+            - Path=/pricing/**
+        - id: location-service
+          uri: ${LOCATION_SERVICE_URI:http://location-service:8092}
+          predicates:
+            - Path=/locations/**
+        - id: verification-service
+          uri: ${VERIFICATION_SERVICE_URI:http://verification-service:8094}
+          predicates:
+            - Path=/verifications/**
+        - id: invoice-service
+          uri: ${INVOICE_SERVICE_URI:http://invoice-service:8089}
+          predicates:
+            - Path=/invoices/**
+        - id: complaint-service
+          uri: ${COMPLAINT_SERVICE_URI:http://complaint-service:8091}
+          predicates:
+            - Path=/complaints/**
+        - id: chat-service
+          uri: ${CHAT_SERVICE_URI:http://chat-service:8093}
+          predicates:
+            - Path=/chat/**
+        - id: rating-review-service
+          uri: ${RATING_SERVICE_URI:http://rating-review-service:8097}
+          predicates:
+            - Path=/reviews/**
+        - id: promotion-service
+          uri: ${PROMOTION_SERVICE_URI:http://promotion-service:8098}
+          predicates:
+            - Path=/coupons/**
+        - id: notification-service
+          uri: ${NOTIFICATION_SERVICE_URI:http://notification-service:8090}
+          predicates:
+            - Path=/notifications/**
+        - id: reporting-service
+          uri: ${REPORTING_SERVICE_URI:http://reporting-service:8096}
+          predicates:
+            - Path=/reports/**
+        # The Admin Service owns the /admin surface the portal calls. Services that
+        # expose their own /admin/** sub-tree (catalog, pricing, dispatch,
+        # verification) are reached through their service-specific prefixes above;
+        # these three routes keep the paths the Admin Portal actually uses pointed
+        # at the service that implements them.
+        - id: admin-catalog
+          uri: ${CATALOG_SERVICE_URI:http://catalog-service:8085}
+          predicates:
+            - Path=/admin/catalog/**
+        - id: admin-pricing
+          uri: ${PRICING_ENGINE_URI:http://pricing-engine:8086}
+          predicates:
+            - Path=/admin/pricing/**
+        - id: admin-verifications
+          uri: ${VERIFICATION_SERVICE_URI:http://verification-service:8094}
+          predicates:
+            - Path=/admin/verifications/**
+        - id: admin-service
+          uri: ${ADMIN_SERVICE_URI:http://admin-service:8095}
+          predicates:
+            - Path=/admin/**
+
+server:
+  port: ${SERVER_PORT:8080}
+
+homefix:
+  gateway:
+    # HTTP -> HTTPS 301 redirect + HTTPS enforcement (Requirement 23.7, 23.8).
+    # TLS < 1.2 rejection is enforced at the AWS edge; here we redirect any non-HTTPS request.
+    https-enforced: ${HTTPS_ENFORCED:true}
+    auth:
+      # Auth Service JWT introspection endpoint (Requirement 23.1).
+      introspect-uri: ${AUTH_INTROSPECT_URI:http://auth-service:8081/auth/introspect}
+    rate-limit:
+      # Per-user request limits (Requirement 23.3).
+      customer-per-minute: 100
+      provider-per-minute: 60
+      default-per-minute: 60
+    otp:
+      # Per-phone OTP throttle (Requirement 23.4).
+      max-per-phone-per-hour: 5
+      otp-path: /auth/register/otp
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus,metrics
+      base-path: /
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  metrics:
+    tags:
+      application: api-gateway

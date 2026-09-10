@@ -1,0 +1,11 @@
+C:\projects\home-fix\services\notification-service\src\test\java\com\homefix\notification\adapter\NotificationAdaptersTest.java
+C:\projects\home-fix\services\notification-service\src\test\java\com\homefix\notification\config\NotificationPropertiesTest.java
+C:\projects\home-fix\services\notification-service\src\test\java\com\homefix\notification\consumer\LifecycleEventConsumerTest.java
+C:\projects\home-fix\services\notification-service\src\test\java\com\homefix\notification\consumer\NotificationEventMapperTest.java
+C:\projects\home-fix\services\notification-service\src\test\java\com\homefix\notification\contract\NotificationServiceProviderPactTest.java
+C:\projects\home-fix\services\notification-service\src\test\java\com\homefix\notification\delivery\NotificationDeliveryPropertiesTest.java
+C:\projects\home-fix\services\notification-service\src\test\java\com\homefix\notification\delivery\NotificationDeliveryServiceTest.java
+C:\projects\home-fix\services\notification-service\src\test\java\com\homefix\notification\domain\EventTemplateResolverTest.java
+C:\projects\home-fix\services\notification-service\src\test\java\com\homefix\notification\domain\RetryScheduleTest.java
+C:\projects\home-fix\services\notification-service\src\test\java\com\homefix\notification\it\LifecycleConsumerKafkaIT.java
+C:\projects\home-fix\services\notification-service\src\test\java\com\homefix\notification\support\TestDoubles.java

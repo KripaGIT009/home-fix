@@ -1,0 +1,12 @@
+C:\projects\home-fix\services\invoice-service\src\test\java\com\homefix\invoice\adapter\InvoiceAdaptersTest.java
+C:\projects\home-fix\services\invoice-service\src\test\java\com\homefix\invoice\api\InvoiceControllerTest.java
+C:\projects\home-fix\services\invoice-service\src\test\java\com\homefix\invoice\consumer\PaymentCompletedConsumerTest.java
+C:\projects\home-fix\services\invoice-service\src\test\java\com\homefix\invoice\domain\InvoiceNumberGeneratorTest.java
+C:\projects\home-fix\services\invoice-service\src\test\java\com\homefix\invoice\domain\InvoicePropertiesTest.java
+C:\projects\home-fix\services\invoice-service\src\test\java\com\homefix\invoice\pdf\OpenPdfInvoiceGeneratorAdapterTest.java
+C:\projects\home-fix\services\invoice-service\src\test\java\com\homefix\invoice\service\InvoiceQueryServiceTest.java
+C:\projects\home-fix\services\invoice-service\src\test\java\com\homefix\invoice\service\InvoiceServiceTest.java
+C:\projects\home-fix\services\invoice-service\src\test\java\com\homefix\invoice\storage\InMemoryInvoiceStorageAdapterTest.java
+C:\projects\home-fix\services\invoice-service\src\test\java\com\homefix\invoice\support\InMemoryInvoiceRepository.java
+C:\projects\home-fix\services\invoice-service\src\test\java\com\homefix\invoice\support\InMemoryInvoiceSequenceRepository.java
+C:\projects\home-fix\services\invoice-service\src\test\java\com\homefix\invoice\support\TestPorts.java

@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Retries.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Payment Service</a> &gt; <a href="index.source.html" class="el_package">com.homefix.payment.service</a> &gt; <span class="el_source">Retries.java</span></div><h1>Retries.java</h1><pre class="source lang-java linenums">package com.homefix.payment.service;
+
+import java.time.Duration;
+import java.util.function.Supplier;
+
+/**
+ * Small exponential-backoff retry helper (Requirement 12.6, 12.11). Runs an action up to
+ * {@code maxAttempts} times, doubling the backoff between attempts. Kept dependency-free and
+ * synchronous so the payment flows stay easy to reason about and unit-test (tests set the base
+ * backoff to zero to avoid real delays).
+ */
+public final class Retries {
+
+    private Retries() {
+    }
+
+    /**
+     * @return a {@link Result} describing whether the action ultimately succeeded, how many
+     *         attempts were made, and the last error if it failed.
+     */
+    public static Result run(int maxAttempts, Duration baseBackoff, Runnable action) {
+<span class="fc" id="L22">        return run(maxAttempts, baseBackoff, () -&gt; {</span>
+<span class="fc" id="L23">            action.run();</span>
+<span class="fc" id="L24">            return null;</span>
+        });
+    }
+
+    public static &lt;T&gt; Result run(int maxAttempts, Duration baseBackoff, Supplier&lt;T&gt; action) {
+<span class="fc" id="L29">        RuntimeException last = null;</span>
+<span class="fc" id="L30">        long backoffMillis = Math.max(0, baseBackoff.toMillis());</span>
+<span class="fc bfc" id="L31" title="All 2 branches covered.">        for (int attempt = 1; attempt &lt;= maxAttempts; attempt++) {</span>
+            try {
+<span class="fc" id="L33">                action.get();</span>
+<span class="fc" id="L34">                return new Result(true, attempt, null);</span>
+<span class="fc" id="L35">            } catch (RuntimeException e) {</span>
+<span class="fc" id="L36">                last = e;</span>
+<span class="pc bpc" id="L37" title="1 of 4 branches missed.">                if (attempt &lt; maxAttempts &amp;&amp; backoffMillis &gt; 0) {</span>
+<span class="nc" id="L38">                    sleep(backoffMillis);</span>
+<span class="nc" id="L39">                    backoffMillis *= 2;</span>
+                }
+            }
+        }
+<span class="fc" id="L43">        return new Result(false, maxAttempts, last);</span>
+    }
+
+    private static void sleep(long millis) {
+        try {
+<span class="nc" id="L48">            Thread.sleep(millis);</span>
+<span class="nc" id="L49">        } catch (InterruptedException e) {</span>
+<span class="nc" id="L50">            Thread.currentThread().interrupt();</span>
+<span class="nc" id="L51">        }</span>
+<span class="nc" id="L52">    }</span>
+
+    /** Outcome of a retry run. */
+<span class="fc" id="L55">    public record Result(boolean succeeded, int attempts, RuntimeException lastError) {</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

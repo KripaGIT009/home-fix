@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BookingTransitionService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Booking Service</a> &gt; <a href="index.source.html" class="el_package">com.homefix.booking.service</a> &gt; <span class="el_source">BookingTransitionService.java</span></div><h1>BookingTransitionService.java</h1><pre class="source lang-java linenums">package com.homefix.booking.service;
+
+import java.time.Clock;
+import java.time.Instant;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.homefix.booking.domain.Booking;
+import com.homefix.booking.domain.BookingAudit;
+import com.homefix.booking.domain.BookingAuditRepository;
+import com.homefix.booking.domain.BookingStateMachine;
+import com.homefix.booking.domain.BookingStatus;
+
+/**
+ * Central, reusable applier for booking state transitions (Requirement 9.1, 9.2, 9.15;
+ * Property 8, Property 9).
+ *
+ * &lt;p&gt;Every transition in the platform — creation, dispatch progression, job-execution
+ * milestones (Task 15), cancellation, payment — funnels through {@link #transition} so there
+ * is a single enforcement point:
+ * &lt;ol&gt;
+ *   &lt;li&gt;the {@link BookingStateMachine} validates the transition is permitted;&lt;/li&gt;
+ *   &lt;li&gt;if not, the attempt is logged (booking id, source, target, actor) and an
+ *       {@link InvalidTransitionException} (mapped to 409) is thrown — no state change and no
+ *       audit row (Property 8);&lt;/li&gt;
+ *   &lt;li&gt;if permitted, the booking status is updated and &lt;em&gt;exactly one&lt;/em&gt;
+ *       {@link BookingAudit} row is written, keeping the audit trail a contiguous chain
+ *       (Property 9).&lt;/li&gt;
+ * &lt;/ol&gt;
+ */
+@Service
+public class BookingTransitionService {
+
+<span class="fc" id="L37">    private static final Logger log = LoggerFactory.getLogger(BookingTransitionService.class);</span>
+
+    private final BookingStateMachine stateMachine;
+    private final BookingAuditRepository auditRepository;
+    private final Clock clock;
+
+    public BookingTransitionService(BookingStateMachine stateMachine,
+                                    BookingAuditRepository auditRepository,
+<span class="fc" id="L45">                                    Clock clock) {</span>
+<span class="fc" id="L46">        this.stateMachine = stateMachine;</span>
+<span class="fc" id="L47">        this.auditRepository = auditRepository;</span>
+<span class="fc" id="L48">        this.clock = clock;</span>
+<span class="fc" id="L49">    }</span>
+
+    /**
+     * Applies {@code target} to {@code booking}, validating against the state machine and
+     * recording an audit entry.
+     *
+     * @throws InvalidTransitionException if the transition is not permitted (Requirement 9.2)
+     */
+    @Transactional
+    public Booking transition(Booking booking, BookingStatus target, Actor actor, String reason) {
+<span class="fc" id="L59">        BookingStatus from = booking.getStatus();</span>
+<span class="fc bfc" id="L60" title="All 2 branches covered.">        if (!stateMachine.isPermitted(from, target)) {</span>
+            // Requirement 9.2: log the rejected attempt with all identifying detail.
+<span class="fc" id="L62">            log.warn(&quot;Rejected illegal booking transition bookingId={} from={} to={} actorId={} actorRole={}&quot;,</span>
+<span class="fc" id="L63">                    booking.getId(), from, target, actor.id(), actor.role());</span>
+<span class="fc" id="L64">            throw new InvalidTransitionException(booking.getId(), from, target);</span>
+        }
+<span class="fc" id="L66">        booking.applyStatus(target);</span>
+<span class="fc" id="L67">        recordAudit(booking, from, target, actor, reason);</span>
+<span class="fc" id="L68">        log.info(&quot;Applied booking transition bookingId={} from={} to={} actorRole={}&quot;,</span>
+<span class="fc" id="L69">                booking.getId(), from, target, actor.role());</span>
+<span class="fc" id="L70">        return booking;</span>
+    }
+
+    /**
+     * Records the opening audit entry for a freshly created booking (from_state = null,
+     * to_state = CREATED), starting the contiguous chain (Property 9).
+     */
+    @Transactional
+    public void recordCreation(Booking booking, Actor actor, String reason) {
+<span class="fc" id="L79">        recordAudit(booking, null, booking.getStatus(), actor, reason);</span>
+<span class="fc" id="L80">    }</span>
+
+    private void recordAudit(Booking booking, BookingStatus from, BookingStatus to,
+                             Actor actor, String reason) {
+<span class="fc" id="L84">        Instant now = Instant.now(clock);</span>
+<span class="fc" id="L85">        auditRepository.save(BookingAudit.of(</span>
+<span class="fc" id="L86">                booking.getId(), from, to, actor.id(), actor.role(), now, reason));</span>
+<span class="fc" id="L87">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

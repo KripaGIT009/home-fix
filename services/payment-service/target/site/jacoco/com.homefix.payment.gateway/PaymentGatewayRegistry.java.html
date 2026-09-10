@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PaymentGatewayRegistry.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Payment Service</a> &gt; <a href="index.source.html" class="el_package">com.homefix.payment.gateway</a> &gt; <span class="el_source">PaymentGatewayRegistry.java</span></div><h1>PaymentGatewayRegistry.java</h1><pre class="source lang-java linenums">package com.homefix.payment.gateway;
+
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.springframework.stereotype.Component;
+
+import com.homefix.payment.service.PaymentException;
+
+/**
+ * Resolves a {@link PaymentGatewayPort} by its gateway id. Spring injects every adapter on the
+ * classpath, so registering a new gateway is entirely additive: drop in a new adapter component
+ * and it becomes selectable here with no change to this class or the core logic (Requirement 12.1).
+ */
+@Component
+public class PaymentGatewayRegistry {
+
+<span class="fc" id="L20">    private final Map&lt;String, PaymentGatewayPort&gt; byId = new LinkedHashMap&lt;&gt;();</span>
+
+<span class="fc" id="L22">    public PaymentGatewayRegistry(List&lt;PaymentGatewayPort&gt; gateways) {</span>
+<span class="fc bfc" id="L23" title="All 2 branches covered.">        for (PaymentGatewayPort gateway : gateways) {</span>
+<span class="fc" id="L24">            byId.put(gateway.gatewayId(), gateway);</span>
+<span class="fc" id="L25">        }</span>
+<span class="fc" id="L26">    }</span>
+
+    /**
+     * @return the gateway registered under {@code gatewayId}.
+     * @throws PaymentException 400 if no such gateway is registered.
+     */
+    public PaymentGatewayPort require(String gatewayId) {
+<span class="fc" id="L33">        PaymentGatewayPort gateway = byId.get(gatewayId);</span>
+<span class="fc bfc" id="L34" title="All 2 branches covered.">        if (gateway == null) {</span>
+<span class="fc" id="L35">            throw PaymentException.validation(</span>
+<span class="fc" id="L36">                    &quot;Unknown payment gateway '&quot; + gatewayId + &quot;'; registered: &quot; + byId.keySet());</span>
+        }
+<span class="fc" id="L38">        return gateway;</span>
+    }
+
+    public Set&lt;String&gt; registeredGateways() {
+<span class="fc" id="L42">        return byId.keySet();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

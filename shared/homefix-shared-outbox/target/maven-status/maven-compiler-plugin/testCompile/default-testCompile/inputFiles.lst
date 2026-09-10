@@ -1,0 +1,8 @@
+C:\projects\home-fix\shared\homefix-shared-outbox\src\test\java\com\homefix\shared\outbox\HomefixOutboxAutoConfigurationTest.java
+C:\projects\home-fix\shared\homefix-shared-outbox\src\test\java\com\homefix\shared\outbox\kafka\DlqForwarderTest.java
+C:\projects\home-fix\shared\homefix-shared-outbox\src\test\java\com\homefix\shared\outbox\kafka\IdempotentKafkaConsumerTest.java
+C:\projects\home-fix\shared\homefix-shared-outbox\src\test\java\com\homefix\shared\outbox\kafka\KafkaProducerTemplateTest.java
+C:\projects\home-fix\shared\homefix-shared-outbox\src\test\java\com\homefix\shared\outbox\kafka\ProcessedEventEntityTest.java
+C:\projects\home-fix\shared\homefix-shared-outbox\src\test\java\com\homefix\shared\outbox\OutboxEventEntityTest.java
+C:\projects\home-fix\shared\homefix-shared-outbox\src\test\java\com\homefix\shared\outbox\OutboxWriteAtomicityTest.java
+C:\projects\home-fix\shared\homefix-shared-outbox\src\test\java\com\homefix\shared\outbox\TestJpaApplication.java

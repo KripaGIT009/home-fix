@@ -1,0 +1,8 @@
+C:\projects\home-fix\services\payment-service\src\test\java\com\homefix\payment\adapter\PaymentAdaptersTest.java
+C:\projects\home-fix\services\payment-service\src\test\java\com\homefix\payment\api\PaymentControllerTest.java
+C:\projects\home-fix\services\payment-service\src\test\java\com\homefix\payment\gateway\GatewaySignatureTest.java
+C:\projects\home-fix\services\payment-service\src\test\java\com\homefix\payment\PaymentPropertiesTest.java
+C:\projects\home-fix\services\payment-service\src\test\java\com\homefix\payment\service\PaymentServiceTest.java
+C:\projects\home-fix\services\payment-service\src\test\java\com\homefix\payment\support\InMemoryPaymentTransactionRepository.java
+C:\projects\home-fix\services\payment-service\src\test\java\com\homefix\payment\support\InMemorySettlementRepository.java
+C:\projects\home-fix\services\payment-service\src\test\java\com\homefix\payment\support\RecordingPaymentCompletedPublisher.java

@@ -1,0 +1,235 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Booking.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Booking Service</a> &gt; <a href="index.source.html" class="el_package">com.homefix.booking.domain</a> &gt; <span class="el_source">Booking.java</span></div><h1>Booking.java</h1><pre class="source lang-java linenums">package com.homefix.booking.domain;
+
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.UUID;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.Id;
+import jakarta.persistence.Index;
+import jakarta.persistence.Table;
+import jakarta.persistence.Version;
+
+/**
+ * Aggregate root for a customer's service request (design {@code BOOKING}).
+ *
+ * &lt;p&gt;The status is driven exclusively through the {@link BookingStateMachine}; callers must
+ * not mutate it directly outside {@code applyTransition}. Every status change is mirrored by
+ * a {@link BookingAudit} row so the audit trail forms a contiguous chain (Property 9).
+ */
+@Entity
+@Table(name = &quot;booking&quot;, indexes = {
+        @Index(name = &quot;idx_booking_reference&quot;, columnList = &quot;reference&quot;, unique = true),
+        @Index(name = &quot;idx_booking_customer&quot;, columnList = &quot;customer_id&quot;)
+})
+public class Booking {
+
+    @Id
+    @Column(name = &quot;id&quot;, nullable = false, updatable = false)
+    private UUID id;
+
+    /** Human-facing unique booking reference number (Requirement 7.1). */
+    @Column(name = &quot;reference&quot;, nullable = false, updatable = false, length = 40)
+    private String reference;
+
+    @Column(name = &quot;customer_id&quot;, nullable = false, updatable = false)
+    private UUID customerId;
+
+    @Column(name = &quot;provider_id&quot;)
+    private UUID providerId;
+
+    @Column(name = &quot;category_id&quot;, nullable = false, updatable = false)
+    private UUID categoryId;
+
+    @Column(name = &quot;subcategory_id&quot;, nullable = false, updatable = false)
+    private UUID subcategoryId;
+
+    @Column(name = &quot;address_id&quot;)
+    private UUID addressId;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = &quot;status&quot;, nullable = false, length = 40)
+    private BookingStatus status;
+
+    @Column(name = &quot;is_emergency&quot;, nullable = false)
+    private boolean emergency;
+
+    @Column(name = &quot;scheduled_at&quot;)
+    private Instant scheduledAt;
+
+    @Column(name = &quot;estimated_total&quot;, precision = 12, scale = 2)
+    private BigDecimal estimatedTotal;
+
+    @Column(name = &quot;final_total&quot;, precision = 12, scale = 2)
+    private BigDecimal finalTotal;
+
+    /** Cancellation fee actually charged when the booking is cancelled (Requirement 9.16-9.18). */
+    @Column(name = &quot;cancellation_fee&quot;, precision = 12, scale = 2)
+    private BigDecimal cancellationFee;
+
+    @Column(name = &quot;saga_state&quot;, length = 60)
+    private String sagaState;
+
+    @Column(name = &quot;created_at&quot;, nullable = false, updatable = false)
+    private Instant createdAt;
+
+    @Column(name = &quot;started_at&quot;)
+    private Instant startedAt;
+
+    @Column(name = &quot;completed_at&quot;)
+    private Instant completedAt;
+
+    @Column(name = &quot;net_duration_seconds&quot;)
+    private Integer netDurationSeconds;
+
+    @Version
+    @Column(name = &quot;version&quot;, nullable = false)
+    private long version;
+
+<span class="nc" id="L92">    protected Booking() {</span>
+        // JPA
+<span class="nc" id="L94">    }</span>
+
+    private Booking(UUID id, String reference, UUID customerId, UUID categoryId, UUID subcategoryId,
+<span class="fc" id="L97">                    UUID addressId, boolean emergency, Instant scheduledAt, BigDecimal estimatedTotal) {</span>
+<span class="fc" id="L98">        this.id = id;</span>
+<span class="fc" id="L99">        this.reference = reference;</span>
+<span class="fc" id="L100">        this.customerId = customerId;</span>
+<span class="fc" id="L101">        this.categoryId = categoryId;</span>
+<span class="fc" id="L102">        this.subcategoryId = subcategoryId;</span>
+<span class="fc" id="L103">        this.addressId = addressId;</span>
+<span class="fc" id="L104">        this.emergency = emergency;</span>
+<span class="fc" id="L105">        this.scheduledAt = scheduledAt;</span>
+<span class="fc" id="L106">        this.estimatedTotal = estimatedTotal;</span>
+<span class="fc" id="L107">        this.status = BookingStatus.CREATED;</span>
+<span class="fc" id="L108">        this.createdAt = Instant.now();</span>
+<span class="fc" id="L109">    }</span>
+
+    /**
+     * Creates a booking in {@link BookingStatus#CREATED} with a fresh id and the supplied
+     * unique reference.
+     */
+    public static Booking create(String reference, UUID customerId, UUID categoryId,
+                                 UUID subcategoryId, UUID addressId, boolean emergency,
+                                 Instant scheduledAt, BigDecimal estimatedTotal) {
+<span class="fc" id="L118">        return new Booking(UUID.randomUUID(), reference, customerId, categoryId, subcategoryId,</span>
+                addressId, emergency, scheduledAt, estimatedTotal);
+    }
+
+    /**
+     * Applies a validated status change. Callers MUST verify the transition against the
+     * {@link BookingStateMachine} first (see {@code BookingTransitionService}); this method
+     * only stores the new state and performs no validation itself.
+     */
+    public void applyStatus(BookingStatus status) {
+<span class="fc" id="L128">        this.status = status;</span>
+<span class="fc" id="L129">    }</span>
+
+    public UUID getId() {
+<span class="fc" id="L132">        return id;</span>
+    }
+
+    public String getReference() {
+<span class="fc" id="L136">        return reference;</span>
+    }
+
+    public UUID getCustomerId() {
+<span class="fc" id="L140">        return customerId;</span>
+    }
+
+    public UUID getProviderId() {
+<span class="fc" id="L144">        return providerId;</span>
+    }
+
+    public void setProviderId(UUID providerId) {
+<span class="fc" id="L148">        this.providerId = providerId;</span>
+<span class="fc" id="L149">    }</span>
+
+    public UUID getCategoryId() {
+<span class="fc" id="L152">        return categoryId;</span>
+    }
+
+    public UUID getSubcategoryId() {
+<span class="fc" id="L156">        return subcategoryId;</span>
+    }
+
+    public UUID getAddressId() {
+<span class="fc" id="L160">        return addressId;</span>
+    }
+
+    public BookingStatus getStatus() {
+<span class="fc" id="L164">        return status;</span>
+    }
+
+    public boolean isEmergency() {
+<span class="fc" id="L168">        return emergency;</span>
+    }
+
+    public Instant getScheduledAt() {
+<span class="fc" id="L172">        return scheduledAt;</span>
+    }
+
+    public BigDecimal getEstimatedTotal() {
+<span class="fc" id="L176">        return estimatedTotal;</span>
+    }
+
+    public BigDecimal getFinalTotal() {
+<span class="fc" id="L180">        return finalTotal;</span>
+    }
+
+    public void setFinalTotal(BigDecimal finalTotal) {
+<span class="fc" id="L184">        this.finalTotal = finalTotal;</span>
+<span class="fc" id="L185">    }</span>
+
+    public BigDecimal getCancellationFee() {
+<span class="fc" id="L188">        return cancellationFee;</span>
+    }
+
+    public void setCancellationFee(BigDecimal cancellationFee) {
+<span class="fc" id="L192">        this.cancellationFee = cancellationFee;</span>
+<span class="fc" id="L193">    }</span>
+
+    public String getSagaState() {
+<span class="fc" id="L196">        return sagaState;</span>
+    }
+
+    public void setSagaState(String sagaState) {
+<span class="fc" id="L200">        this.sagaState = sagaState;</span>
+<span class="fc" id="L201">    }</span>
+
+    public Instant getCreatedAt() {
+<span class="fc" id="L204">        return createdAt;</span>
+    }
+
+    public Instant getStartedAt() {
+<span class="fc" id="L208">        return startedAt;</span>
+    }
+
+    public void setStartedAt(Instant startedAt) {
+<span class="fc" id="L212">        this.startedAt = startedAt;</span>
+<span class="fc" id="L213">    }</span>
+
+    public Instant getCompletedAt() {
+<span class="fc" id="L216">        return completedAt;</span>
+    }
+
+    public void setCompletedAt(Instant completedAt) {
+<span class="fc" id="L220">        this.completedAt = completedAt;</span>
+<span class="fc" id="L221">    }</span>
+
+    public Integer getNetDurationSeconds() {
+<span class="fc" id="L224">        return netDurationSeconds;</span>
+    }
+
+    public void setNetDurationSeconds(Integer netDurationSeconds) {
+<span class="fc" id="L228">        this.netDurationSeconds = netDurationSeconds;</span>
+<span class="fc" id="L229">    }</span>
+
+    public long getVersion() {
+<span class="fc" id="L232">        return version;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

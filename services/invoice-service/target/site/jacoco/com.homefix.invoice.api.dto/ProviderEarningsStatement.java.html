@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ProviderEarningsStatement.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Invoice Service</a> &gt; <a href="index.source.html" class="el_package">com.homefix.invoice.api.dto</a> &gt; <span class="el_source">ProviderEarningsStatement.java</span></div><h1>ProviderEarningsStatement.java</h1><pre class="source lang-java linenums">package com.homefix.invoice.api.dto;
+
+import java.math.BigDecimal;
+import java.util.UUID;
+
+/**
+ * A Provider's monthly earnings statement (Requirement 13.6): all settled jobs in the month, with
+ * gross earnings, platform fees deducted, and net payout. Accessible on the first calendar day of
+ * the following month.
+ */
+<span class="fc" id="L11">public record ProviderEarningsStatement(</span>
+        UUID providerId,
+        int year,
+        int month,
+        int jobCount,
+        BigDecimal grossEarnings,
+        BigDecimal platformFees,
+        BigDecimal netPayout,
+        boolean available) {
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>JobDurationCalculator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Booking Service</a> &gt; <a href="index.source.html" class="el_package">com.homefix.booking.domain</a> &gt; <span class="el_source">JobDurationCalculator.java</span></div><h1>JobDurationCalculator.java</h1><pre class="source lang-java linenums">package com.homefix.booking.domain;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
+
+/**
+ * Pure, stateless calculator for the net job duration (Requirement 11.6, Property 10).
+ *
+ * &lt;p&gt;Given the ordered sequence of {@link JobInterval}s for a booking, the net duration is the
+ * sum of all {@link JobInterval.Kind#WORK} interval durations minus the sum of all
+ * {@link JobInterval.Kind#PAUSE} interval durations. Any interval still open at completion is
+ * closed at the completion instant before being summed.
+ *
+ * &lt;p&gt;Kept free of Spring and persistence so it is trivially unit-testable and reusable by the
+ * dedicated property-based test task.
+ */
+public final class JobDurationCalculator {
+
+    private JobDurationCalculator() {
+    }
+
+    /**
+     * Computes net working duration in seconds.
+     *
+     * @param intervals the booking's intervals (order-independent; each must have a start)
+     * @param completedAt instant used to close any interval still open (typically the
+     *        JOB_COMPLETED timestamp)
+     * @return {@code Σ WORK − Σ PAUSE} in whole seconds; never negative (floored at 0)
+     */
+    public static long netDurationSeconds(List&lt;JobInterval&gt; intervals, Instant completedAt) {
+<span class="fc" id="L32">        long workSeconds = 0L;</span>
+<span class="fc" id="L33">        long pauseSeconds = 0L;</span>
+<span class="fc bfc" id="L34" title="All 2 branches covered.">        for (JobInterval interval : intervals) {</span>
+<span class="fc bfc" id="L35" title="All 2 branches covered.">            Instant end = interval.getEndedAt() != null ? interval.getEndedAt() : completedAt;</span>
+<span class="fc" id="L36">            long seconds = Duration.between(interval.getStartedAt(), end).getSeconds();</span>
+<span class="fc bfc" id="L37" title="All 2 branches covered.">            if (interval.getKind() == JobInterval.Kind.WORK) {</span>
+<span class="fc" id="L38">                workSeconds += seconds;</span>
+            } else {
+<span class="fc" id="L40">                pauseSeconds += seconds;</span>
+            }
+<span class="fc" id="L42">        }</span>
+<span class="fc" id="L43">        long net = workSeconds - pauseSeconds;</span>
+<span class="fc" id="L44">        return Math.max(net, 0L);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

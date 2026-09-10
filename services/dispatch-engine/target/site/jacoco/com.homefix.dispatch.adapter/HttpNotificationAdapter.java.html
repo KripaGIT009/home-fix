@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>HttpNotificationAdapter.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Dispatch Engine</a> &gt; <a href="index.source.html" class="el_package">com.homefix.dispatch.adapter</a> &gt; <span class="el_source">HttpNotificationAdapter.java</span></div><h1>HttpNotificationAdapter.java</h1><pre class="source lang-java linenums">package com.homefix.dispatch.adapter;
+
+import com.homefix.dispatch.config.DispatchClientProperties;
+import com.homefix.dispatch.port.NotificationPort;
+import com.homefix.shared.resilience.ResilienceFactory;
+import com.homefix.shared.resilience.ResilientCall;
+import com.homefix.shared.resilience.TimeoutProfile;
+import com.homefix.shared.resilience.TransientFailures;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestClient;
+
+import java.time.Duration;
+import java.util.Map;
+import java.util.UUID;
+
+/**
+ * Default {@link NotificationPort} adapter. On a failed search it asks the Notification Service to
+ * send the customer a push + SMS and posts an internal dispatcher-team alert (Requirement 8.9).
+ *
+ * &lt;p&gt;Notification is not on the critical dispatch path, so it uses the standard 15 s timeout
+ * profile (Requirement 24.3) with retry and a circuit breaker (Requirements 24.1, 24.2). Delivery
+ * is best-effort: a transport failure here must not throw the dispatch flow into retry (the booking
+ * is already SEARCHING_FAILED), so the fallback is a no-op that returns after emitting the shared
+ * WARN log naming the {@code notification-service} dependency (Requirement 24.4).
+ *
+ * &lt;p&gt;Active only when no other {@link NotificationPort} bean is present (tests supply a fake).
+ */
+@Component
+@ConditionalOnMissingBean(NotificationPort.class)
+public class HttpNotificationAdapter implements NotificationPort {
+
+    /** Downstream dependency name used for breaker keying, metrics, and the WARN log. */
+    static final String DEPENDENCY = &quot;notification-service&quot;;
+
+    private final RestClient restClient;
+    private final ResilientCall&lt;Void&gt; resilientCall;
+
+<span class="fc" id="L39">    public HttpNotificationAdapter(DispatchClientProperties properties, ResilienceFactory resilienceFactory) {</span>
+<span class="fc" id="L40">        this.restClient = RestClient.builder()</span>
+<span class="fc" id="L41">                .baseUrl(properties.getNotificationServiceBaseUrl())</span>
+<span class="fc" id="L42">                .requestFactory(new org.springframework.http.client.SimpleClientHttpRequestFactory() {{</span>
+<span class="fc" id="L43">                    setConnectTimeout((int) Duration.ofSeconds(15).toMillis());</span>
+<span class="fc" id="L44">                    setReadTimeout((int) Duration.ofSeconds(15).toMillis());</span>
+<span class="fc" id="L45">                }})</span>
+<span class="fc" id="L46">                .build();</span>
+        // Best-effort: degrade to a no-op so a notification outage never fails the dispatch flow.
+<span class="fc" id="L48">        this.resilientCall = ResilientCall.forDependency(</span>
+<span class="fc" id="L49">                resilienceFactory, DEPENDENCY, TimeoutProfile.STANDARD, cause -&gt; null);</span>
+<span class="fc" id="L50">    }</span>
+
+    @Override
+    public void notifyCustomerNoProviderAvailable(UUID bookingId, UUID customerId) {
+<span class="fc" id="L54">        resilientCall.execute(() -&gt; {</span>
+<span class="fc" id="L55">            restClient.post()</span>
+<span class="fc" id="L56">                    .uri(&quot;/internal/notifications/no-provider-available&quot;)</span>
+<span class="fc" id="L57">                    .body(Map.of(&quot;bookingId&quot;, bookingId, &quot;customerId&quot;, customerId,</span>
+                            &quot;channels&quot;, new String[]{&quot;PUSH&quot;, &quot;SMS&quot;}))
+<span class="fc" id="L59">                    .retrieve()</span>
+<span class="fc" id="L60">                    .onStatus(status -&gt; status.is5xxServerError(), (req, res) -&gt; {</span>
+<span class="fc" id="L61">                        throw new TransientFailures.ServerErrorException(</span>
+<span class="fc" id="L62">                                res.getStatusCode().value(), &quot;Notification Service returned 5xx&quot;);</span>
+                    })
+<span class="fc" id="L64">                    .toBodilessEntity();</span>
+<span class="fc" id="L65">            return null;</span>
+        });
+<span class="fc" id="L67">    }</span>
+
+    @Override
+    public void alertDispatcherTeam(UUID bookingId) {
+<span class="fc" id="L71">        resilientCall.execute(() -&gt; {</span>
+<span class="fc" id="L72">            restClient.post()</span>
+<span class="fc" id="L73">                    .uri(&quot;/internal/notifications/dispatcher-alert&quot;)</span>
+<span class="fc" id="L74">                    .body(Map.of(&quot;bookingId&quot;, bookingId, &quot;reason&quot;, &quot;SEARCHING_FAILED&quot;))</span>
+<span class="fc" id="L75">                    .retrieve()</span>
+<span class="fc" id="L76">                    .onStatus(status -&gt; status.is5xxServerError(), (req, res) -&gt; {</span>
+<span class="nc" id="L77">                        throw new TransientFailures.ServerErrorException(</span>
+<span class="nc" id="L78">                                res.getStatusCode().value(), &quot;Notification Service returned 5xx&quot;);</span>
+                    })
+<span class="fc" id="L80">                    .toBodilessEntity();</span>
+<span class="fc" id="L81">            return null;</span>
+        });
+<span class="fc" id="L83">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

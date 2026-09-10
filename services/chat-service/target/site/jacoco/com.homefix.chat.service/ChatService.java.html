@@ -1,0 +1,175 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ChatService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Chat Service</a> &gt; <a href="index.source.html" class="el_package">com.homefix.chat.service</a> &gt; <span class="el_source">ChatService.java</span></div><h1>ChatService.java</h1><pre class="source lang-java linenums">package com.homefix.chat.service;
+
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
+import java.util.UUID;
+
+import com.homefix.chat.delivery.MessageDeliveryPort;
+import com.homefix.chat.domain.ChatChannel;
+import com.homefix.chat.domain.ChatMessage;
+import com.homefix.chat.domain.PhoneNumberMasker;
+import com.homefix.chat.presence.PresenceRegistry;
+import com.homefix.chat.push.NotificationPushPort;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.transaction.annotation.Transactional;
+
+/**
+ * Core in-app chat orchestration (Requirement 18).
+ *
+ * &lt;p&gt;Responsibilities:
+ * &lt;ul&gt;
+ *   &lt;li&gt;&lt;b&gt;Channel lifecycle&lt;/b&gt; — {@link #activateChannel} on PROVIDER_ACCEPTED (18.1) and
+ *       {@link #deactivateChannel} on PAYMENT_COMPLETED / CANCELLED (18.5); both are idempotent so
+ *       Kafka redelivery is harmless.&lt;/li&gt;
+ *   &lt;li&gt;&lt;b&gt;Access control&lt;/b&gt; — every send/read is checked against the channel's stored
+ *       participants; non-participants are rejected with 403 (18.7, Property 23).&lt;/li&gt;
+ *   &lt;li&gt;&lt;b&gt;Deactivation guard&lt;/b&gt; — sends to a deactivated channel are rejected with a descriptive
+ *       error (18.6); historical reads remain allowed.&lt;/li&gt;
+ *   &lt;li&gt;&lt;b&gt;Phone masking&lt;/b&gt; — message bodies are masked before they are stored or delivered so a
+ *       personal mobile number is never exposed (18.8).&lt;/li&gt;
+ *   &lt;li&gt;&lt;b&gt;Retention&lt;/b&gt; — each message records {@code retainUntil = bookingCreatedAt + retention}
+ *       (default 90 days), independent of channel status (18.4).&lt;/li&gt;
+ *   &lt;li&gt;&lt;b&gt;Real-time delivery + offline push&lt;/b&gt; — the message is delivered over WebSocket and,
+ *       when the recipient is offline, a push notification is raised via the Notification Service
+ *       (18.2, 18.3).&lt;/li&gt;
+ * &lt;/ul&gt;
+ *
+ * &lt;p&gt;Collaborators are injected as ports so the whole class is unit-testable with hand-written
+ * doubles and no Spring context. A {@link Clock} makes retention and timestamps deterministic in
+ * tests. Message bodies and phone numbers are never logged (Requirement 26.4).
+ */
+public class ChatService {
+
+<span class="fc" id="L46">    private static final Logger log = LoggerFactory.getLogger(ChatService.class);</span>
+
+    private final ChatStore store;
+    private final MessageDeliveryPort delivery;
+    private final PresenceRegistry presence;
+    private final NotificationPushPort push;
+    private final Duration retention;
+    private final Clock clock;
+
+    public ChatService(ChatStore store,
+                       MessageDeliveryPort delivery,
+                       PresenceRegistry presence,
+                       NotificationPushPort push,
+                       Duration retention,
+<span class="fc" id="L60">                       Clock clock) {</span>
+<span class="fc" id="L61">        this.store = store;</span>
+<span class="fc" id="L62">        this.delivery = delivery;</span>
+<span class="fc" id="L63">        this.presence = presence;</span>
+<span class="fc" id="L64">        this.push = push;</span>
+<span class="fc" id="L65">        this.retention = retention;</span>
+<span class="fc" id="L66">        this.clock = clock;</span>
+<span class="fc" id="L67">    }</span>
+
+    /**
+     * Activates the chat channel for a booking on transition to PROVIDER_ACCEPTED
+     * (Requirement 18.1). Idempotent: if a channel already exists for the booking it is returned
+     * unchanged, so a redelivered {@code ProviderAccepted} event does not create a duplicate.
+     */
+    @Transactional
+    public ChatChannel activateChannel(UUID bookingId, UUID customerId, UUID providerId,
+                                       Instant bookingCreatedAt) {
+<span class="fc" id="L77">        return store.findChannel(bookingId).orElseGet(() -&gt; {</span>
+<span class="fc" id="L78">            ChatChannel channel = ChatChannel.activate(</span>
+<span class="fc" id="L79">                    bookingId, customerId, providerId, bookingCreatedAt, clock.instant());</span>
+<span class="fc" id="L80">            ChatChannel saved = store.saveChannel(channel);</span>
+<span class="fc" id="L81">            log.info(&quot;Activated chat channel for booking {}&quot;, bookingId);</span>
+<span class="fc" id="L82">            return saved;</span>
+        });
+    }
+
+    /**
+     * Deactivates the chat channel for a booking on transition to PAYMENT_COMPLETED or CANCELLED
+     * (Requirement 18.5). Idempotent and a no-op if the channel is absent or already deactivated,
+     * so a redelivered terminal event is harmless.
+     */
+    @Transactional
+    public void deactivateChannel(UUID bookingId) {
+<span class="fc" id="L93">        store.findChannel(bookingId).ifPresent(channel -&gt; {</span>
+<span class="fc bfc" id="L94" title="All 2 branches covered.">            if (channel.isActive()) {</span>
+<span class="fc" id="L95">                channel.deactivate(clock.instant());</span>
+<span class="fc" id="L96">                store.saveChannel(channel);</span>
+<span class="fc" id="L97">                log.info(&quot;Deactivated chat channel for booking {}&quot;, bookingId);</span>
+            }
+<span class="fc" id="L99">        });</span>
+<span class="fc" id="L100">    }</span>
+
+    /**
+     * Sends a message from {@code senderId} on {@code bookingId}.
+     *
+     * @throws ChatException 404 if no channel exists, 403 if the sender is not a participant
+     *                       (Property 23), 409 if the channel is deactivated (18.6), 400 if the
+     *                       body is blank.
+     */
+    @Transactional
+    public ChatMessage sendMessage(UUID bookingId, UUID senderId, String rawBody) {
+<span class="fc" id="L111">        ChatChannel channel = requireChannel(bookingId);</span>
+<span class="fc" id="L112">        requireParticipant(channel, senderId);</span>
+
+<span class="fc bfc" id="L114" title="All 2 branches covered.">        if (!channel.isActive()) {</span>
+<span class="fc" id="L115">            throw ChatException.channelDeactivated(</span>
+                    &quot;chat channel for this booking is no longer active&quot;);
+        }
+<span class="pc bpc" id="L118" title="1 of 4 branches missed.">        if (rawBody == null || rawBody.isBlank()) {</span>
+<span class="fc" id="L119">            throw ChatException.validation(&quot;message body must not be blank&quot;);</span>
+        }
+
+<span class="fc" id="L122">        String maskedBody = PhoneNumberMasker.mask(rawBody);</span>
+<span class="fc" id="L123">        Instant now = clock.instant();</span>
+<span class="fc" id="L124">        Instant retainUntil = channel.getBookingCreatedAt().plus(retention);</span>
+<span class="fc" id="L125">        ChatMessage message = store.saveMessage(</span>
+<span class="fc" id="L126">                ChatMessage.create(bookingId, senderId, maskedBody, now, retainUntil));</span>
+
+<span class="fc" id="L128">        UUID recipientId = recipientOf(channel, senderId);</span>
+
+        // Real-time delivery over WebSocket (Requirement 18.2).
+<span class="fc" id="L131">        delivery.deliver(message);</span>
+
+        // Offline recipient -&gt; push notification via Notification Service (Requirement 18.3).
+<span class="fc bfc" id="L134" title="All 2 branches covered.">        if (!presence.isOnline(bookingId, recipientId)) {</span>
+<span class="fc" id="L135">            push.notifyUnreadMessage(recipientId, bookingId);</span>
+        }
+
+<span class="fc" id="L138">        return message;</span>
+    }
+
+    /**
+     * Returns the chronological message history for a booking.
+     *
+     * @throws ChatException 404 if no channel exists, 403 if the reader is not a participant
+     *                       (Property 23). History is available regardless of channel status so
+     *                       that retained messages remain readable (Requirement 18.4).
+     */
+    @Transactional(readOnly = true)
+    public List&lt;ChatMessage&gt; readMessages(UUID bookingId, UUID readerId) {
+<span class="fc" id="L150">        ChatChannel channel = requireChannel(bookingId);</span>
+<span class="fc" id="L151">        requireParticipant(channel, readerId);</span>
+<span class="fc" id="L152">        return store.findMessages(bookingId);</span>
+    }
+
+    private ChatChannel requireChannel(UUID bookingId) {
+<span class="fc" id="L156">        return store.findChannel(bookingId)</span>
+<span class="fc" id="L157">                .orElseThrow(() -&gt; ChatException.channelNotFound(</span>
+                        &quot;no chat channel exists for the requested booking&quot;));
+    }
+
+    /** Enforces Property 23: only the booking's customer or provider may proceed. */
+    private void requireParticipant(ChatChannel channel, UUID userId) {
+<span class="fc bfc" id="L163" title="All 2 branches covered.">        if (!channel.participants().isParticipant(userId)) {</span>
+<span class="fc" id="L164">            throw ChatException.forbidden(</span>
+                    &quot;requesting user is not a participant of this chat channel&quot;);
+        }
+<span class="fc" id="L167">    }</span>
+
+    private static UUID recipientOf(ChatChannel channel, UUID senderId) {
+<span class="fc bfc" id="L170" title="All 2 branches covered.">        return senderId.equals(channel.getCustomerId())</span>
+<span class="fc" id="L171">                ? channel.getProviderId()</span>
+<span class="fc" id="L172">                : channel.getCustomerId();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

@@ -1,0 +1,236 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CouponService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Promotion / Coupon Service</a> &gt; <a href="index.source.html" class="el_package">com.homefix.promotion.service</a> &gt; <span class="el_source">CouponService.java</span></div><h1>CouponService.java</h1><pre class="source lang-java linenums">package com.homefix.promotion.service;
+
+import java.math.BigDecimal;
+import java.time.Clock;
+import java.time.LocalDate;
+import java.util.Optional;
+import java.util.UUID;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.homefix.promotion.config.PromotionProperties;
+import com.homefix.promotion.domain.Coupon;
+import com.homefix.promotion.domain.CouponRepository;
+import com.homefix.promotion.domain.CouponUsage;
+import com.homefix.promotion.domain.CouponUsageRepository;
+import com.homefix.promotion.domain.DiscountCalculator;
+import com.homefix.promotion.service.CouponException.ConstraintCode;
+
+/**
+ * Coupon and promotion business logic (Requirement 21).
+ *
+ * &lt;p&gt;Responsibilities: Admin coupon CRUD with attribute validation (21.1), checkout-time
+ * validation returning the applicable discount or a descriptive constraint violation (21.2),
+ * atomic redemption that increments the total and per-user counters without over-redemption under
+ * concurrency (21.3, Property 20), immediate deactivation (21.4), and atomic counter decrement on
+ * cancellation before payment capture (21.5, Property 21).
+ *
+ * &lt;p&gt;Concurrency-safety approach: the actual counter mutation runs in a {@code SERIALIZABLE}
+ * transaction inside {@link CouponCounterTransaction}, guarded by optimistic {@code @Version}
+ * columns. This method wraps each attempt in a bounded retry loop; a losing concurrent writer sees
+ * an {@link OptimisticLockingFailureException}, reloads, and retries, so committed increments never
+ * exceed the configured limits.
+ *
+ * &lt;p&gt;Per Requirement 26.4, logs reference coupon codes and IDs only — never customer PII.
+ */
+@Service
+public class CouponService {
+
+<span class="fc" id="L43">    private static final Logger log = LoggerFactory.getLogger(CouponService.class);</span>
+
+    private final CouponRepository couponRepository;
+    private final CouponUsageRepository usageRepository;
+    private final CouponCounterTransaction counterTransaction;
+    private final PromotionProperties props;
+    private final Clock clock;
+
+    public CouponService(CouponRepository couponRepository,
+                         CouponUsageRepository usageRepository,
+                         CouponCounterTransaction counterTransaction,
+                         PromotionProperties props,
+<span class="fc" id="L55">                         Clock clock) {</span>
+<span class="fc" id="L56">        this.couponRepository = couponRepository;</span>
+<span class="fc" id="L57">        this.usageRepository = usageRepository;</span>
+<span class="fc" id="L58">        this.counterTransaction = counterTransaction;</span>
+<span class="fc" id="L59">        this.props = props;</span>
+<span class="fc" id="L60">        this.clock = clock;</span>
+<span class="fc" id="L61">    }</span>
+
+    // ===================== Admin CRUD (Requirement 21.1) =====================
+
+    /**
+     * Creates a coupon (Requirement 21.1). Attribute validation is enforced by the domain factory;
+     * a duplicate code (case-insensitive) is rejected with 409.
+     */
+    @Transactional
+    public Coupon createCoupon(CreateCouponCommand cmd) {
+<span class="fc" id="L71">        String normalised = Coupon.normaliseCode(cmd.code());</span>
+<span class="pc bpc" id="L72" title="1 of 4 branches missed.">        if (normalised != null &amp;&amp; couponRepository.existsByCode(normalised)) {</span>
+<span class="fc" id="L73">            throw CouponException.duplicateCode(&quot;A coupon with code '&quot; + normalised + &quot;' already exists&quot;);</span>
+        }
+<span class="fc" id="L75">        Coupon coupon = Coupon.create(cmd.code(), cmd.discountType(), cmd.discountValue(),</span>
+<span class="fc" id="L76">                cmd.minOrderValue(), cmd.maxDiscountCap(), cmd.validFrom(), cmd.expiryDate(),</span>
+<span class="fc" id="L77">                cmd.perUserLimit(), cmd.totalLimit());</span>
+<span class="fc" id="L78">        Coupon saved = couponRepository.save(coupon);</span>
+<span class="fc" id="L79">        log.info(&quot;Created coupon {} code {}&quot;, saved.getId(), saved.getCode());</span>
+<span class="fc" id="L80">        return saved;</span>
+    }
+
+    @Transactional(readOnly = true)
+    public Coupon getCoupon(UUID couponId) {
+<span class="fc" id="L85">        return require(couponId);</span>
+    }
+
+    @Transactional(readOnly = true)
+    public Coupon getCouponByCode(String code) {
+<span class="fc" id="L90">        return couponRepository.findByCode(Coupon.normaliseCode(code))</span>
+<span class="fc" id="L91">                .orElseThrow(() -&gt; CouponException.notFound(&quot;Coupon with code '&quot; + code + &quot;' not found&quot;));</span>
+    }
+
+    /** Immediately prevents further redemptions of the coupon (Requirement 21.4). */
+    @Transactional
+    public Coupon deactivateCoupon(UUID couponId) {
+<span class="fc" id="L97">        Coupon coupon = require(couponId);</span>
+<span class="fc" id="L98">        coupon.deactivate();</span>
+<span class="fc" id="L99">        Coupon saved = couponRepository.save(coupon);</span>
+<span class="fc" id="L100">        log.info(&quot;Deactivated coupon {} code {}&quot;, saved.getId(), saved.getCode());</span>
+<span class="fc" id="L101">        return saved;</span>
+    }
+
+    @Transactional
+    public Coupon activateCoupon(UUID couponId) {
+<span class="fc" id="L106">        Coupon coupon = require(couponId);</span>
+<span class="fc" id="L107">        coupon.activate();</span>
+<span class="fc" id="L108">        return couponRepository.save(coupon);</span>
+    }
+
+    // ===================== Validation (Requirement 21.2) =====================
+
+    /**
+     * Validates a coupon against all checkout constraints (active status, date range, minimum order
+     * value, per-user usage limit, total usage limit) and returns the applicable discount amount
+     * (Requirement 21.2). No counter is mutated here.
+     *
+     * @throws CouponException 422 with a constraint-specific error code on the first violation.
+     */
+    @Transactional(readOnly = true)
+    public CouponValidationResult validate(String code, UUID userId, BigDecimal orderValue) {
+<span class="fc" id="L122">        Coupon coupon = getCouponByCode(code);</span>
+<span class="fc" id="L123">        int userUsage = currentUserUsage(coupon.getId(), userId);</span>
+<span class="fc" id="L124">        LocalDate today = LocalDate.now(clock);</span>
+
+<span class="fc" id="L126">        Optional&lt;ConstraintCode&gt; violation = coupon.checkApplicability(orderValue, userUsage, today);</span>
+<span class="fc bfc" id="L127" title="All 2 branches covered.">        if (violation.isPresent()) {</span>
+<span class="fc" id="L128">            throw CouponException.constraintViolated(violation.get(),</span>
+<span class="fc" id="L129">                    describe(violation.get(), coupon, orderValue));</span>
+        }
+
+<span class="fc" id="L132">        BigDecimal discount = DiscountCalculator.compute(coupon.getDiscountType(),</span>
+<span class="fc" id="L133">                coupon.getDiscountValue(), coupon.getMaxDiscountCap(), orderValue);</span>
+<span class="fc" id="L134">        return new CouponValidationResult(coupon.getId(), coupon.getCode(), discount);</span>
+    }
+
+    // ===================== Atomic redemption (Requirement 21.3, Property 20) =====================
+
+    /**
+     * Redeems the coupon for a user, atomically incrementing both the total and per-user usage
+     * counters (Requirement 21.3, Property 20). Retries on optimistic-lock contention up to the
+     * configured maximum so concurrent redemptions serialise without over-redemption.
+     *
+     * @throws CouponException 422 if a limit is reached, 409 if contention could not be resolved.
+     */
+    public Coupon redeem(String code, UUID userId) {
+<span class="fc" id="L147">        Coupon coupon = getCouponByCode(code);</span>
+<span class="fc" id="L148">        UUID couponId = coupon.getId();</span>
+
+<span class="fc" id="L150">        int attempts = 0;</span>
+<span class="fc" id="L151">        int maxAttempts = Math.max(1, props.getMaxRedemptionRetries());</span>
+        while (true) {
+<span class="fc" id="L153">            attempts++;</span>
+            try {
+<span class="fc" id="L155">                counterTransaction.applyRedemption(couponId, userId);</span>
+<span class="fc" id="L156">                Coupon updated = require(couponId);</span>
+<span class="fc" id="L157">                log.info(&quot;Redeemed coupon {} code {} (attempt {}); totalUsed now {}&quot;,</span>
+<span class="fc" id="L158">                        couponId, updated.getCode(), attempts, updated.getTotalUsed());</span>
+<span class="fc" id="L159">                return updated;</span>
+<span class="fc" id="L160">            } catch (OptimisticLockingFailureException e) {</span>
+<span class="fc bfc" id="L161" title="All 2 branches covered.">                if (attempts &gt;= maxAttempts) {</span>
+<span class="fc" id="L162">                    log.warn(&quot;Redemption of coupon {} abandoned after {} contended attempts&quot;,</span>
+<span class="fc" id="L163">                            couponId, attempts);</span>
+<span class="fc" id="L164">                    throw CouponException.concurrentConflict(</span>
+                            &quot;Coupon redemption could not be completed due to high concurrency; retry&quot;);
+                }
+<span class="fc" id="L167">                log.debug(&quot;Optimistic-lock retry {} for coupon {}&quot;, attempts, couponId);</span>
+<span class="fc" id="L168">            }</span>
+        }
+    }
+
+    // ===================== Cancellation decrement (Requirement 21.5, Property 21) =====================
+
+    /**
+     * Decrements both usage counters when a coupon-bearing booking is cancelled before payment
+     * capture, restoring the coupon availability (Requirement 21.5, Property 21). Retries on
+     * optimistic-lock contention.
+     */
+    public Coupon cancelRedemption(String code, UUID userId) {
+<span class="fc" id="L180">        Coupon coupon = getCouponByCode(code);</span>
+<span class="fc" id="L181">        UUID couponId = coupon.getId();</span>
+
+<span class="fc" id="L183">        int attempts = 0;</span>
+<span class="fc" id="L184">        int maxAttempts = Math.max(1, props.getMaxRedemptionRetries());</span>
+        while (true) {
+<span class="fc" id="L186">            attempts++;</span>
+            try {
+<span class="fc" id="L188">                counterTransaction.applyCancellation(couponId, userId);</span>
+<span class="fc" id="L189">                Coupon updated = require(couponId);</span>
+<span class="fc" id="L190">                log.info(&quot;Cancelled redemption of coupon {} code {} (attempt {}); totalUsed now {}&quot;,</span>
+<span class="fc" id="L191">                        couponId, updated.getCode(), attempts, updated.getTotalUsed());</span>
+<span class="fc" id="L192">                return updated;</span>
+<span class="fc" id="L193">            } catch (OptimisticLockingFailureException e) {</span>
+<span class="fc bfc" id="L194" title="All 2 branches covered.">                if (attempts &gt;= maxAttempts) {</span>
+<span class="fc" id="L195">                    log.warn(&quot;Cancellation for coupon {} abandoned after {} contended attempts&quot;,</span>
+<span class="fc" id="L196">                            couponId, attempts);</span>
+<span class="fc" id="L197">                    throw CouponException.concurrentConflict(</span>
+                            &quot;Coupon cancellation could not be completed due to high concurrency; retry&quot;);
+                }
+<span class="fc" id="L200">            }</span>
+        }
+    }
+
+    // ===================== Reads / helpers =====================
+
+    @Transactional(readOnly = true)
+    public int currentUserUsage(UUID couponId, UUID userId) {
+<span class="fc" id="L208">        return usageRepository.findByCouponIdAndUserId(couponId, userId)</span>
+<span class="fc" id="L209">                .map(CouponUsage::getUsageCount)</span>
+<span class="fc" id="L210">                .orElse(0);</span>
+    }
+
+    private Coupon require(UUID couponId) {
+<span class="fc" id="L214">        return couponRepository.findById(couponId)</span>
+<span class="pc" id="L215">                .orElseThrow(() -&gt; CouponException.notFound(&quot;Coupon &quot; + couponId + &quot; not found&quot;));</span>
+    }
+
+    /** Builds a descriptive, PII-free message for a violated constraint (Requirement 21.2). */
+    private String describe(ConstraintCode code, Coupon coupon, BigDecimal orderValue) {
+<span class="pc bpc" id="L220" title="2 of 6 branches missed.">        return switch (code) {</span>
+<span class="fc" id="L221">            case COUPON_INACTIVE -&gt; &quot;Coupon '&quot; + coupon.getCode() + &quot;' is not active&quot;;</span>
+<span class="fc" id="L222">            case COUPON_NOT_STARTED -&gt; &quot;Coupon '&quot; + coupon.getCode() + &quot;' is not valid until &quot;</span>
+<span class="fc" id="L223">                    + coupon.getValidFrom();</span>
+<span class="fc" id="L224">            case COUPON_EXPIRED -&gt; &quot;Coupon '&quot; + coupon.getCode() + &quot;' expired on &quot;</span>
+<span class="fc" id="L225">                    + coupon.getExpiryDate();</span>
+<span class="fc" id="L226">            case MIN_ORDER_VALUE_NOT_MET -&gt; &quot;Order value &quot; + orderValue</span>
+<span class="fc" id="L227">                    + &quot; is below the minimum &quot; + coupon.getMinOrderValue()</span>
+<span class="fc" id="L228">                    + &quot; required for coupon '&quot; + coupon.getCode() + &quot;'&quot;;</span>
+<span class="nc" id="L229">            case PER_USER_LIMIT_REACHED -&gt; &quot;Per-user usage limit (&quot;</span>
+<span class="nc" id="L230">                    + coupon.getPerUserLimit() + &quot;) reached for coupon '&quot; + coupon.getCode() + &quot;'&quot;;</span>
+<span class="nc" id="L231">            case TOTAL_LIMIT_REACHED -&gt; &quot;Total usage limit (&quot; + coupon.getTotalLimit()</span>
+<span class="nc" id="L232">                    + &quot;) reached for coupon '&quot; + coupon.getCode() + &quot;'&quot;;</span>
+        };
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

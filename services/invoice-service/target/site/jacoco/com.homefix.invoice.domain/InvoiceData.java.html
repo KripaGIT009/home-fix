@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>InvoiceData.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Invoice Service</a> &gt; <a href="index.source.html" class="el_package">com.homefix.invoice.domain</a> &gt; <span class="el_source">InvoiceData.java</span></div><h1>InvoiceData.java</h1><pre class="source lang-java linenums">package com.homefix.invoice.domain;
+
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.List;
+import java.util.UUID;
+
+/**
+ * The fully-resolved content required to render an invoice PDF (Requirement 13.1).
+ *
+ * &lt;p&gt;Carries the invoice number and date, the customer's name/address, the provider's name and
+ * verified status, the service description, the itemized price breakdown, tax and discount
+ * amounts, the final total, and the payment method. The {@link #discountAmount} is rendered only
+ * when non-zero (Requirement 13.1).
+ */
+<span class="fc" id="L16">public record InvoiceData(</span>
+        String invoiceNumber,
+        Instant invoiceDate,
+        UUID bookingId,
+        UUID paymentId,
+        UUID customerId,
+        UUID providerId,
+        String customerName,
+        String customerAddress,
+        String providerName,
+        boolean providerVerified,
+        String serviceDescription,
+        List&lt;PriceLineItem&gt; lineItems,
+        BigDecimal taxAmount,
+        String taxIdentifier,
+        BigDecimal discountAmount,
+        BigDecimal totalAmount,
+        String paymentMethod) {
+
+    /** True when a discount line should be rendered (Requirement 13.1: omit if zero). */
+    public boolean hasDiscount() {
+<span class="pc bpc" id="L37" title="1 of 4 branches missed.">        return discountAmount != null &amp;&amp; discountAmount.signum() != 0;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

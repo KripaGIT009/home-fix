@@ -1,0 +1,662 @@
+# HomeFix — full local stack.
+# Shared infra (Postgres/Redis/Kafka) + all 20 backend services + all three SPAs.
+#
+#   docker compose -f docker-compose.core.yml up -d --build
+#   bash docker/seed-pricing.sh      # required before any price estimate
+#
+# Then open:
+#   http://localhost:5173  customer-app
+#   http://localhost:5174  provider-app
+#   http://localhost:5175  admin-portal
+#
+# Each SPA proxies /api/auth to the Auth Service and /api to the API Gateway.
+# Log in with any Indian mobile number; the dev SMS gateway logs the OTP instead
+# of sending it:
+#   docker logs homefix-core-auth-service-1 | grep "DEV SMS"
+#
+# NOTE: host ports for infra are remapped (5533/6380/9095) to avoid colliding
+# with another local stack already using 5432/6379/9092. Service-to-service
+# calls use the compose network on the default internal ports.
+
+name: homefix-core
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    # Headroom for the whole stack: every DB-backed service holds a small pool
+    # (see SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE below), and the default
+    # limit of 100 is not enough for 18 of them plus psql sessions.
+    command: ["postgres", "-c", "max_connections=300"]
+    environment:
+      POSTGRES_DB: homefix
+      POSTGRES_USER: homefix
+      POSTGRES_PASSWORD: homefix
+    ports:
+      - "5533:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U homefix -d homefix"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  kafka:
+    image: apache/kafka:3.7.1
+    ports:
+      - "9095:9092"
+    environment:
+      KAFKA_NODE_ID: "0"
+      KAFKA_PROCESS_ROLES: "controller,broker"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "0@kafka:9093"
+      KAFKA_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 20s
+
+  auth-service:
+    build:
+      context: ./services/auth-service
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/homefix
+      DB_USERNAME: homefix
+      DB_PASSWORD: homefix
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "5"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      SERVER_PORT: "8081"
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      JWT_SECRET: local-dev-jwt-secret-please-change-32bytes-minimum
+      # Google Sign-In: set this to your Google OAuth client id and the
+      # SAME value as VITE_GOOGLE_CLIENT_ID in frontend/*/.env. Empty means
+      # the ID token audience cannot be validated, so social login is off.
+      GOOGLE_CLIENT_ID: "${GOOGLE_CLIENT_ID:-}"
+      # Dev-only SMS gateway: appends the verification code to a mounted file so
+      # a login can be completed without querying container logs. Never outside dev.
+      SMS_PROVIDER: file
+      SMS_FILE_PATH: /var/log/homefix/dev-sms.log
+      # LOCAL DEV ONLY: echo the OTP to the auth-service log so the flow can be tested
+      # without a real SMS gateway. Never enable outside local/dev.
+      HOMEFIX_SMS_LOGOTP: "true"
+    ports:
+      - "8081:8081"
+    volumes:
+      # Host-readable sink for the dev SMS gateway (see SMS_PROVIDER above).
+      - ./docker/dev-sms:/var/log/homefix
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/health/readiness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 40s
+
+  api-gateway:
+    build:
+      context: ./services/api-gateway
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      SERVER_PORT: "8080"
+      HTTPS_ENFORCED: "false"
+      AUTH_SERVICE_URI: http://auth-service:8081
+      AUTH_INTROSPECT_URI: http://auth-service:8081/auth/introspect
+      CATALOG_SERVICE_URI: http://catalog-service:8085
+      CUSTOMER_SERVICE_URI: http://customer-service:8082
+      BOOKING_SERVICE_URI: http://booking-service:8084
+      PRICING_ENGINE_URI: http://pricing-engine:8086
+      LOCATION_SERVICE_URI: http://location-service:8092
+    ports:
+      - "8080:8080"
+    depends_on:
+      redis:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health/readiness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 40s
+
+  catalog-service:
+    build:
+      context: ./services/catalog-service
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/homefix
+      DB_USERNAME: homefix
+      DB_PASSWORD: homefix
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "5"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      SERVER_PORT: "8085"
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      JWT_SECRET: local-dev-jwt-secret-please-change-32bytes-minimum
+      CATALOG_CACHE: memory
+    ports:
+      - "8085:8085"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8085/health/readiness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 40s
+
+  customer-service:
+    build:
+      context: ./services/customer-service
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/homefix
+      DB_USERNAME: homefix
+      DB_PASSWORD: homefix
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "5"
+      SERVER_PORT: "8082"
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      JWT_SECRET: local-dev-jwt-secret-please-change-32bytes-minimum
+      KMS_PROVIDER: local
+      GEOCODING_PROVIDER: noop
+      BOOKING_SERVICE_URL: http://booking-service:8084
+    ports:
+      - "8082:8082"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8082/health/readiness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 40s
+
+  pricing-engine:
+    build:
+      context: ./services/pricing-engine
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      SERVER_PORT: "8086"
+      JWT_SECRET: local-dev-jwt-secret-please-change-32bytes-minimum
+      PRICING_CACHE: memory
+      # pricing-engine has no database and no JDBC driver on its classpath, but JPA/datasource
+      # auto-config is pulled in transitively. Exclude those auto-configs so it can start.
+      SPRING_AUTOCONFIGURE_EXCLUDE: "org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration,org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration,org.springframework.boot.autoconfigure.data.jpa.JpaRepositoriesAutoConfiguration,org.springframework.boot.autoconfigure.sql.init.SqlInitializationAutoConfiguration,org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration"
+      LOGGING_LEVEL_COM_HOMEFIX_SHARED_SECURITY: DEBUG
+      LOGGING_LEVEL_ORG_SPRINGFRAMEWORK_SECURITY: DEBUG
+    ports:
+      - "8086:8086"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8086/health/readiness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 40s
+
+  booking-service:
+    build:
+      context: ./services/booking-service
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/homefix
+      DB_USERNAME: homefix
+      DB_PASSWORD: homefix
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "5"
+      SERVER_PORT: "8084"
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      JWT_SECRET: local-dev-jwt-secret-please-change-32bytes-minimum
+      CATALOG_CLIENT: http
+      CATALOG_SERVICE_URL: http://catalog-service:8085
+      PRICING_CLIENT: http
+      PRICING_ENGINE_URL: http://pricing-engine:8086
+      MEDIA_STORAGE_PROVIDER: local
+    ports:
+      - "8084:8084"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      catalog-service:
+        condition: service_started
+      pricing-engine:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8084/health/readiness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 40s
+
+  dispatch-engine:
+    build:
+      context: ./services/dispatch-engine
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/homefix
+      DB_USERNAME: homefix
+      DB_PASSWORD: homefix
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "5"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SERVER_PORT: "8087"
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      JWT_SECRET: local-dev-jwt-secret-please-change-32bytes-minimum
+      PROVIDER_SERVICE_URL: http://provider-service:8083
+      BOOKING_SERVICE_URL: http://booking-service:8084
+      NOTIFICATION_SERVICE_URL: http://notification-service:8090
+    ports:
+      - "8087:8087"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8087/health/readiness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 40s
+
+  location-service:
+    build:
+      context: ./services/location-service
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/homefix
+      DB_USERNAME: homefix
+      DB_PASSWORD: homefix
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "5"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SERVER_PORT: "8092"
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      JWT_SECRET: local-dev-jwt-secret-please-change-32bytes-minimum
+      LOCATION_STORE: redis
+    ports:
+      - "8092:8092"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8092/health/readiness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 40s
+
+  provider-service:
+    build:
+      context: ./services/provider-service
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/homefix
+      DB_USERNAME: homefix
+      DB_PASSWORD: homefix
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "5"
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      SERVER_PORT: "8083"
+      JWT_SECRET: local-dev-jwt-secret-please-change-32bytes-minimum
+    ports:
+      - "8083:8083"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8083/health/readiness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  verification-service:
+    build:
+      context: ./services/verification-service
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/homefix
+      DB_USERNAME: homefix
+      DB_PASSWORD: homefix
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "5"
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      SERVER_PORT: "8094"
+      JWT_SECRET: local-dev-jwt-secret-please-change-32bytes-minimum
+    ports:
+      - "8094:8094"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8094/health/readiness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  payment-service:
+    build:
+      context: ./services/payment-service
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/homefix
+      DB_USERNAME: homefix
+      DB_PASSWORD: homefix
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "5"
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      SERVER_PORT: "8088"
+      JWT_SECRET: local-dev-jwt-secret-please-change-32bytes-minimum
+    ports:
+      - "8088:8088"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8088/health/readiness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  invoice-service:
+    build:
+      context: ./services/invoice-service
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/homefix
+      DB_USERNAME: homefix
+      DB_PASSWORD: homefix
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "5"
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SERVER_PORT: "8089"
+      JWT_SECRET: local-dev-jwt-secret-please-change-32bytes-minimum
+      NOTIFICATION_SERVICE_URL: http://notification-service:8090
+      LOGGING_LEVEL_ORG_SPRINGFRAMEWORK_SECURITY: DEBUG
+    ports:
+      - "8089:8089"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8089/health/readiness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  notification-service:
+    build:
+      context: ./services/notification-service
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/homefix
+      DB_USERNAME: homefix
+      DB_PASSWORD: homefix
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "5"
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SERVER_PORT: "8090"
+      JWT_SECRET: local-dev-jwt-secret-please-change-32bytes-minimum
+      PREFERENCE_SERVICE_URL: http://customer-service:8082
+    ports:
+      - "8090:8090"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8090/health/readiness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  complaint-service:
+    build:
+      context: ./services/complaint-service
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/homefix
+      DB_USERNAME: homefix
+      DB_PASSWORD: homefix
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "5"
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SERVER_PORT: "8091"
+      JWT_SECRET: local-dev-jwt-secret-please-change-32bytes-minimum
+    ports:
+      - "8091:8091"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8091/health/readiness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  chat-service:
+    build:
+      context: ./services/chat-service
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/homefix
+      DB_USERNAME: homefix
+      DB_PASSWORD: homefix
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "5"
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SERVER_PORT: "8093"
+      JWT_SECRET: local-dev-jwt-secret-please-change-32bytes-minimum
+    ports:
+      - "8093:8093"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8093/health/readiness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  rating-review-service:
+    build:
+      context: ./services/rating-review-service
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/homefix
+      DB_USERNAME: homefix
+      DB_PASSWORD: homefix
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "5"
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SERVER_PORT: "8097"
+      JWT_SECRET: local-dev-jwt-secret-please-change-32bytes-minimum
+    ports:
+      - "8097:8097"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8097/health/readiness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  promotion-service:
+    build:
+      context: ./services/promotion-service
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/homefix
+      DB_USERNAME: homefix
+      DB_PASSWORD: homefix
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "5"
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      SERVER_PORT: "8098"
+      JWT_SECRET: local-dev-jwt-secret-please-change-32bytes-minimum
+    ports:
+      - "8098:8098"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8098/health/readiness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  admin-service:
+    build:
+      context: ./services/admin-service
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/homefix
+      DB_USERNAME: homefix
+      DB_PASSWORD: homefix
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "5"
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      SERVER_PORT: "8095"
+      JWT_SECRET: local-dev-jwt-secret-please-change-32bytes-minimum
+    ports:
+      - "8095:8095"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8095/health/readiness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  reporting-service:
+    build:
+      context: ./services/reporting-service
+    environment:
+      SERVER_PORT: "8096"
+      JWT_SECRET: local-dev-jwt-secret-please-change-32bytes-minimum
+    ports:
+      - "8096:8096"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8096/health/readiness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  outbox-processor:
+    build:
+      context: ./services/outbox-processor
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/homefix
+      DB_USERNAME: homefix
+      DB_PASSWORD: homefix
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "5"
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SERVER_PORT: "8099"
+      JWT_SECRET: local-dev-jwt-secret-please-change-32bytes-minimum
+    ports:
+      - "8099:8099"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8099/health/readiness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+  customer-app:
+    build:
+      context: ./frontend/customer-app
+    ports:
+      - "5173:80"
+    depends_on:
+      - api-gateway
+      - auth-service
+
+  provider-app:
+    build:
+      context: ./frontend/provider-app
+    ports:
+      - "5174:80"
+    depends_on:
+      - api-gateway
+      - auth-service
+
+  admin-portal:
+    build:
+      context: ./frontend/admin-portal
+    ports:
+      - "5175:80"
+    depends_on:
+      - api-gateway
+      - auth-service
+
+volumes:
+  pgdata:

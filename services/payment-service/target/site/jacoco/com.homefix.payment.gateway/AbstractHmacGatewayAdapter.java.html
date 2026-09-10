@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AbstractHmacGatewayAdapter.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Payment Service</a> &gt; <a href="index.source.html" class="el_package">com.homefix.payment.gateway</a> &gt; <span class="el_source">AbstractHmacGatewayAdapter.java</span></div><h1>AbstractHmacGatewayAdapter.java</h1><pre class="source lang-java linenums">package com.homefix.payment.gateway;
+
+import java.util.UUID;
+
+/**
+ * Base {@link PaymentGatewayPort} adapter that supplies real, testable HMAC-SHA256 callback
+ * signature verification (Requirement 12.5) and simple simulated charge/refund/transfer
+ * initiation suitable for dev and tests. A production adapter for a specific gateway would
+ * override the charge/refund/transfer methods to call the gateway SDK while keeping the same
+ * signature-verification contract.
+ *
+ * &lt;p&gt;Because the whole gateway surface sits behind {@link PaymentGatewayPort}, adding a new
+ * gateway is only a matter of adding a new subclass — no core business logic changes
+ * (Requirement 12.1).
+ */
+public abstract class AbstractHmacGatewayAdapter implements PaymentGatewayPort {
+
+    private final String signingSecret;
+
+<span class="fc" id="L20">    protected AbstractHmacGatewayAdapter(String signingSecret) {</span>
+<span class="fc" id="L21">        this.signingSecret = signingSecret;</span>
+<span class="fc" id="L22">    }</span>
+
+    @Override
+    public boolean verifyCallbackSignature(String payload, String signature) {
+<span class="fc" id="L26">        return HmacSignatures.verify(signingSecret, payload, signature);</span>
+    }
+
+    @Override
+    public GatewayChargeResult charge(GatewayChargeRequest request) {
+<span class="fc" id="L31">        String reference = gatewayId() + &quot;_ch_&quot; + UUID.randomUUID();</span>
+<span class="fc" id="L32">        return new GatewayChargeResult(reference, true);</span>
+    }
+
+    @Override
+    public GatewayRefundResult refund(GatewayRefundRequest request) {
+<span class="fc" id="L37">        String reference = gatewayId() + &quot;_rf_&quot; + UUID.randomUUID();</span>
+<span class="fc" id="L38">        return new GatewayRefundResult(reference, true);</span>
+    }
+
+    @Override
+    public GatewayTransferResult transfer(GatewayTransferRequest request) {
+<span class="fc" id="L43">        String reference = gatewayId() + &quot;_tr_&quot; + UUID.randomUUID();</span>
+<span class="fc" id="L44">        return new GatewayTransferResult(reference, true);</span>
+    }
+
+    /** Exposed for adapters/tests that need to produce a valid signature for a payload. */
+    protected String sign(String payload) {
+<span class="nc" id="L49">        return HmacSignatures.hmacSha256Hex(signingSecret, payload);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

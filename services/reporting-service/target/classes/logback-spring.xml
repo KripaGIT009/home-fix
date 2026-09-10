@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  reporting-service logging: reuse the shared structured-JSON base (Task 5) so every log line
+  carries the mandatory fields (timestamp, serviceName, traceId, spanId, logLevel, message)
+  and is PII-scrubbed. No report filter values, requestor emails, or download URLs are logged
+  (Requirement 26.4).
+-->
+<configuration>
+    <property name="SERVICE_NAME" value="${spring.application.name:-reporting-service}"/>
+    <include resource="logback-json-base.xml"/>
+    <root level="INFO">
+        <appender-ref ref="JSON_STDOUT"/>
+    </root>
+</configuration>

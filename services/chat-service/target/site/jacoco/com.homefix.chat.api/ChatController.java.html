@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ChatController.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Chat Service</a> &gt; <a href="index.source.html" class="el_package">com.homefix.chat.api</a> &gt; <span class="el_source">ChatController.java</span></div><h1>ChatController.java</h1><pre class="source lang-java linenums">package com.homefix.chat.api;
+
+import java.util.List;
+import java.util.UUID;
+import java.util.stream.Collectors;
+
+import com.homefix.chat.api.dto.MessageResponse;
+import com.homefix.chat.api.dto.SendMessageRequest;
+import com.homefix.chat.domain.ChatMessage;
+import com.homefix.chat.service.ChatException;
+import com.homefix.chat.service.ChatService;
+import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+/**
+ * REST surface for in-app chat (Requirement 18).
+ *
+ * &lt;p&gt;The sender/reader is always the authenticated principal populated by the shared
+ * {@code JwtValidationFilter} (Task 4); the participant-only 403 rule is enforced in the
+ * {@link ChatService} against the channel's stored {@code (customerId, providerId)}
+ * (Requirement 18.7, Property 23). Message bodies are phone-masked server-side (Requirement 18.8).
+ */
+@RestController
+@RequestMapping(&quot;/chat/channels/{bookingId}/messages&quot;)
+public class ChatController {
+
+    private final ChatService chatService;
+
+<span class="fc" id="L38">    public ChatController(ChatService chatService) {</span>
+<span class="fc" id="L39">        this.chatService = chatService;</span>
+<span class="fc" id="L40">    }</span>
+
+    /** Send a message on the booking's channel (Requirement 18.2, 18.6, 18.7). */
+    @PostMapping
+    public ResponseEntity&lt;MessageResponse&gt; send(@PathVariable UUID bookingId,
+                                                @Valid @RequestBody SendMessageRequest req) {
+<span class="fc" id="L46">        ChatMessage message = chatService.sendMessage(bookingId, currentUser(), req.body());</span>
+<span class="fc" id="L47">        return ResponseEntity.status(HttpStatus.CREATED).body(MessageResponse.from(message));</span>
+    }
+
+    /** Read the booking's message history (Requirement 18.4, 18.7). */
+    @GetMapping
+    public List&lt;MessageResponse&gt; history(@PathVariable UUID bookingId) {
+<span class="fc" id="L53">        return chatService.readMessages(bookingId, currentUser()).stream()</span>
+<span class="fc" id="L54">                .map(MessageResponse::from)</span>
+<span class="fc" id="L55">                .collect(Collectors.toList());</span>
+    }
+
+    /**
+     * @return the authenticated user's ID, taken from the principal name populated by the shared
+     *         {@code JwtValidationFilter} (Task 4).
+     */
+    private UUID currentUser() {
+<span class="fc" id="L63">        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();</span>
+<span class="pc bpc" id="L64" title="1 of 4 branches missed.">        if (authentication == null || !authentication.isAuthenticated()) {</span>
+<span class="fc" id="L65">            throw new ChatException(HttpStatus.UNAUTHORIZED, &quot;UNAUTHENTICATED&quot;,</span>
+                    &quot;no authenticated principal&quot;);
+        }
+        try {
+<span class="fc" id="L69">            return UUID.fromString(authentication.getName());</span>
+<span class="fc" id="L70">        } catch (IllegalArgumentException e) {</span>
+<span class="fc" id="L71">            throw new ChatException(HttpStatus.UNAUTHORIZED, &quot;INVALID_PRINCIPAL&quot;,</span>
+                    &quot;authenticated principal is not a valid user ID&quot;);
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

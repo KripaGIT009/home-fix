@@ -1,0 +1,187 @@
+package com.homefix.auth.token;
+
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Date;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+
+import javax.crypto.SecretKey;
+
+import org.springframework.stereotype.Service;
+
+import com.homefix.auth.config.AuthTokenProperties;
+import com.homefix.shared.security.SecurityProperties;
+
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.security.Keys;
+
+/**
+ * Issues and introspects JWT access tokens and issues, rotates, and revokes opaque refresh
+ * tokens.
+ *
+ * <p>Access tokens are HMAC-SHA256 signed with the same secret consumed by the shared
+ * {@code JwtValidationFilter} (Task 4), and carry the {@code sub} (user id) and {@code roles}
+ * claims the filter expects, so tokens issued here validate downstream without extra
+ * configuration.
+ *
+ * <p>Refresh tokens are opaque random values stored via the {@link RefreshTokenStore} with a
+ * 30-day TTL (Requirement 1.8). Each token belongs to a token <em>family</em>: rotation issues
+ * a successor in the same family (Requirement 1.9), and reuse of an already-rotated token
+ * invalidates the whole family (Requirement 1.10, Property 26).
+ */
+@Service
+public class TokenService {
+
+    /** Claim key carrying the role list — must match {@code JwtValidationFilter.ROLES_CLAIM}. */
+    public static final String ROLES_CLAIM = "roles";
+
+    private final SecretKey signingKey;
+    private final AuthTokenProperties tokenProperties;
+    private final RefreshTokenStore refreshTokenStore;
+
+    public TokenService(SecurityProperties securityProperties,
+                        AuthTokenProperties tokenProperties,
+                        RefreshTokenStore refreshTokenStore) {
+        this.signingKey = Keys.hmacShaKeyFor(
+                securityProperties.getJwtSecret().getBytes(StandardCharsets.UTF_8));
+        this.tokenProperties = tokenProperties;
+        this.refreshTokenStore = refreshTokenStore;
+    }
+
+    /**
+     * Issues an access token + refresh token pair for the given subject and roles, starting a
+     * brand-new token family (used on registration, verification, and social login).
+     */
+    public TokenPair issueTokens(String subject, List<String> roles) {
+        String accessToken = issueAccessToken(subject, roles);
+        String refreshToken = issueRefreshToken(subject, UUID.randomUUID().toString());
+        return new TokenPair(accessToken, refreshToken, tokenProperties.getAccessTtl().getSeconds());
+    }
+
+    /**
+     * Builds a signed access token with a 15-minute (configurable) validity.
+     */
+    public String issueAccessToken(String subject, List<String> roles) {
+        Instant now = Instant.now();
+        Instant expiry = now.plus(tokenProperties.getAccessTtl());
+        return Jwts.builder()
+                .issuer(tokenProperties.getIssuer())
+                .subject(subject)
+                .claim(ROLES_CLAIM, roles)
+                .issuedAt(Date.from(now))
+                .expiration(Date.from(expiry))
+                .id(UUID.randomUUID().toString())
+                .signWith(signingKey)
+                .compact();
+    }
+
+    /**
+     * Generates an opaque refresh token in the supplied family and stores it with a 30-day TTL.
+     * Returns the raw token to hand back to the client.
+     */
+    public String issueRefreshToken(String subject, String familyId) {
+        String token = UUID.randomUUID().toString() + UUID.randomUUID().toString();
+        refreshTokenStore.save(token, subject, familyId, tokenProperties.getRefreshTtl());
+        return token;
+    }
+
+    /**
+     * Validates a presented refresh token for rotation and consumes it, returning the record so
+     * the caller can look up the account's current roles.
+     *
+     * <p>If the presented token is unknown/expired/revoked, throws a 401 {@link TokenException}
+     * (Requirement 1.15). If the token was already rotated once (replay), invalidates the entire
+     * token family and throws a 401 (Requirement 1.10, Property 26). Otherwise the token is
+     * marked used and its record returned.
+     *
+     * @return the (now consumed) token record, carrying the subject and family id
+     */
+    public RefreshTokenRecord consumeRefreshTokenForRotation(String presentedToken) {
+        if (presentedToken == null || presentedToken.isBlank()) {
+            throw TokenException.invalidRefreshToken();
+        }
+
+        RefreshTokenRecord record = refreshTokenStore.find(presentedToken)
+                .orElseThrow(TokenException::invalidRefreshToken);
+
+        // Replay: the presented token was already rotated. Invalidate the whole family.
+        if (record.used()) {
+            refreshTokenStore.revokeFamily(record.familyId());
+            throw TokenException.replayDetected();
+        }
+
+        // Consume the presented token so any future reuse is detected as a replay.
+        refreshTokenStore.markUsed(presentedToken, tokenProperties.getRefreshTtl());
+        return record;
+    }
+
+    /**
+     * Issues a rotated access + refresh token pair for a consumed refresh-token record, keeping
+     * the successor refresh token in the same family (Requirement 1.9).
+     */
+    public TokenPair issueRotatedTokens(RefreshTokenRecord consumed, List<String> roles) {
+        String accessToken = issueAccessToken(consumed.subject(), roles);
+        String newRefreshToken = issueRefreshToken(consumed.subject(), consumed.familyId());
+        return new TokenPair(accessToken, newRefreshToken, tokenProperties.getAccessTtl().getSeconds());
+    }
+
+    /**
+     * @return the record for a refresh token if present, for callers that need the subject.
+     */
+    public Optional<RefreshTokenRecord> findRefreshToken(String token) {
+        return refreshTokenStore.find(token);
+    }
+
+    /**
+     * Revokes a refresh token on logout within the request cycle (Requirement 1.12). Idempotent:
+     * revoking an unknown/already-revoked token is a no-op.
+     */
+    public void revokeRefreshToken(String token) {
+        if (token != null && !token.isBlank()) {
+            refreshTokenStore.revoke(token);
+        }
+    }
+
+    /**
+     * Parses and verifies a JWT access token, returning its claims. Throws a
+     * {@code JwtException}/{@code IllegalArgumentException} subtype on any failure
+     * (expired, bad signature, malformed).
+     */
+    public Claims parseAndVerify(String accessToken) {
+        return Jwts.parser()
+                .verifyWith(signingKey)
+                .build()
+                .parseSignedClaims(accessToken)
+                .getPayload();
+    }
+
+    /**
+     * Introspects a token, returning a minimal claim map for API Gateway use.
+     *
+     * @return {@code {active:true, sub, roles, exp, iss}} on success; {@code {active:false}}
+     *         when the token is missing, expired, or otherwise invalid.
+     */
+    public Map<String, Object> introspect(String accessToken) {
+        if (accessToken == null || accessToken.isBlank()) {
+            return Map.of("active", false);
+        }
+        try {
+            Claims claims = parseAndVerify(accessToken);
+            Object roles = claims.get(ROLES_CLAIM);
+            return Map.of(
+                    "active", true,
+                    "sub", claims.getSubject(),
+                    ROLES_CLAIM, roles == null ? List.of() : roles,
+                    "iss", claims.getIssuer() == null ? "" : claims.getIssuer(),
+                    "exp", claims.getExpiration() == null ? 0L
+                            : claims.getExpiration().toInstant().getEpochSecond());
+        } catch (RuntimeException ex) {
+            return Map.of("active", false);
+        }
+    }
+}

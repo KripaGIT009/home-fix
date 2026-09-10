@@ -1,0 +1,103 @@
+package com.homefix.dispatch.adapter;
+
+import com.homefix.dispatch.config.DispatchClientProperties;
+import com.homefix.dispatch.domain.DispatchRequest;
+import com.homefix.dispatch.domain.ProviderCandidate;
+import com.homefix.dispatch.domain.ScoreComponents;
+import com.homefix.dispatch.port.ProviderQueryPort;
+import com.homefix.shared.resilience.ResilienceFactory;
+import com.homefix.shared.resilience.ResilientCall;
+import com.homefix.shared.resilience.TimeoutProfile;
+import com.homefix.shared.resilience.TransientFailures;
+import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestClient;
+
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+
+/**
+ * Default {@link ProviderQueryPort} adapter that queries the Provider Service over HTTP for
+ * eligible providers within a radius (Requirement 8.2). The Provider Service applies the
+ * eligibility filters and returns each provider's five component scores.
+ *
+ * <p>The query is on the critical dispatch path, so it runs under the shared resilience stack
+ * (Requirement 24): a 5 s per-call timeout (24.3), retry with exponential backoff for transient
+ * failures (24.2), and a circuit breaker (24.1). When the {@code provider-service} breaker is open
+ * â€” or every retry fails â€” the call degrades to an empty candidate list and a WARN log naming the
+ * dependency is emitted (24.4); the dispatch loop then treats the booking as having no available
+ * providers rather than blocking the emergency path on a failing dependency.
+ *
+ * <p>Active only when no other {@link ProviderQueryPort} bean is present (tests supply a fake).
+ */
+@Component
+public class HttpProviderQueryAdapter implements ProviderQueryPort {
+
+    /** Downstream dependency name used for breaker keying, metrics, and the WARN log. */
+    static final String DEPENDENCY = "provider-service";
+
+    private final RestClient restClient;
+    private final ResilientCall<List<ProviderCandidate>> resilientCall;
+
+    public HttpProviderQueryAdapter(DispatchClientProperties properties, ResilienceFactory resilienceFactory) {
+        this.restClient = RestClient.builder()
+                .baseUrl(properties.getProviderServiceBaseUrl())
+                // Provider matching is on the critical dispatch path: cap at 5 s (Requirement 24.3).
+                .requestFactory(new org.springframework.http.client.SimpleClientHttpRequestFactory() {{
+                    setConnectTimeout((int) Duration.ofSeconds(5).toMillis());
+                    setReadTimeout((int) Duration.ofSeconds(5).toMillis());
+                }})
+                .build();
+        // Degrade to "no eligible providers" when the dependency is unavailable (Requirement 24.4).
+        this.resilientCall = ResilientCall.forDependency(
+                resilienceFactory, DEPENDENCY, TimeoutProfile.CRITICAL_PATH, cause -> List.of());
+    }
+
+    @Override
+    public List<ProviderCandidate> findEligibleProviders(DispatchRequest request, double radiusKm) {
+        return resilientCall.execute(() -> {
+            EligibleProvidersResponse response = restClient.get()
+                    .uri(uriBuilder -> uriBuilder
+                            .path("/internal/providers/eligible")
+                            .queryParam("subcategoryId", request.subcategoryId())
+                            .queryParam("lat", request.customerLat())
+                            .queryParam("lon", request.customerLon())
+                            .queryParam("radiusKm", radiusKm)
+                            .queryParam("emergency", request.emergency())
+                            .queryParam("skillTags", request.requiredSkillTags().toArray())
+                            .build())
+                    .retrieve()
+                    // 5xx is a transient failure: surface it so retry/breaker act on it (Req 24.2).
+                    .onStatus(status -> status.is5xxServerError(), (req, res) -> {
+                        throw new TransientFailures.ServerErrorException(
+                                res.getStatusCode().value(), "Provider Service returned 5xx");
+                    })
+                    .body(EligibleProvidersResponse.class);
+            if (response == null || response.providers() == null) {
+                return List.of();
+            }
+            List<ProviderCandidate> candidates = new ArrayList<>(response.providers().size());
+            for (EligibleProvider p : response.providers()) {
+                candidates.add(new ProviderCandidate(p.providerId(), new ScoreComponents(
+                        p.distanceScore(), p.availabilityScore(), p.ratingScore(),
+                        p.skillScore(), p.performanceScore())));
+            }
+            return candidates;
+        });
+    }
+
+    /** Response shape from the Provider Service internal endpoint. */
+    public record EligibleProvidersResponse(List<EligibleProvider> providers) {
+    }
+
+    /** A single eligible provider with its component scores. */
+    public record EligibleProvider(
+            UUID providerId,
+            double distanceScore,
+            double availabilityScore,
+            double ratingScore,
+            double skillScore,
+            double performanceScore) {
+    }
+}

@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PaymentController.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">HomeFix Payment Service</a> &gt; <a href="index.source.html" class="el_package">com.homefix.payment.api</a> &gt; <span class="el_source">PaymentController.java</span></div><h1>PaymentController.java</h1><pre class="source lang-java linenums">package com.homefix.payment.api;
+
+import java.util.UUID;
+
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.homefix.payment.api.dto.GatewayCallbackRequest;
+import com.homefix.payment.api.dto.InitiatePaymentRequest;
+import com.homefix.payment.api.dto.RefundRequest;
+import com.homefix.payment.api.dto.SettlementRequest;
+import com.homefix.payment.api.dto.SettlementResponse;
+import com.homefix.payment.api.dto.TransactionResponse;
+import com.homefix.payment.domain.PaymentTransaction;
+import com.homefix.payment.domain.Settlement;
+import com.homefix.payment.service.GatewayCallback;
+import com.homefix.payment.service.InitiatePaymentCommand;
+import com.homefix.payment.service.PaymentService;
+
+import jakarta.validation.Valid;
+
+/**
+ * REST surface for the Payment Service (Requirement 12, 14.3-14.4).
+ *
+ * &lt;p&gt;Gateway callbacks live under {@code /payments/callbacks/**}, which is permitted without JWT
+ * auth in {@code WebSecurityConfig}; they are authenticated instead by cryptographic signature
+ * verification in {@link PaymentService#handleGatewayCallback} (Requirement 12.5).
+ */
+@RestController
+@RequestMapping(&quot;/payments&quot;)
+public class PaymentController {
+
+    private final PaymentService paymentService;
+
+<span class="fc" id="L41">    public PaymentController(PaymentService paymentService) {</span>
+<span class="fc" id="L42">        this.paymentService = paymentService;</span>
+<span class="fc" id="L43">    }</span>
+
+    /** Initiate a payment; idempotent on (customerId, bookingId) (Requirement 12.3). */
+    @PostMapping
+    public ResponseEntity&lt;TransactionResponse&gt; initiate(@Valid @RequestBody InitiatePaymentRequest req) {
+<span class="fc" id="L48">        PaymentTransaction tx = paymentService.initiatePayment(new InitiatePaymentCommand(</span>
+<span class="fc" id="L49">                req.customerId(), req.bookingId(), req.providerId(), req.amount(), req.platformFee(),</span>
+<span class="fc" id="L50">                req.method(), req.gatewayId(), req.paymentCredential()));</span>
+<span class="fc" id="L51">        return ResponseEntity.status(HttpStatus.CREATED).body(TransactionResponse.from(tx));</span>
+    }
+
+    @org.springframework.web.bind.annotation.GetMapping(&quot;/{transactionId}&quot;)
+    public TransactionResponse get(@PathVariable UUID transactionId) {
+<span class="nc" id="L56">        return TransactionResponse.from(paymentService.getTransaction(transactionId));</span>
+    }
+
+    /** Handle a gateway callback; signature verified before any state change (Requirement 12.5). */
+    @PostMapping(&quot;/callbacks/{transactionId}&quot;)
+    public TransactionResponse callback(@PathVariable UUID transactionId,
+                                        @Valid @RequestBody GatewayCallbackRequest req) {
+<span class="nc" id="L63">        PaymentTransaction tx = paymentService.handleGatewayCallback(transactionId, new GatewayCallback(</span>
+<span class="nc" id="L64">                req.gatewayId(), req.payload(), req.signature(), req.succeeded(), req.failureReason()));</span>
+<span class="nc" id="L65">        return TransactionResponse.from(tx);</span>
+    }
+
+    /** Record a customer-driven retry attempt (Requirement 12.8). */
+    @PostMapping(&quot;/{transactionId}/retries&quot;)
+    public TransactionResponse retry(@PathVariable UUID transactionId,
+                                     @RequestParam(required = false) String failureReason) {
+<span class="nc" id="L72">        return TransactionResponse.from(paymentService.retryPayment(transactionId, failureReason));</span>
+    }
+
+    /** Refund a transaction fully or partially (Requirement 12.7). */
+    @PostMapping(&quot;/{transactionId}/refunds&quot;)
+    public TransactionResponse refund(@PathVariable UUID transactionId,
+                                      @Valid @RequestBody RefundRequest req) {
+<span class="nc" id="L79">        return TransactionResponse.from(paymentService.refund(transactionId, req.amount()));</span>
+    }
+
+    /** Initiate a settlement bank transfer (Requirement 14.3). */
+    @PostMapping(&quot;/settlements&quot;)
+    public ResponseEntity&lt;SettlementResponse&gt; settle(@Valid @RequestBody SettlementRequest req) {
+<span class="fc" id="L85">        Settlement settlement = paymentService.initiateSettlement(</span>
+<span class="fc" id="L86">                req.providerId(), req.amount(), req.bankAccountRef(), req.gatewayId());</span>
+<span class="fc" id="L87">        return ResponseEntity.status(HttpStatus.CREATED).body(SettlementResponse.from(settlement));</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>
