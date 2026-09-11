@@ -1,8 +1,18 @@
 # HomeFix Platform — Codebase Review
 
-**Date:** 2026-09-10
+**Date:** 2026-09-10, remediation status updated 2026-09-11
 **Repository:** `KripaGIT009/home-fix` (branch `main`)
 **Scope:** entire repository — 20 Spring Boot services, 4 shared libraries, 3 React apps, Docker Compose, Helm, Kubernetes manifests, Terraform, GitHub Actions, and the `.kiro` specifications.
+
+> **Remediation in progress.** A first pass of fixes has landed since this review was written. See
+> [Section 12](#12-remediation-status) for exactly what is fixed, what is partially fixed and what is
+> untouched. The findings below are kept as originally written so the record of what was found stays
+> intact; Section 12 is the authoritative current state.
+>
+> Supporting documents added alongside the fixes: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for
+> flow, sequence, data-model and state diagrams, [docs/API_CONTRACTS.md](docs/API_CONTRACTS.md) for
+> REST and event JSON contracts, and [docs/LOCAL_ACCESS.md](docs/LOCAL_ACCESS.md) for test users and
+> URLs.
 
 ---
 
@@ -373,3 +383,79 @@ Systematic gaps:
 ## Appendix B — Review method
 
 Six parallel reviewers each read one slice of the repository in full (POMs, configuration, main sources, tests, infra) and reported verified findings with file and line references. Cross-cutting facts (versions, ports, migration strategy, test counts, git state) were checked directly. Findings were de-duplicated and merged into this document. No source files were modified during the review other than adding `.gitignore` and this file.
+
+---
+
+## 12. Remediation status
+
+Updated 2026-09-11. Everything marked fixed was verified by a passing test run, with the result
+noted. Nothing here is claimed on inspection alone.
+
+### 12.1 Fixed and verified
+
+| Finding | What changed | Verification |
+|---------|--------------|--------------|
+| **Self-service ADMIN registration** (8.2) | The role type now marks only customer and service-provider self-assignable, and registration refuses anything else before sending a code or creating a session. The role set also gained the four staff roles the rest of the platform already checked for: super admin, finance admin, dispatcher and support agent. | auth-service 99 tests pass, including 12 new escalation tests. Confirmed live against the running stack: asking for the admin role returns an invalid-role error. |
+| **No RBAC rules configured** (8.1) | Eleven services gained a role-rule configuration class, registered during construction rather than on application-ready so the rules exist before the server accepts traffic. Public paths were deliberately left unruled, each with a pass-through regression test, because the filter runs inside the security chain and a rule there would turn a public path into a 401. | Per-service suites all pass: catalog 28, pricing 88, payment 57, invoice 38, promotion 58, provider 55, customer 45, verification 63, complaint 49, rating 60, chat 67. |
+| **No object-level ownership checks** (8.1) | A caller-identity helper was added to provider, customer, verification, invoice, payment and promotion, asserting the caller is the subject named in the path or body unless they hold a staff role, using each service's existing exception and error envelope. | Covered by the suites above, with ownership tests per service. |
+| **Review author impersonation** (8.5) | Submission persisted the prompt's reviewer and ignored the caller, so anyone could post a review on any booking as the real customer. Both submit paths now assert the caller matches, and persist the caller. | rating-review-service 60 tests pass. |
+| **Customer profile read by the wrong column** (8.4) | Profile update, deletion and anonymisation looked up by primary key while the customer id lives in the user column, so a second update silently created a duplicate row and deletion always returned not-found. All three now look up by user. The test double that had hidden this was made stateful. | customer-service 45 tests pass, including a new test verified to fail against the old code. |
+| **Default secrets in every config** (8.1) | The signing secret, database password, webhook secrets and encryption keys no longer have defaults in any of the 19 service configs, so a missing environment variable fails startup instead of shipping a public secret. Java-level fallbacks were removed too, including a customer key that decoded to 32 zero bytes. | auth 99, payment 57, customer 45 tests pass. Compose parses with the env file present and fails naming the variable when absent. |
+| **Social login audience check disabled** (8.2) | A blank audience caused the check to be dropped entirely, so any Google or Apple token issued for any app was accepted. The verifier now rejects a blank issuer or audience at construction, and a provider that is not fully configured is simply not registered, so the platform still starts and returns its existing unsupported-provider error. | Proven with a temporary context test: unconfigured starts clean, blank audience disables the provider, fully configured registers. |
+| **Outbox relay drained the wrong schema** (8.2) | This is why no domain event was ever published. Each producer wrote into its own schema while the relay polled the default one. The outbox tables are now pinned to a single shared schema that every producer and the relay agree on. Atomicity is unchanged: same database, same transaction. | shared outbox 30 tests pass, including the atomicity test. outbox-processor 16 tests pass. |
+| **Dispatch could not call back into booking** (8.3) | The two internal endpoints dispatch had always called did not exist. They now do, addressed by booking id, guarded by a shared service credential, and both idempotent so the caller's retries are safe. | booking-service 141 tests pass, including 9 new transition tests and 6 new filter tests. |
+| **Illegal transition requested by dispatch** (8.3) | Dispatch asked to jump straight from searching to accepted, which the state machine forbids. The new service walks the legal two-step path through assigned, in one transaction. | Covered by the booking tests above. |
+| **Provider never recorded on a booking** (8.3) | The setter had no caller, so every downstream provider event carried a null provider. Acceptance now assigns it. | Covered by the booking tests above. |
+| **Chat channels never activated** | The provider-accepted event omitted the customer the chat consumer requires, so every one of those events was dead-lettered. The event now carries the customer and the booking creation time. | dispatch-engine 53 tests pass. |
+| **Location feed never terminated** (8.3) | The consumer listened on a hard-coded topic no producer wrote to. The topic is now configurable and defaults to the name the relay actually publishes. | location-service 23 tests pass. |
+| **Admin portal login always failed** (8.6) | It called a login path that does not exist. It now uses the register endpoints, as the other two apps do. | All three apps lint, typecheck and build clean. |
+| **Sessions lost on every page reload** (8.6) | No silent refresh existed, so the first call after a reload returned 401 and bounced the user to login. All three apps now refresh on rehydrate and retry once on a 401, with a single in-flight guard because refresh tokens are single-use. | As above. |
+| **Logout never revoked server-side** (8.6) | All three apps now call logout before clearing local state. | As above. |
+| **Live tracking reconnect loop** (8.6) | A freshly built query key in an effect dependency list tore down and recreated the location stream on every render, once a second. The key is memoised, and the chat socket gained reconnect with backoff. | As above. |
+| **Upgrades blocked by the proxies** (8.6) | The nginx and Vite proxies had no upgrade headers and buffered responses, so the chat socket could not connect and server-sent events were buffered. Both now support upgrades with buffering off. | As above. |
+| **Byte-order mark in the Docker ignore file** (8.6) | A BOM before the dependency directory meant it was never ignored, so the host tree was copied into the image. Stripped. | As above. |
+| **Admin routes not role-gated** (8.6) | Every module now requires a staff role, reports also allow finance, system configuration stays super-admin only, and a non-staff token is refused at sign-in rather than landing in the admin shell. | As above. |
+| **Missing security headers** (8.6) | Content-type, referrer and frame headers added to all three sites, and the document viewer iframe is now sandboxed. | As above. |
+| **Conflicting booking status sets** (8.6) | The provider app carried two incompatible status enums for the same entity. Both now use one module matching the backend's eighteen states. | As above. |
+| **Debug logging and scratch files** (8.7) | Security debug logging removed from two services in Compose, a stray compiler error file deleted, build info ignored. | Compose parses clean. |
+
+### 12.2 Partially fixed
+
+**Dispatch matched against coordinates of zero** (8.3). The consumer's event record used primitive
+types, so absent coordinates silently became zero and every candidate was scored against a point in
+the Gulf of Guinea. Those fields are now boxed, and the consumer refuses an event it cannot match on,
+dead-lettering it with a reason that names the address and subcategory needing resolution. That turns
+silent wrong behaviour into a loud, diagnosable failure, which is the right intermediate state, but it
+does not yet make dispatch work.
+
+Finishing it needs an enrichment step, and that needs a new endpoint elsewhere. Booking-service
+publishes booking facts and has no client for either the address or the catalog's skill tags, and
+customer-service exposes no way to read an address by id. Either add an internal address lookup and
+let dispatch resolve both, or give booking-service the two clients and denormalise into the event. The
+first keeps the event honest and is the better shape.
+
+**Local Compose secrets** (8.7). Values moved out of the file into an environment file with a
+committed example, and Compose now fails naming the variable when one is missing. The values are still
+local development secrets, which is appropriate there. The production path through Secrets Manager is
+unchanged and still unwired.
+
+### 12.3 Not yet addressed
+
+These remain exactly as described earlier, listed in the order I would take them.
+
+1. **No database migrations** (8.1). Every service still validates against a schema nothing creates, and Compose still overrides to auto-update. Any deployment outside Compose fails at startup. This is now the largest single obstacle to deploying anything, and the new shared outbox schema is one more object a real migration must create.
+2. **The pipeline builds and deploys nothing real** (8.7). It still defaults to a service that does not exist, still never packages the jars its images copy, still never installs the shared modules, and the chart still probes the wrong path and port.
+3. **Payment callback outcome is unsigned** (8.4). The signature still covers only the payload while the outcome, failure reason and target transaction come from the unsigned request, on a public endpoint. This is the most serious remaining security finding.
+4. **Refund ordering and idempotency** (8.4, 8.5). The payment refund still calls the gateway before validating the amount, and the complaint refund still has no status precondition and records nothing, so repeated calls refund repeatedly.
+5. **Notifications cannot address anyone** (contracts). No producer emits a recipient or any contact field, so six of eleven lifecycle topics always dead-letter and the two that process have nothing to deliver to.
+6. **Three topics have consumers but no producer**: provider-assigned, provider-rejected and booking-cancelled. The last matters most, since chat relies on it to close channels for cancelled bookings.
+7. **Complaint events are unmapped** and land on a topic nothing reads.
+8. **In-transaction sleeps** in the relay, payment and notification paths, and the relay's lack of row claiming, remain as described in 8.1 and 8.2.
+9. **Production paths still backed by stubs**: payment gateways, wallet, storage that discards bytes, SMS, email, push, background checks, geocoding, and pricing parameters that live only in memory.
+10. **The remaining items** in sections 8.2 through 8.7, including the role filter's raw-URI matching, refresh rotation atomicity, the gateway's uncached per-request introspection, and the eager-collection mapping on verification.
+
+### 12.4 A note on the spec
+
+The task list still marks all 46 implementation tasks complete. The work above, and everything in
+12.3, contradicts that for the pipeline, deployment, authorization and integration tasks. Those should
+be reopened before the checklist is used to judge readiness.

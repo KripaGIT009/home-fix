@@ -2,6 +2,11 @@
 -- Hibernate ddl-auto=update creates TABLES but not SCHEMAS, and each service sets
 -- hibernate.default_schema to its own name. Create every schema up front so the
 -- services can start against a fresh database.
+-- Shared infrastructure schema for the transactional outbox. Every producer writes its
+-- outbox_event rows here and the Outbox Processor drains this one table, so the relay and
+-- the producers cannot disagree about where events live.
+CREATE SCHEMA IF NOT EXISTS outbox;
+
 CREATE SCHEMA IF NOT EXISTS auth;
 CREATE SCHEMA IF NOT EXISTS booking;
 CREATE SCHEMA IF NOT EXISTS customer;
