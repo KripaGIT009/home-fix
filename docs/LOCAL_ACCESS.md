@@ -30,10 +30,19 @@ docker compose -f docker-compose.core.yml -p homefix-core up -d --build auth-ser
 Two seeding steps are needed after a fresh start, because the pricing engine holds its parameters in memory and no catalog or user data is bootstrapped.
 
 ```bash
-bash docker/seed-pricing.sh      # pricing parameters for every subcategory
-bash docker/seed-test-users.sh   # the test accounts listed below
-bash docker/smoke-flows.sh       # optional: end-to-end check of every service
+bash docker/seed-pricing.sh         # pricing parameters for every subcategory
+bash docker/seed-test-users.sh      # the test accounts listed below
+bash docker/smoke-flows.sh          # optional: end-to-end check of every service
+bash docker/verify-outbox-flow.sh   # optional: checks the event path works
 ```
+
+The stack now reads its secrets from an environment file, so copy the example before the first start:
+
+```bash
+cp .env.example .env
+```
+
+Compose fails with the name of the missing variable if you skip this, rather than starting with a placeholder secret.
 
 Re-run `seed-pricing.sh` after restarting pricing-engine. `seed-test-users.sh` is idempotent.
 
@@ -240,19 +249,32 @@ Knowing this up front saves debugging time.
 - Every service's health, readiness and Prometheus endpoints
 - All three web apps build, serve and proxy correctly
 
-**Known broken**
+**Fixed since the first review**
+
+These were broken when the review was written and now work. See [CODEBASE_REVIEW.md](../CODEBASE_REVIEW.md) section 12 for the detail and the verification behind each.
+
+| Area | What changed |
+|------|--------------|
+| Authorization | Staff endpoints now enforce roles across eleven services, and six services check that the caller owns the resource named in the path |
+| Staff accounts | Registration refuses a staff role, so an admin account can no longer be minted by anyone with a phone number |
+| Domain events | The relay and the producers now agree on one outbox schema, so events are actually published |
+| Dispatch callback | The two internal booking endpoints exist, are credential-guarded, and perform the legal transition sequence |
+| Chat activation | Provider-accepted events now carry the customer, so channels activate instead of dead-lettering |
+| Live tracking stop | The location consumer listens on the topic the relay publishes to |
+| Admin portal login | Uses the endpoints that exist |
+| Session persistence | A page reload no longer logs you out |
+| Logout | Revokes the refresh token server-side |
+
+**Still broken**
 
 | Area | Symptom | Review reference |
 |------|---------|------------------|
-| Admin portal login | Always fails: the app calls `/auth/login/otp`, which does not exist | 8.6, finding 1 |
-| Session persistence | Any page reload logs you out, because no silent refresh is implemented | 8.6, finding 2 |
-| Dispatch assignment | Bookings stay in `SEARCHING_PROVIDER`; the callback endpoint is missing and the event schema differs | 8.3, findings 1 and 2 |
-| Domain events | The outbox relay polls the wrong schema, so no event is ever published | 8.2 |
-| Live tracking stop | The location feed never terminates: the listener is on the wrong topic name | 8.3, finding 3 |
-| Pricing after restart | Parameters are in memory only, so re-run `seed-pricing.sh` | 8.3, finding 4 |
-| Authorization | Staff endpoints accept any authenticated token in most services | 8.1 |
-
-Until the authorization work lands, treat every role in the table above as having roughly the same real access. The roles are correct in the token; most services just do not check them yet.
+| Provider matching | A booking reaches `SEARCHING_PROVIDER` and stops there. Dispatch deliberately refuses the event because it carries no customer coordinates or skill tags, and dead-letters it with a reason naming what it needs. The enrichment step is not built yet. | 12.2 |
+| Payment callback | The signature covers only the payload, so the outcome and the target transaction are unsigned on a public endpoint | 8.4 |
+| Notifications | No producer emits a recipient or contact details, so most lifecycle topics dead-letter and nothing can be delivered | contracts |
+| Pricing after restart | Parameters live in memory only, so re-run `seed-pricing.sh` | 8.3 |
+| Refunds | Neither the payment nor the complaint refund path is idempotent | 8.4, 8.5 |
+| Deployment outside Compose | No migrations exist, so a service validating its schema finds nothing | 8.1 |
 
 ---
 
