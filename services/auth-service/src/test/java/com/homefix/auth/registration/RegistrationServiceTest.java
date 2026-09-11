@@ -16,6 +16,8 @@ import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
@@ -264,5 +266,47 @@ class RegistrationServiceTest {
         VerificationResult result = service.verifyOtp(PHONE, smsGateway.lastOtpCode());
 
         assertThat(result.roles()).containsExactlyInAnyOrder("CUSTOMER", "SERVICE_PROVIDER");
+    }
+
+    // ----- Privilege escalation (staff roles are not self-assignable) -----
+
+    @ParameterizedTest
+    @ValueSource(strings = {"ADMIN", "SUPER_ADMIN", "FINANCE_ADMIN", "DISPATCHER", "SUPPORT_AGENT",
+            "admin", " Admin ", "sUpEr_AdMiN"})
+    void staffRole_cannotBeSelfAssignedAtRegistration(String requestedRole) {
+        assertThatThrownBy(() -> service.requestOtp(PHONE, requestedRole))
+                .isInstanceOf(RegistrationException.class)
+                .satisfies(ex -> {
+                    RegistrationException re = (RegistrationException) ex;
+                    assertThat(re.getErrorCode()).isEqualTo("INVALID_ROLE");
+                    assertThat(re.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+                });
+
+        // No OTP was sent and no pending session was created, so the refusal is total.
+        assertThat(smsGateway.sentMessages()).isEmpty();
+        assertThat(otpStore.findSession(PHONE)).isEmpty();
+        verify(userRepository, never()).save(any(UserAccount.class));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"CUSTOMER", "SERVICE_PROVIDER", "customer", " service_provider "})
+    void selfServiceRoles_areStillAccepted(String requestedRole) {
+        stubUserCreation();
+
+        long expiresIn = service.requestOtp(PHONE, requestedRole);
+
+        assertThat(expiresIn).isEqualTo(300L);
+        assertThat(smsGateway.sentMessages()).hasSize(1);
+    }
+
+    @Test
+    void roleEnum_marksOnlyCustomerAndProviderSelfAssignable() {
+        assertThat(Role.CUSTOMER.isSelfAssignable()).isTrue();
+        assertThat(Role.SERVICE_PROVIDER.isSelfAssignable()).isTrue();
+        assertThat(Role.ADMIN.isSelfAssignable()).isFalse();
+        assertThat(Role.SUPER_ADMIN.isSelfAssignable()).isFalse();
+        assertThat(Role.FINANCE_ADMIN.isSelfAssignable()).isFalse();
+        assertThat(Role.DISPATCHER.isSelfAssignable()).isFalse();
+        assertThat(Role.SUPPORT_AGENT.isSelfAssignable()).isFalse();
     }
 }

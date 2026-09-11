@@ -36,21 +36,30 @@ import jakarta.validation.Valid;
 
 /**
  * Provider profile, availability, wallet, and settlement endpoints (Requirements 4 and 14).
+ *
+ * <p>Coarse role enforcement is applied by the shared {@code RbacEnforcementFilter} from the rules
+ * in {@code ProviderRbacConfig}. Because every path here carries a {@code {id}} provider
+ * identifier, a role check alone is not sufficient — each handler additionally asserts ownership
+ * through {@link CallerIdentity#requireSelfOrStaff(UUID)} as its first statement, so a provider
+ * cannot read or mutate another provider's record.
  */
 @RestController
 @RequestMapping("/providers/{id}")
 public class ProviderController {
 
     private final ProviderService providerService;
+    private final CallerIdentity callerIdentity;
 
-    public ProviderController(ProviderService providerService) {
+    public ProviderController(ProviderService providerService, CallerIdentity callerIdentity) {
         this.providerService = providerService;
+        this.callerIdentity = callerIdentity;
     }
 
     /** {@code PUT /providers/{id}/profile} — categories, skills, experience, radius (Req 4.1–4.3, 4.8). */
     @PutMapping("/profile")
     public ResponseEntity<ProfileResponse> updateProfile(@PathVariable("id") UUID id,
                                                          @Valid @RequestBody ProfileRequest request) {
+        callerIdentity.requireSelfOrStaff(id);
         List<ProfileUpdateCommand.CategorySelectionCommand> cats = request.categories().stream()
                 .map(c -> new ProfileUpdateCommand.CategorySelectionCommand(
                         c.categoryId(),
@@ -66,6 +75,7 @@ public class ProviderController {
     @PutMapping("/radius")
     public ResponseEntity<ProfileResponse> updateRadius(@PathVariable("id") UUID id,
                                                         @Valid @RequestBody RadiusRequest request) {
+        callerIdentity.requireSelfOrStaff(id);
         ProviderProfile profile = providerService.updateServiceRadius(id, request.serviceRadiusKm());
         return ResponseEntity.ok(ProfileResponse.from(profile));
     }
@@ -74,6 +84,7 @@ public class ProviderController {
     @PutMapping("/availability")
     public ResponseEntity<ProfileResponse> updateAvailability(@PathVariable("id") UUID id,
                                                              @Valid @RequestBody AvailabilityRequest request) {
+        callerIdentity.requireSelfOrStaff(id);
         List<AvailabilityCommand.Slot> slots = request.slots().stream()
                 .map(s -> new AvailabilityCommand.Slot(s.dayOfWeek(), s.startHour(), s.endHour()))
                 .toList();
@@ -86,6 +97,7 @@ public class ProviderController {
     public ResponseEntity<ProfileResponse> updateEmergencyAvailability(
             @PathVariable("id") UUID id,
             @Valid @RequestBody EmergencyAvailabilityRequest request) {
+        callerIdentity.requireSelfOrStaff(id);
         ProviderProfile profile = providerService.updateEmergencyAvailability(id, request.emergencyAvailable());
         return ResponseEntity.ok(ProfileResponse.from(profile));
     }
@@ -94,6 +106,7 @@ public class ProviderController {
     @PostMapping("/settlements")
     public ResponseEntity<SettlementResponse> requestSettlement(@PathVariable("id") UUID id,
                                                                @Valid @RequestBody SettlementRequestDto request) {
+        callerIdentity.requireSelfOrStaff(id);
         Settlement settlement = providerService.requestSettlement(id,
                 new SettlementCommand(request.amount(), request.bankAccountRef()));
         return ResponseEntity.status(HttpStatus.CREATED).body(SettlementResponse.from(settlement));
@@ -105,6 +118,7 @@ public class ProviderController {
             @PathVariable("id") UUID id,
             @RequestParam(name = "page", defaultValue = "0") int page,
             @RequestParam(name = "size", defaultValue = "20") int size) {
+        callerIdentity.requireSelfOrStaff(id);
         Pageable pageable = PageRequest.of(Math.max(page, 0), Math.min(Math.max(size, 1), 100));
         Page<EarningResponse> result = providerService.earningsHistory(id, pageable)
                 .map(EarningResponse::from);
@@ -114,6 +128,7 @@ public class ProviderController {
     /** {@code GET /providers/{id}/profile} — read the current profile. */
     @GetMapping("/profile")
     public ResponseEntity<ProfileResponse> getProfile(@PathVariable("id") UUID id) {
+        callerIdentity.requireSelfOrStaff(id);
         return ResponseEntity.ok(ProfileResponse.from(providerService.getProfile(id)));
     }
 }

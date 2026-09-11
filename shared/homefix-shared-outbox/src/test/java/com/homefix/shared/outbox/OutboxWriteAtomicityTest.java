@@ -7,6 +7,7 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,6 +27,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * {@link Propagation#NOT_SUPPORTED}. Each test cleans up its own rows afterwards.
  */
 @DataJpaTest
+// The outbox tables live in a dedicated schema shared by every producer and the relay, so the
+// schema has to exist before Hibernate emits the table DDL. A deployment creates it in its init
+// script; here Hibernate is told to create namespaces itself. Setting a datasource URL would not
+// work: @DataJpaTest replaces the DataSource with its own embedded one.
+@TestPropertySource(properties =
+        "spring.jpa.properties.hibernate.hbm2ddl.create_namespaces=true")
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({OutboxWriteAtomicityTest.TestBeans.class})
 class OutboxWriteAtomicityTest {

@@ -46,7 +46,7 @@ class JobStartedConsumerTest {
 
     private ConsumerRecord<String, String> record(UUID eventId, String payload) {
         ConsumerRecord<String, String> record =
-                new ConsumerRecord<>(JobStartedConsumer.TOPIC, 0, 0L, "key", payload);
+                new ConsumerRecord<>(JobStartedConsumer.DEFAULT_TOPIC, 0, 0L, "key", payload);
         if (eventId != null) {
             record.headers().add(new RecordHeader(KafkaProducerTemplate.HEADER_EVENT_ID,
                     eventId.toString().getBytes(StandardCharsets.UTF_8)));
@@ -82,6 +82,6 @@ class JobStartedConsumerTest {
 
         verify(locationService, never()).terminate(any());
         verify(dlqForwarder, times(1))
-                .forward(eq(JobStartedConsumer.TOPIC), eq("key"), anyString(), anyString(), anyString());
+                .forward(eq(JobStartedConsumer.DEFAULT_TOPIC), eq("key"), anyString(), anyString(), anyString());
     }
 }

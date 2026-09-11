@@ -24,10 +24,27 @@ import java.util.UUID;
  * {@code id, aggregate_type, aggregate_id, event_type, payload, status, created_at, published_at}.
  */
 @Entity
-@Table(name = "outbox_event", indexes = {
+@Table(name = "outbox_event", schema = OutboxEventEntity.SCHEMA, indexes = {
         @Index(name = "idx_outbox_status_created", columnList = "status, created_at")
 })
 public class OutboxEventEntity {
+
+    /**
+     * Schema holding the outbox tables, shared by every producer and the Outbox Processor.
+     *
+     * <p>This is pinned rather than inherited from each service's {@code default_schema} on purpose.
+     * The outbox is infrastructure, not domain data: a producer writes a row and exactly one relay
+     * drains it. When the table inherited the owning service's schema, each producer wrote to its own
+     * copy ({@code booking.outbox_event}, {@code payment.outbox_event}, and so on) while the relay
+     * had no schema configured and so polled {@code public.outbox_event}, which no producer ever
+     * wrote to. The result was that no domain event was published at all.
+     *
+     * <p>Atomicity is unaffected: this is the same database and the same transaction as the domain
+     * write, so the guarantee that an event row commits if and only if the state change commits still
+     * holds. Only the schema differs. The schema must exist before a service starts; the local stack
+     * creates it in {@code docker/init-db.sql}.
+     */
+    public static final String SCHEMA = "outbox";
 
     /**
      * Primary key. This value is also used as the Kafka {@code eventId} header so that

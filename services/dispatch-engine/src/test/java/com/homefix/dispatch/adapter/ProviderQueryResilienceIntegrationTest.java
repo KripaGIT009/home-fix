@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -89,7 +90,7 @@ class ProviderQueryResilienceIntegrationTest {
 
         DispatchRequest request = new DispatchRequest(
                 UUID.randomUUID(), UUID.randomUUID(), 12.9, 77.6,
-                UUID.randomUUID(), List.of("plumbing"), true);
+                UUID.randomUUID(), List.of("plumbing"), true, Instant.now());
 
         CircuitBreaker breaker = factory.circuitBreaker(HttpProviderQueryAdapter.DEPENDENCY);
 

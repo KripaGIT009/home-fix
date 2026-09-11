@@ -25,9 +25,19 @@ public class ProviderAcceptedPublisher {
         this.outboxEventPublisher = outboxEventPublisher;
     }
 
+    /**
+     * Publishes the acceptance.
+     *
+     * @param bookingId        the booking that was accepted
+     * @param customerId       the booking's customer; required by the Chat Service to activate the
+     *                         channel, which needs both participants
+     * @param providerId       the provider who accepted
+     * @param bookingCreatedAt when the booking was created, used downstream for retention windows
+     */
     @Transactional
-    public void publish(UUID bookingId, UUID providerId) {
-        ProviderAcceptedEvent event = new ProviderAcceptedEvent(bookingId, providerId, Instant.now());
+    public void publish(UUID bookingId, UUID customerId, UUID providerId, Instant bookingCreatedAt) {
+        ProviderAcceptedEvent event = new ProviderAcceptedEvent(
+                bookingId, customerId, providerId, bookingCreatedAt, Instant.now());
         outboxEventPublisher.publish(
                 ProviderAcceptedEvent.AGGREGATE_TYPE,
                 bookingId,

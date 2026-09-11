@@ -8,10 +8,13 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.homefix.dispatch.domain.DispatchRequest;
 import com.homefix.dispatch.event.BookingCreatedEvent;
 import com.homefix.dispatch.service.BulkheadDispatchExecutor;
@@ -44,7 +47,7 @@ class BookingCreatedConsumerTest {
     @Mock
     private BulkheadDispatchExecutor executor;
 
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final ObjectMapper mapper = new ObjectMapper().registerModule(new JavaTimeModule());
 
     private BookingCreatedConsumer consumer;
 
@@ -65,7 +68,8 @@ class BookingCreatedConsumerTest {
         UUID eventId = UUID.randomUUID();
         UUID booking = UUID.randomUUID();
         BookingCreatedEvent event = new BookingCreatedEvent(booking, UUID.randomUUID(),
-                UUID.randomUUID(), 12.9, 77.6, List.of("plumbing"), true);
+                UUID.randomUUID(), UUID.randomUUID(), 12.9, 77.6, List.of("plumbing"), true,
+                Instant.now());
         when(processedEventRepository.existsByConsumerGroupAndEventId(anyString(), eq(eventId)))
                 .thenReturn(false);
 
@@ -100,5 +104,47 @@ class BookingCreatedConsumerTest {
 
         verify(executor, never()).submit(any());
         verify(dlqForwarder).forward(eq(TOPIC), eq("key"), eq(eventId.toString()), eq("not-json"), anyString());
+    }
+
+    /**
+     * The shape the Booking Service actually publishes today: booking facts only, with no customer
+     * coordinates and no skill tags. Dispatching on those absent values would score every candidate
+     * against latitude 0, longitude 0, so the event must be refused and dead-lettered instead.
+     */
+    @Test
+    void eventWithoutCoordinatesOrSkillTags_isRefusedAndDeadLettered() throws Exception {
+        UUID eventId = UUID.randomUUID();
+        UUID booking = UUID.randomUUID();
+        String producerShape = mapper.writeValueAsString(Map.of(
+                "bookingId", booking,
+                "reference", "HFX-2026-0004821",
+                "customerId", UUID.randomUUID(),
+                "categoryId", UUID.randomUUID(),
+                "subcategoryId", UUID.randomUUID(),
+                "addressId", UUID.randomUUID(),
+                "emergency", false,
+                "occurredAt", Instant.now().toString()));
+        when(processedEventRepository.existsByConsumerGroupAndEventId(anyString(), eq(eventId)))
+                .thenReturn(false);
+
+        consumer.onMessage(record(eventId, producerShape));
+
+        verify(executor, never()).submit(any());
+        verify(dlqForwarder).forward(eq(TOPIC), eq("key"), eq(eventId.toString()),
+                eq(producerShape), anyString());
+        verify(processedEventRepository, never()).save(any());
+    }
+
+    @Test
+    void eventWithEmptySkillTags_isAlsoRefused() throws Exception {
+        UUID eventId = UUID.randomUUID();
+        BookingCreatedEvent event = new BookingCreatedEvent(UUID.randomUUID(), UUID.randomUUID(),
+                UUID.randomUUID(), UUID.randomUUID(), 12.9, 77.6, List.of(), true, Instant.now());
+        when(processedEventRepository.existsByConsumerGroupAndEventId(anyString(), eq(eventId)))
+                .thenReturn(false);
+
+        consumer.onMessage(record(eventId, mapper.writeValueAsString(event)));
+
+        verify(executor, never()).submit(any());
     }
 }

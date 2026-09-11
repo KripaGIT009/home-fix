@@ -77,7 +77,11 @@ public class CustomerProfileService {
     @Transactional
     public CustomerProfile updateProfile(UUID customerId, String displayName, String email,
                                          String photoUrl) {
-        CustomerProfile profile = profileRepository.findById(customerId)
+        // Look up by user_id, not by primary key: the {id} in the path is the caller's USER
+        // id, while the profile's own primary key is an independently generated UUID
+        // (CustomerProfile.forUser). Using findById here never matched, so every call created
+        // a fresh duplicate profile row for the same customer.
+        CustomerProfile profile = profileRepository.findByUserId(customerId)
                 .orElseGet(() -> profileRepository.save(CustomerProfile.forUser(customerId)));
 
         profile.setDisplayNameEncrypted(kms.encrypt(displayName));
@@ -187,7 +191,8 @@ public class CustomerProfileService {
      */
     @Transactional
     public DeletionRequest requestDeletion(UUID customerId) {
-        if (profileRepository.findById(customerId).isEmpty()) {
+        // The path id is a user id (see updateProfile), so the lookup must be by user_id.
+        if (profileRepository.findByUserId(customerId).isEmpty()) {
             throw CustomerException.notFound("Customer not found");
         }
         Instant now = Instant.now(clock);
@@ -220,7 +225,8 @@ public class CustomerProfileService {
     }
 
     private void anonymizeCustomer(UUID customerId) {
-        profileRepository.findById(customerId).ifPresent(profile -> {
+        // Deletion requests record the customer's user id, so resolve the profile by user_id.
+        profileRepository.findByUserId(customerId).ifPresent(profile -> {
             String token = "ANONYMIZED-" + UUID.randomUUID();
             // Store non-reversible tokens; these are not KMS ciphertext and cannot be
             // decrypted back to the original PII (Requirement 26.9).

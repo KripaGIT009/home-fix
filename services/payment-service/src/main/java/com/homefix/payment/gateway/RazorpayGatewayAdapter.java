@@ -15,7 +15,7 @@ public class RazorpayGatewayAdapter extends AbstractHmacGatewayAdapter {
     public static final String GATEWAY_ID = "razorpay";
 
     public RazorpayGatewayAdapter(
-            @Value("${homefix.payment.gateways.razorpay.webhook-secret:razorpay-dev-secret}") String webhookSecret) {
+            @Value("${homefix.payment.gateways.razorpay.webhook-secret}") String webhookSecret) {
         super(webhookSecret);
     }
 

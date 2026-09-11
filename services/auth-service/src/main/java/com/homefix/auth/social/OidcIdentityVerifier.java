@@ -1,6 +1,7 @@
 package com.homefix.auth.social;
 
 import java.security.Key;
+import java.util.Locale;
 
 import com.homefix.auth.config.SocialLoginProperties.ProviderConfig;
 
@@ -28,9 +29,45 @@ public abstract class OidcIdentityVerifier implements SocialIdentityVerifier {
     private final OidcKeyLocator keyLocator;
 
     protected OidcIdentityVerifier(SocialProvider provider, ProviderConfig config, OidcKeyLocator keyLocator) {
+        if (provider == null) {
+            throw new IllegalStateException("Social identity verifier requires a provider");
+        }
+        if (config == null) {
+            throw new IllegalStateException(
+                    "No OIDC configuration present for social provider " + provider
+                            + "; configure " + propertyPrefix(provider) + ".* or leave the provider unconfigured");
+        }
+        // A blank audience would be silently dropped by the JWT parser, so the 'aud' claim would
+        // go unchecked and ANY provider-issued identity token — for any application — would be
+        // accepted. Refuse to build a verifier that cannot enforce the audience.
+        requireConfigured(provider, "audience", config.getAudience());
+        requireConfigured(provider, "issuer", config.getIssuer());
+        if (keyLocator == null) {
+            throw new IllegalStateException(
+                    "No OIDC key locator available for social provider " + provider
+                            + "; the identity-token signature could not be verified");
+        }
         this.provider = provider;
         this.config = config;
         this.keyLocator = keyLocator;
+    }
+
+    private static void requireConfigured(SocialProvider provider, String name, String value) {
+        if (value == null || value.isBlank() || isUnresolvedPlaceholder(value)) {
+            throw new IllegalStateException(
+                    propertyPrefix(provider) + "." + name + " must be configured with a non-blank value"
+                            + " before social login for " + provider + " can be enabled");
+        }
+    }
+
+    /** True for a value such as {@code ${GOOGLE_CLIENT_ID}} that no property source supplied. */
+    private static boolean isUnresolvedPlaceholder(String value) {
+        String trimmed = value.trim();
+        return trimmed.startsWith("${") && trimmed.endsWith("}");
+    }
+
+    private static String propertyPrefix(SocialProvider provider) {
+        return "homefix.auth.social." + provider.name().toLowerCase(Locale.ROOT);
     }
 
     @Override

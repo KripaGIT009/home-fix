@@ -160,7 +160,8 @@ public class DispatchService {
     /** Applies the acceptance transition and publishes the event (Requirement 8.6). */
     private UUID accept(DispatchRequest request, UUID providerId) {
         bookingTransition.markProviderAccepted(request.bookingId(), providerId);
-        acceptedPublisher.publish(request.bookingId(), providerId);
+        acceptedPublisher.publish(
+                request.bookingId(), request.customerId(), providerId, request.bookingCreatedAt());
         log.info("Booking {} accepted by provider {}", request.bookingId(), providerId);
         return providerId;
     }

@@ -2,6 +2,8 @@ package com.homefix.booking.config;
 
 import jakarta.servlet.DispatcherType;
 
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
@@ -32,10 +34,33 @@ import com.homefix.shared.security.RbacEnforcementFilter;
 @EnableWebSecurity
 public class WebSecurityConfig {
 
+    /**
+     * Guards {@code /internal/**} with the shared service credential. Registered as a bean so the
+     * key comes from configuration and the filter is unit-testable on its own.
+     */
+    @Bean
+    public InternalApiKeyFilter internalApiKeyFilter(
+            @Value("${homefix.booking.internal-api-key:}") String internalApiKey) {
+        return new InternalApiKeyFilter(internalApiKey);
+    }
+
+    /**
+     * Keeps the internal-API filter out of the plain servlet chain; it runs inside the security
+     * chain below, for the same reason the shared JWT and RBAC filters do.
+     */
+    @Bean
+    public FilterRegistrationBean<InternalApiKeyFilter> internalApiKeyFilterRegistration(
+            InternalApiKeyFilter filter) {
+        FilterRegistrationBean<InternalApiKeyFilter> registration = new FilterRegistrationBean<>(filter);
+        registration.setEnabled(false);
+        return registration;
+    }
+
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http,
                                                    JwtValidationFilter jwtValidationFilter,
-                                                   RbacEnforcementFilter rbacEnforcementFilter)
+                                                   RbacEnforcementFilter rbacEnforcementFilter,
+                                                   InternalApiKeyFilter internalApiKeyFilter)
             throws Exception {
         http
                 .csrf(AbstractHttpConfigurer::disable)
@@ -61,7 +86,11 @@ public class WebSecurityConfig {
                 // The shared JWT and RBAC filters must run inside this chain: as plain
                 // servlet filters they would execute before Spring Security installs its own
                 // (anonymous) SecurityContext, which would discard the authenticated principal.
-                .addFilterBefore(jwtValidationFilter, UsernamePasswordAuthenticationFilter.class)
+                // The internal-API filter runs first and only touches /internal/**, authenticating
+                // the calling service so the anyRequest().authenticated() rule above is satisfied
+                // without an end-user token.
+                .addFilterBefore(internalApiKeyFilter, UsernamePasswordAuthenticationFilter.class)
+                .addFilterAfter(jwtValidationFilter, InternalApiKeyFilter.class)
                 .addFilterAfter(rbacEnforcementFilter, JwtValidationFilter.class);
         return http.build();
     }

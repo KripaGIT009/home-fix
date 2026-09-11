@@ -8,6 +8,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -30,7 +31,7 @@ class DispatchMiscTest {
 
     private DispatchRequest request(boolean emergency) {
         return new DispatchRequest(UUID.randomUUID(), UUID.randomUUID(), 12.9, 77.6,
-                UUID.randomUUID(), List.of("plumbing"), emergency);
+                UUID.randomUUID(), List.of("plumbing"), emergency, Instant.now());
     }
 
     @Test
@@ -90,9 +91,10 @@ class DispatchMiscTest {
         OutboxEventPublisher outbox = mock(OutboxEventPublisher.class);
         ProviderAcceptedPublisher publisher = new ProviderAcceptedPublisher(outbox);
         UUID booking = UUID.randomUUID();
+        UUID customer = UUID.randomUUID();
         UUID provider = UUID.randomUUID();
 
-        publisher.publish(booking, provider);
+        publisher.publish(booking, customer, provider, Instant.now());
 
         verify(outbox).publish(eq(ProviderAcceptedEvent.AGGREGATE_TYPE), eq(booking),
                 eq(ProviderAcceptedEvent.EVENT_TYPE), any(ProviderAcceptedEvent.class));

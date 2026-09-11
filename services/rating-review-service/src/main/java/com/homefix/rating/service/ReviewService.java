@@ -137,6 +137,7 @@ public class ReviewService {
     @Transactional
     public Review submitCustomerReview(SubmitReviewCommand command) {
         ReviewPrompt prompt = requireOpenPrompt(command.bookingId(), ReviewerRole.CUSTOMER);
+        requireReviewerIsCaller(prompt, command);
         guardNotAlreadyReviewed(command.bookingId(), prompt.getReviewerId());
         validatePayload(command, true);
 
@@ -146,7 +147,7 @@ public class ReviewService {
         Set<FraudDetector.Trigger> triggers = detectFraud(command, providerId, now);
         boolean flagged = !triggers.isEmpty();
 
-        Review review = Review.customerReview(command.bookingId(), prompt.getReviewerId(), providerId,
+        Review review = Review.customerReview(command.bookingId(), command.reviewerId(), providerId,
                 command.overall(), command.behavior(), command.quality(), command.timeliness(),
                 command.pricingTransparency(), command.reviewText(), command.sourceIp(), flagged, now);
         reviewRepository.save(review);
@@ -174,11 +175,12 @@ public class ReviewService {
     @Transactional
     public Review submitProviderReview(SubmitReviewCommand command) {
         ReviewPrompt prompt = requireOpenPrompt(command.bookingId(), ReviewerRole.PROVIDER);
+        requireReviewerIsCaller(prompt, command);
         guardNotAlreadyReviewed(command.bookingId(), prompt.getReviewerId());
         validatePayload(command, false);
 
         Instant now = clock.instant();
-        Review review = Review.providerReview(command.bookingId(), prompt.getReviewerId(),
+        Review review = Review.providerReview(command.bookingId(), command.reviewerId(),
                 prompt.getRevieweeId(), command.overall(), command.reviewText(), command.sourceIp(),
                 false, now);
         reviewRepository.save(review);
@@ -257,6 +259,23 @@ public class ReviewService {
     }
 
     // ---- Helpers -------------------------------------------------------------------------------
+
+    /**
+     * Asserts the review is attributed to the caller. The reviewer on the command is the
+     * authenticated principal resolved by the REST layer; the review prompt records who the booking
+     * actually invited to review. Before this check the prompt's reviewer was persisted and the
+     * command's was ignored, so any authenticated user could post a review on any booking and have
+     * it stored under the real customer's (or provider's) identity.
+     *
+     * @throws ReviewException 403 when the caller is not the invited reviewer for this booking
+     */
+    private void requireReviewerIsCaller(ReviewPrompt prompt, SubmitReviewCommand command) {
+        if (command.reviewerId() == null || !command.reviewerId().equals(prompt.getReviewerId())) {
+            throw new ReviewException(org.springframework.http.HttpStatus.FORBIDDEN,
+                    "NOT_INVITED_REVIEWER",
+                    "the authenticated caller is not the reviewer invited for this booking");
+        }
+    }
 
     private ReviewPrompt requireOpenPrompt(UUID bookingId, ReviewerRole role) {
         ReviewPrompt prompt = promptRepository.findByBookingIdAndReviewerRole(bookingId, role)

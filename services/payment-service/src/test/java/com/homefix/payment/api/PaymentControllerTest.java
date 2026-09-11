@@ -3,20 +3,26 @@ package com.homefix.payment.api;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.math.BigDecimal;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.UUID;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.MediaType;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
@@ -33,8 +39,13 @@ import com.homefix.payment.service.PaymentService;
  * Web-layer tests for {@link PaymentController} using standalone MockMvc so the controller,
  * request/response DTOs, and the shared {@link GlobalExceptionHandler} error envelope are
  * exercised end-to-end through JSON (de)serialization without a database, Redis, or Kafka
- * context (Requirement 12). Only the endpoints without {@code @PathVariable} are exercised here
- * (the build does not enable the {@code -parameters} compiler flag).
+ * context (Requirement 12).
+ *
+ * <p>{@link PaymentController} now also enforces <em>ownership</em> through {@link CallerIdentity},
+ * which reads the {@code SecurityContextHolder}; every test therefore has to authenticate a
+ * principal. The cases that only exercise DTO/envelope plumbing authenticate a staff principal
+ * (staff may act for any customer) so they stay focused on what they were written to assert; the
+ * dedicated ownership tests below authenticate a plain CUSTOMER.
  */
 @ExtendWith(MockitoExtension.class)
 class PaymentControllerTest {
@@ -47,9 +58,24 @@ class PaymentControllerTest {
 
     @BeforeEach
     void setUp() {
-        mvc = MockMvcBuilders.standaloneSetup(new PaymentController(paymentService))
+        mvc = MockMvcBuilders
+                .standaloneSetup(new PaymentController(paymentService, new CallerIdentity()))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
+        // Default principal: staff, so the pre-existing DTO/envelope tests are unaffected by the
+        // ownership check. Ownership tests below re-authenticate as the caller they need.
+        authenticate(UUID.randomUUID(), "SUPPORT_AGENT");
+    }
+
+    @AfterEach
+    void clearContext() {
+        SecurityContextHolder.clearContext();
+    }
+
+    private void authenticate(UUID callerId, String role) {
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(callerId.toString(), null,
+                        List.of(new SimpleGrantedAuthority("ROLE_" + role))));
     }
 
     private PaymentTransaction pending(UUID customerId, UUID bookingId, UUID providerId) {
@@ -129,5 +155,89 @@ class PaymentControllerTest {
                 .andExpect(jsonPath("$.providerId").value(providerId.toString()))
                 .andExpect(jsonPath("$.amount").value(500.00))
                 .andExpect(jsonPath("$.status").value("PENDING"));
+    }
+
+    // ------------------------------------------------------------------ ownership
+
+    @Test
+    void get_otherCustomersTransaction_isForbidden() throws Exception {
+        UUID callerA = UUID.randomUUID();
+        UUID callerB = UUID.randomUUID();
+        PaymentTransaction tx = pending(callerB, UUID.randomUUID(), UUID.randomUUID());
+        when(paymentService.getTransaction(tx.getId())).thenReturn(tx);
+        authenticate(callerA, "CUSTOMER");
+
+        mvc.perform(get("/payments/" + tx.getId()))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode").value("FORBIDDEN"));
+    }
+
+    @Test
+    void get_ownTransaction_returnsTransaction() throws Exception {
+        UUID callerA = UUID.randomUUID();
+        PaymentTransaction tx = pending(callerA, UUID.randomUUID(), UUID.randomUUID());
+        when(paymentService.getTransaction(tx.getId())).thenReturn(tx);
+        authenticate(callerA, "CUSTOMER");
+
+        mvc.perform(get("/payments/" + tx.getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(tx.getId().toString()))
+                .andExpect(jsonPath("$.customerId").value(callerA.toString()));
+    }
+
+    @Test
+    void get_anyTransaction_isAllowedForStaff() throws Exception {
+        UUID staffId = UUID.randomUUID();
+        UUID someoneElse = UUID.randomUUID();
+        PaymentTransaction tx = pending(someoneElse, UUID.randomUUID(), UUID.randomUUID());
+        when(paymentService.getTransaction(tx.getId())).thenReturn(tx);
+        authenticate(staffId, "FINANCE_ADMIN");
+
+        mvc.perform(get("/payments/" + tx.getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(tx.getId().toString()));
+    }
+
+    @Test
+    void initiate_forAnotherCustomer_isForbidden() throws Exception {
+        UUID callerA = UUID.randomUUID();
+        UUID callerB = UUID.randomUUID();
+        authenticate(callerA, "CUSTOMER");
+
+        LinkedHashMap<String, Object> req = new LinkedHashMap<>();
+        req.put("customerId", callerB);
+        req.put("bookingId", UUID.randomUUID());
+        req.put("providerId", UUID.randomUUID());
+        req.put("amount", "100.00");
+        req.put("platformFee", "20.00");
+        req.put("method", "UPI");
+        req.put("gatewayId", RazorpayGatewayAdapter.GATEWAY_ID);
+
+        mvc.perform(post("/payments").contentType(MediaType.APPLICATION_JSON)
+                        .content(json.writeValueAsString(req)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode").value("FORBIDDEN"));
+    }
+
+    @Test
+    void initiate_forSelf_returns201() throws Exception {
+        UUID callerA = UUID.randomUUID();
+        PaymentTransaction tx = pending(callerA, UUID.randomUUID(), UUID.randomUUID());
+        when(paymentService.initiatePayment(any(InitiatePaymentCommand.class))).thenReturn(tx);
+        authenticate(callerA, "CUSTOMER");
+
+        LinkedHashMap<String, Object> req = new LinkedHashMap<>();
+        req.put("customerId", callerA);
+        req.put("bookingId", UUID.randomUUID());
+        req.put("providerId", UUID.randomUUID());
+        req.put("amount", "100.00");
+        req.put("platformFee", "20.00");
+        req.put("method", "UPI");
+        req.put("gatewayId", RazorpayGatewayAdapter.GATEWAY_ID);
+
+        mvc.perform(post("/payments").contentType(MediaType.APPLICATION_JSON)
+                        .content(json.writeValueAsString(req)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").value(tx.getId().toString()));
     }
 }

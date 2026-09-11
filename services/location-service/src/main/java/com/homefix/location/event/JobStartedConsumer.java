@@ -26,8 +26,18 @@ public class JobStartedConsumer extends IdempotentKafkaConsumer {
 
     /** Consumer group for the Location Service's JobStarted subscription. */
     public static final String CONSUMER_GROUP = "location-service.job-started";
-    /** Topic carrying JobStarted events (Requirement 9.5). */
-    public static final String TOPIC = "booking.job-started";
+
+    /**
+     * Default topic carrying JobStarted events (Requirement 9.5).
+     *
+     * <p>This must match the name the Outbox Processor publishes under, which is the bare event type
+     * {@code JobStarted} (see its {@code homefix.outbox-processor.topics.mapping}). It was previously
+     * the hard-coded, non-configurable {@code booking.job-started}, which no producer ever wrote to,
+     * so this consumer never received an event and location feeds were never terminated on job
+     * start. The listener now reads it from configuration so the two sides can be aligned without a
+     * code change.
+     */
+    public static final String DEFAULT_TOPIC = "JobStarted";
 
     private static final Logger log = LoggerFactory.getLogger(JobStartedConsumer.class);
 
@@ -43,7 +53,8 @@ public class JobStartedConsumer extends IdempotentKafkaConsumer {
         this.objectMapper = objectMapper;
     }
 
-    @KafkaListener(topics = TOPIC, groupId = CONSUMER_GROUP)
+    @KafkaListener(topics = "${homefix.location.topics.job-started:" + DEFAULT_TOPIC + "}",
+            groupId = CONSUMER_GROUP)
     public void onMessage(ConsumerRecord<String, String> record) {
         consume(record);
     }

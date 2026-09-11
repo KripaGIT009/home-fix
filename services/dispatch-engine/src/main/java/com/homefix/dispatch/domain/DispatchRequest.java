@@ -1,5 +1,6 @@
 package com.homefix.dispatch.domain;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
@@ -16,6 +17,9 @@ import java.util.UUID;
  * @param subcategoryId  the requested service subcategory
  * @param requiredSkillTags at-least-one-of skill tags the provider must carry
  * @param emergency      whether this is an emergency booking (adds the emergency-availability filter)
+ * @param bookingCreatedAt when the booking was created; carried through to the ProviderAccepted
+ *                         event so downstream consumers can set retention windows from the booking
+ *                         rather than from their own clock
  */
 public record DispatchRequest(
         UUID bookingId,
@@ -24,7 +28,8 @@ public record DispatchRequest(
         double customerLon,
         UUID subcategoryId,
         List<String> requiredSkillTags,
-        boolean emergency) {
+        boolean emergency,
+        Instant bookingCreatedAt) {
 
     public DispatchRequest {
         Objects.requireNonNull(bookingId, "bookingId must not be null");

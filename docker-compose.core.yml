@@ -1,6 +1,7 @@
 # HomeFix — full local stack.
 # Shared infra (Postgres/Redis/Kafka) + all 20 backend services + all three SPAs.
 #
+#   cp .env.example .env            # local-dev secrets; compose refuses to start without it
 #   docker compose -f docker-compose.core.yml up -d --build
 #   bash docker/seed-pricing.sh      # required before any price estimate
 #
@@ -30,7 +31,7 @@ services:
     environment:
       POSTGRES_DB: homefix
       POSTGRES_USER: homefix
-      POSTGRES_PASSWORD: homefix
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD, see .env.example}
     ports:
       - "5533:5432"
     volumes:
@@ -81,17 +82,19 @@ services:
     environment:
       DB_URL: jdbc:postgresql://postgres:5432/homefix
       DB_USERNAME: homefix
-      DB_PASSWORD: homefix
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD, see .env.example}
       SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "5"
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       SERVER_PORT: "8081"
       SPRING_JPA_HIBERNATE_DDL_AUTO: update
-      JWT_SECRET: local-dev-jwt-secret-please-change-32bytes-minimum
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
       # Google Sign-In: set this to your Google OAuth client id and the
       # SAME value as VITE_GOOGLE_CLIENT_ID in frontend/*/.env. Empty means
       # the ID token audience cannot be validated, so social login is off.
       GOOGLE_CLIENT_ID: "${GOOGLE_CLIENT_ID:-}"
+      # Sign in with Apple: your Apple Services ID. Empty means Apple login is not offered.
+      APPLE_SERVICES_ID: "${APPLE_SERVICES_ID:-}"
       # Dev-only SMS gateway: appends the verification code to a mounted file so
       # a login can be completed without querying container logs. Never outside dev.
       SMS_PROVIDER: file
@@ -151,13 +154,13 @@ services:
     environment:
       DB_URL: jdbc:postgresql://postgres:5432/homefix
       DB_USERNAME: homefix
-      DB_PASSWORD: homefix
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD, see .env.example}
       SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "5"
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       SERVER_PORT: "8085"
       SPRING_JPA_HIBERNATE_DDL_AUTO: update
-      JWT_SECRET: local-dev-jwt-secret-please-change-32bytes-minimum
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
       CATALOG_CACHE: memory
     ports:
       - "8085:8085"
@@ -179,12 +182,14 @@ services:
     environment:
       DB_URL: jdbc:postgresql://postgres:5432/homefix
       DB_USERNAME: homefix
-      DB_PASSWORD: homefix
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD, see .env.example}
       SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "5"
       SERVER_PORT: "8082"
       SPRING_JPA_HIBERNATE_DDL_AUTO: update
-      JWT_SECRET: local-dev-jwt-secret-please-change-32bytes-minimum
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
       KMS_PROVIDER: local
+      # Base64 AES-256 data key for the local KMS adapter (no default any more).
+      KMS_LOCAL_DATA_KEY: ${KMS_LOCAL_DATA_KEY:?set KMS_LOCAL_DATA_KEY, see .env.example}
       GEOCODING_PROVIDER: noop
       BOOKING_SERVICE_URL: http://booking-service:8084
     ports:
@@ -206,13 +211,12 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       SERVER_PORT: "8086"
-      JWT_SECRET: local-dev-jwt-secret-please-change-32bytes-minimum
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
       PRICING_CACHE: memory
       # pricing-engine has no database and no JDBC driver on its classpath, but JPA/datasource
       # auto-config is pulled in transitively. Exclude those auto-configs so it can start.
       SPRING_AUTOCONFIGURE_EXCLUDE: "org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration,org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration,org.springframework.boot.autoconfigure.data.jpa.JpaRepositoriesAutoConfiguration,org.springframework.boot.autoconfigure.sql.init.SqlInitializationAutoConfiguration,org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration"
       LOGGING_LEVEL_COM_HOMEFIX_SHARED_SECURITY: DEBUG
-      LOGGING_LEVEL_ORG_SPRINGFRAMEWORK_SECURITY: DEBUG
     ports:
       - "8086:8086"
     depends_on:
@@ -233,11 +237,13 @@ services:
     environment:
       DB_URL: jdbc:postgresql://postgres:5432/homefix
       DB_USERNAME: homefix
-      DB_PASSWORD: homefix
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD, see .env.example}
       SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "5"
       SERVER_PORT: "8084"
       SPRING_JPA_HIBERNATE_DDL_AUTO: update
-      JWT_SECRET: local-dev-jwt-secret-please-change-32bytes-minimum
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
+      # Shared service credential for the Booking Service /internal/** endpoints.
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?set INTERNAL_API_KEY, see .env.example}
       CATALOG_CLIENT: http
       CATALOG_SERVICE_URL: http://catalog-service:8085
       PRICING_CLIENT: http
@@ -265,14 +271,16 @@ services:
     environment:
       DB_URL: jdbc:postgresql://postgres:5432/homefix
       DB_USERNAME: homefix
-      DB_PASSWORD: homefix
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD, see .env.example}
       SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "5"
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       SERVER_PORT: "8087"
       SPRING_JPA_HIBERNATE_DDL_AUTO: update
-      JWT_SECRET: local-dev-jwt-secret-please-change-32bytes-minimum
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
+      # Shared service credential for the Booking Service /internal/** endpoints.
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?set INTERNAL_API_KEY, see .env.example}
       PROVIDER_SERVICE_URL: http://provider-service:8083
       BOOKING_SERVICE_URL: http://booking-service:8084
       NOTIFICATION_SERVICE_URL: http://notification-service:8090
@@ -298,14 +306,14 @@ services:
     environment:
       DB_URL: jdbc:postgresql://postgres:5432/homefix
       DB_USERNAME: homefix
-      DB_PASSWORD: homefix
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD, see .env.example}
       SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "5"
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       SERVER_PORT: "8092"
       SPRING_JPA_HIBERNATE_DDL_AUTO: update
-      JWT_SECRET: local-dev-jwt-secret-please-change-32bytes-minimum
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
       LOCATION_STORE: redis
     ports:
       - "8092:8092"
@@ -329,11 +337,13 @@ services:
     environment:
       DB_URL: jdbc:postgresql://postgres:5432/homefix
       DB_USERNAME: homefix
-      DB_PASSWORD: homefix
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD, see .env.example}
       SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "5"
       SPRING_JPA_HIBERNATE_DDL_AUTO: update
       SERVER_PORT: "8083"
-      JWT_SECRET: local-dev-jwt-secret-please-change-32bytes-minimum
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
+      # Base64 AES-256 data key for the local KMS adapter (no default any more).
+      KMS_DATA_KEY: ${KMS_DATA_KEY:?set KMS_DATA_KEY, see .env.example}
     ports:
       - "8083:8083"
     depends_on:
@@ -352,11 +362,11 @@ services:
     environment:
       DB_URL: jdbc:postgresql://postgres:5432/homefix
       DB_USERNAME: homefix
-      DB_PASSWORD: homefix
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD, see .env.example}
       SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "5"
       SPRING_JPA_HIBERNATE_DDL_AUTO: update
       SERVER_PORT: "8094"
-      JWT_SECRET: local-dev-jwt-secret-please-change-32bytes-minimum
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
     ports:
       - "8094:8094"
     depends_on:
@@ -375,13 +385,18 @@ services:
     environment:
       DB_URL: jdbc:postgresql://postgres:5432/homefix
       DB_USERNAME: homefix
-      DB_PASSWORD: homefix
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD, see .env.example}
       SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "5"
       SPRING_JPA_HIBERNATE_DDL_AUTO: update
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       SERVER_PORT: "8088"
-      JWT_SECRET: local-dev-jwt-secret-please-change-32bytes-minimum
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
+      # Base64 AES-256 data key for the local KMS adapter (no default any more).
+      KMS_DATA_KEY: ${KMS_DATA_KEY:?set KMS_DATA_KEY, see .env.example}
+      # Gateway webhook signing secrets (HMAC-SHA256); no defaults any more.
+      RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET:?set RAZORPAY_WEBHOOK_SECRET, see .env.example}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:?set STRIPE_WEBHOOK_SECRET, see .env.example}
     ports:
       - "8088:8088"
     depends_on:
@@ -402,16 +417,15 @@ services:
     environment:
       DB_URL: jdbc:postgresql://postgres:5432/homefix
       DB_USERNAME: homefix
-      DB_PASSWORD: homefix
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD, see .env.example}
       SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "5"
       SPRING_JPA_HIBERNATE_DDL_AUTO: update
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       SERVER_PORT: "8089"
-      JWT_SECRET: local-dev-jwt-secret-please-change-32bytes-minimum
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
       NOTIFICATION_SERVICE_URL: http://notification-service:8090
-      LOGGING_LEVEL_ORG_SPRINGFRAMEWORK_SECURITY: DEBUG
     ports:
       - "8089:8089"
     depends_on:
@@ -434,12 +448,12 @@ services:
     environment:
       DB_URL: jdbc:postgresql://postgres:5432/homefix
       DB_USERNAME: homefix
-      DB_PASSWORD: homefix
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD, see .env.example}
       SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "5"
       SPRING_JPA_HIBERNATE_DDL_AUTO: update
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       SERVER_PORT: "8090"
-      JWT_SECRET: local-dev-jwt-secret-please-change-32bytes-minimum
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
       PREFERENCE_SERVICE_URL: http://customer-service:8082
     ports:
       - "8090:8090"
@@ -461,14 +475,14 @@ services:
     environment:
       DB_URL: jdbc:postgresql://postgres:5432/homefix
       DB_USERNAME: homefix
-      DB_PASSWORD: homefix
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD, see .env.example}
       SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "5"
       SPRING_JPA_HIBERNATE_DDL_AUTO: update
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       SERVER_PORT: "8091"
-      JWT_SECRET: local-dev-jwt-secret-please-change-32bytes-minimum
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
     ports:
       - "8091:8091"
     depends_on:
@@ -491,12 +505,12 @@ services:
     environment:
       DB_URL: jdbc:postgresql://postgres:5432/homefix
       DB_USERNAME: homefix
-      DB_PASSWORD: homefix
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD, see .env.example}
       SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "5"
       SPRING_JPA_HIBERNATE_DDL_AUTO: update
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       SERVER_PORT: "8093"
-      JWT_SECRET: local-dev-jwt-secret-please-change-32bytes-minimum
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
     ports:
       - "8093:8093"
     depends_on:
@@ -517,14 +531,14 @@ services:
     environment:
       DB_URL: jdbc:postgresql://postgres:5432/homefix
       DB_USERNAME: homefix
-      DB_PASSWORD: homefix
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD, see .env.example}
       SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "5"
       SPRING_JPA_HIBERNATE_DDL_AUTO: update
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       SERVER_PORT: "8097"
-      JWT_SECRET: local-dev-jwt-secret-please-change-32bytes-minimum
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
     ports:
       - "8097:8097"
     depends_on:
@@ -547,13 +561,13 @@ services:
     environment:
       DB_URL: jdbc:postgresql://postgres:5432/homefix
       DB_USERNAME: homefix
-      DB_PASSWORD: homefix
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD, see .env.example}
       SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "5"
       SPRING_JPA_HIBERNATE_DDL_AUTO: update
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       SERVER_PORT: "8098"
-      JWT_SECRET: local-dev-jwt-secret-please-change-32bytes-minimum
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
     ports:
       - "8098:8098"
     depends_on:
@@ -574,11 +588,11 @@ services:
     environment:
       DB_URL: jdbc:postgresql://postgres:5432/homefix
       DB_USERNAME: homefix
-      DB_PASSWORD: homefix
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD, see .env.example}
       SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "5"
       SPRING_JPA_HIBERNATE_DDL_AUTO: update
       SERVER_PORT: "8095"
-      JWT_SECRET: local-dev-jwt-secret-please-change-32bytes-minimum
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
     ports:
       - "8095:8095"
     depends_on:
@@ -596,7 +610,7 @@ services:
       context: ./services/reporting-service
     environment:
       SERVER_PORT: "8096"
-      JWT_SECRET: local-dev-jwt-secret-please-change-32bytes-minimum
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
     ports:
       - "8096:8096"
     healthcheck:
@@ -612,12 +626,12 @@ services:
     environment:
       DB_URL: jdbc:postgresql://postgres:5432/homefix
       DB_USERNAME: homefix
-      DB_PASSWORD: homefix
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD, see .env.example}
       SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "5"
       SPRING_JPA_HIBERNATE_DDL_AUTO: update
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       SERVER_PORT: "8099"
-      JWT_SECRET: local-dev-jwt-secret-please-change-32bytes-minimum
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
     ports:
       - "8099:8099"
     depends_on:

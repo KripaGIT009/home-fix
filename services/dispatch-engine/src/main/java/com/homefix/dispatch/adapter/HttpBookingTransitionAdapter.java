@@ -6,6 +6,7 @@ import com.homefix.shared.resilience.ResilienceFactory;
 import com.homefix.shared.resilience.ResilientCall;
 import com.homefix.shared.resilience.TimeoutProfile;
 import com.homefix.shared.resilience.TransientFailures;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
@@ -36,9 +37,23 @@ public class HttpBookingTransitionAdapter implements BookingTransitionPort {
     private final RestClient restClient;
     private final ResilientCall<Void> resilientCall;
 
-    public HttpBookingTransitionAdapter(DispatchClientProperties properties, ResilienceFactory resilienceFactory) {
+    /** Header carrying the shared service credential the Booking Service expects on /internal/**. */
+    static final String INTERNAL_KEY_HEADER = "X-Internal-Api-Key";
+
+    public HttpBookingTransitionAdapter(DispatchClientProperties properties,
+                                        ResilienceFactory resilienceFactory,
+                                        @Value("${homefix.dispatch.internal-api-key:}") String internalApiKey) {
+        if (internalApiKey == null || internalApiKey.isBlank()) {
+            // Fail at startup rather than on the first dispatch: without the credential every
+            // transition would be rejected with 401 and bookings would silently stall in
+            // SEARCHING_PROVIDER.
+            throw new IllegalStateException(
+                    "homefix.dispatch.internal-api-key is not configured; the Dispatch Engine cannot "
+                            + "call the Booking Service's internal transition endpoints without it");
+        }
         this.restClient = RestClient.builder()
                 .baseUrl(properties.getBookingServiceBaseUrl())
+                .defaultHeader(INTERNAL_KEY_HEADER, internalApiKey)
                 .requestFactory(new org.springframework.http.client.SimpleClientHttpRequestFactory() {{
                     setConnectTimeout((int) Duration.ofSeconds(5).toMillis());
                     setReadTimeout((int) Duration.ofSeconds(5).toMillis());

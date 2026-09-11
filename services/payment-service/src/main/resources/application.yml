@@ -4,7 +4,8 @@ spring:
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/homefix}
     username: ${DB_USERNAME:homefix}
-    password: ${DB_PASSWORD:homefix}
+    # Required: no default, so the service fails fast when DB_PASSWORD is not set.
+    password: ${DB_PASSWORD}
   jpa:
     hibernate:
       ddl-auto: validate
@@ -25,7 +26,8 @@ homefix:
     enabled: true
     # HMAC-SHA256 signing secret shared with the shared JwtValidationFilter (Task 4).
     # Must be >= 32 bytes. Injected from AWS Secrets Manager in production.
-    jwt-secret: ${JWT_SECRET:change-me-in-production-please-use-32-bytes-min}
+    # Required: no default, so the service fails fast when JWT_SECRET is not set.
+    jwt-secret: ${JWT_SECRET}
   payment:
     # Customer retry attempts before a transaction is permanently FAILED (Requirement 12.8).
     max-customer-retries: 3
@@ -44,17 +46,20 @@ homefix:
     gateways:
       razorpay:
         # Razorpay webhook signing secret (HMAC-SHA256). From AWS Secrets Manager in production.
-        webhook-secret: ${RAZORPAY_WEBHOOK_SECRET:razorpay-dev-secret}
+        # Required: no default, so the service fails fast when RAZORPAY_WEBHOOK_SECRET is not set.
+        webhook-secret: ${RAZORPAY_WEBHOOK_SECRET}
       stripe:
         # Stripe webhook signing secret (HMAC-SHA256). From AWS Secrets Manager in production.
-        webhook-secret: ${STRIPE_WEBHOOK_SECRET:stripe-dev-secret}
+        # Required: no default, so the service fails fast when STRIPE_WEBHOOK_SECRET is not set.
+        webhook-secret: ${STRIPE_WEBHOOK_SECRET}
   kms:
     # Selects the active KMS encryption adapter behind KmsEncryptionPort.
     # 'local' uses an AES-GCM adapter with a configured data key (dev/test); in production an
     # AWS KMS adapter can be added behind the same port without touching business logic.
     provider: ${KMS_PROVIDER:local}
     # Base64-encoded 256-bit data key used by the local AES-GCM adapter (dev/test only).
-    data-key: ${KMS_DATA_KEY:MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=}
+    # Required: no default, so the service fails fast when KMS_DATA_KEY is not set.
+    data-key: ${KMS_DATA_KEY}
   outbox:
     enabled: true
 

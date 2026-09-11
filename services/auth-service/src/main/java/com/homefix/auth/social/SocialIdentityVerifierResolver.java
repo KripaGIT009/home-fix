@@ -4,6 +4,8 @@ import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 /**
@@ -12,11 +14,25 @@ import org.springframework.stereotype.Component;
  * <p>All verifier beans on the classpath are collected at startup and indexed by provider, so
  * adding support for a new provider requires only a new {@link SocialIdentityVerifier} bean —
  * no changes here or in {@code SocialLoginService}.
+ *
+ * <p>A provider that is not fully configured registers no verifier bean (see
+ * {@link SocialProviderConfiguredCondition}), so a login attempt for it fails with the
+ * "unsupported provider" 401 below instead of preventing the service from starting.
  */
 @Component
 public class SocialIdentityVerifierResolver {
 
     private final Map<SocialProvider, SocialIdentityVerifier> verifiers = new EnumMap<>(SocialProvider.class);
+
+    /**
+     * Spring-facing constructor. Takes an {@link ObjectProvider} rather than a {@code List} so a
+     * deployment with <em>no</em> social provider configured still starts: social login is
+     * optional, and an unconfigured provider registers no verifier bean at all.
+     */
+    @Autowired
+    public SocialIdentityVerifierResolver(ObjectProvider<SocialIdentityVerifier> beans) {
+        this(beans.orderedStream().toList());
+    }
 
     public SocialIdentityVerifierResolver(List<SocialIdentityVerifier> beans) {
         for (SocialIdentityVerifier verifier : beans) {

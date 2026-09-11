@@ -4,7 +4,8 @@ spring:
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/homefix}
     username: ${DB_USERNAME:homefix}
-    password: ${DB_PASSWORD:homefix}
+    # Required: no default, so the service fails fast when DB_PASSWORD is not set.
+    password: ${DB_PASSWORD}
   jpa:
     hibernate:
       ddl-auto: validate
@@ -21,8 +22,12 @@ homefix:
     enabled: true
     # HMAC-SHA256 signing secret shared with the shared JwtValidationFilter (Task 4).
     # Must be >= 32 bytes. Injected from AWS Secrets Manager in production.
-    jwt-secret: ${JWT_SECRET:change-me-in-production-please-use-32-bytes-min}
+    # Required: no default, so the service fails fast when JWT_SECRET is not set.
+    jwt-secret: ${JWT_SECRET}
   booking:
+    # Shared credential the Dispatch Engine presents on /internal/** (X-Internal-Api-Key).
+    # Required: no default, so the service refuses internal calls rather than failing open.
+    internal-api-key: ${INTERNAL_API_KEY}
     # Minimum lead time for a scheduled booking (Requirement 7.7).
     min-lead-time: 2h
     # Maximum scheduling horizon for a scheduled booking (Requirement 7.8).

@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
 
 import com.homefix.rating.audit.AuditLogEntry;
 import com.homefix.rating.config.RatingProperties;
@@ -60,6 +61,13 @@ class ReviewServiceTest {
                                             Instant createdAt) {
         ReviewPrompt prompt = ReviewPrompt.open(bookingId, UUID.randomUUID(), ReviewerRole.CUSTOMER,
                 customerId, providerId, createdAt, createdAt.plus(properties.getReviewWindow()));
+        return prompts.save(prompt);
+    }
+
+    private ReviewPrompt openProviderPrompt(UUID bookingId, UUID providerId, UUID customerId,
+                                            Instant createdAt) {
+        ReviewPrompt prompt = ReviewPrompt.open(bookingId, UUID.randomUUID(), ReviewerRole.PROVIDER,
+                providerId, customerId, createdAt, createdAt.plus(properties.getReviewWindow()));
         return prompts.save(prompt);
     }
 
@@ -313,5 +321,88 @@ class ReviewServiceTest {
                 List.of(new AttachmentMetadata("big.jpg", 11L * 1024 * 1024)), IP);
         assertThatThrownBy(() -> service.submitCustomerReview(bad))
                 .isInstanceOf(ReviewException.class);
+    }
+
+    // ---- Reviewer attribution: a review must belong to the caller (Defect B) -------------------
+
+    @Test
+    void customerReviewFromSomebodyOtherThanTheInvitedReviewerIsRejectedWith403() {
+        UUID booking = UUID.randomUUID();
+        UUID customer = UUID.randomUUID();
+        UUID provider = UUID.randomUUID();
+        openCustomerPrompt(booking, customer, provider, NOW);
+        ReviewService service = serviceAt(NOW);
+
+        UUID impostor = UUID.randomUUID();
+        assertThatThrownBy(() -> service.submitCustomerReview(command(booking, impostor, 1)))
+                .isInstanceOf(ReviewException.class)
+                .satisfies(e -> {
+                    assertThat(((ReviewException) e).getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+                    assertThat(((ReviewException) e).getErrorCode()).isEqualTo("NOT_INVITED_REVIEWER");
+                });
+
+        // Nothing was persisted, published, or allowed to move the provider's aggregate.
+        assertThat(reviews.findAll()).isEmpty();
+        assertThat(publisher.published()).isEmpty();
+        assertThat(prompts.findByBookingIdAndReviewerRole(booking, ReviewerRole.CUSTOMER)
+                .orElseThrow().isFulfilled()).isFalse();
+    }
+
+    @Test
+    void customerReviewFromTheInvitedReviewerIsAcceptedAndAttributedToThem() {
+        UUID booking = UUID.randomUUID();
+        UUID customer = UUID.randomUUID();
+        UUID provider = UUID.randomUUID();
+        openCustomerPrompt(booking, customer, provider, NOW);
+        ReviewService service = serviceAt(NOW);
+
+        Review review = service.submitCustomerReview(command(booking, customer, 5));
+
+        assertThat(review.getReviewerId()).isEqualTo(customer);
+        assertThat(review.getRevieweeId()).isEqualTo(provider);
+    }
+
+    @Test
+    void providerReviewFromSomebodyOtherThanTheInvitedReviewerIsRejectedWith403() {
+        UUID booking = UUID.randomUUID();
+        UUID provider = UUID.randomUUID();
+        UUID customer = UUID.randomUUID();
+        openProviderPrompt(booking, provider, customer, NOW);
+        ReviewService service = serviceAt(NOW);
+
+        assertThatThrownBy(() -> service.submitProviderReview(command(booking, customer, 5)))
+                .isInstanceOf(ReviewException.class)
+                .satisfies(e -> assertThat(((ReviewException) e).getStatus())
+                        .isEqualTo(HttpStatus.FORBIDDEN));
+        assertThat(reviews.findAll()).isEmpty();
+    }
+
+    @Test
+    void providerReviewFromTheInvitedProviderIsAcceptedAndAttributedToThem() {
+        UUID booking = UUID.randomUUID();
+        UUID provider = UUID.randomUUID();
+        UUID customer = UUID.randomUUID();
+        openProviderPrompt(booking, provider, customer, NOW);
+        ReviewService service = serviceAt(NOW);
+
+        Review review = service.submitProviderReview(command(booking, provider, 4));
+
+        assertThat(review.getReviewerId()).isEqualTo(provider);
+        assertThat(review.getRevieweeId()).isEqualTo(customer);
+    }
+
+    @Test
+    void customerReviewWithNoReviewerIsRejectedWith403() {
+        UUID booking = UUID.randomUUID();
+        UUID customer = UUID.randomUUID();
+        openCustomerPrompt(booking, customer, UUID.randomUUID(), NOW);
+        ReviewService service = serviceAt(NOW);
+
+        SubmitReviewCommand anonymous = new SubmitReviewCommand(booking, null, 5, 5, 5, 5, 5, null,
+                List.of(), IP);
+        assertThatThrownBy(() -> service.submitCustomerReview(anonymous))
+                .isInstanceOf(ReviewException.class)
+                .satisfies(e -> assertThat(((ReviewException) e).getStatus())
+                        .isEqualTo(HttpStatus.FORBIDDEN));
     }
 }

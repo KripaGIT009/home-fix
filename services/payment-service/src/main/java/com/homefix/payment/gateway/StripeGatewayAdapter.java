@@ -15,7 +15,7 @@ public class StripeGatewayAdapter extends AbstractHmacGatewayAdapter {
     public static final String GATEWAY_ID = "stripe";
 
     public StripeGatewayAdapter(
-            @Value("${homefix.payment.gateways.stripe.webhook-secret:stripe-dev-secret}") String webhookSecret) {
+            @Value("${homefix.payment.gateways.stripe.webhook-secret}") String webhookSecret) {
         super(webhookSecret);
     }
 

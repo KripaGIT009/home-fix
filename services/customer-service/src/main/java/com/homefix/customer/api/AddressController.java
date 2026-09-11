@@ -24,9 +24,11 @@ import jakarta.validation.Valid;
 public class AddressController {
 
     private final CustomerProfileService service;
+    private final CallerIdentity callerIdentity;
 
-    public AddressController(CustomerProfileService service) {
+    public AddressController(CustomerProfileService service, CallerIdentity callerIdentity) {
         this.service = service;
+        this.callerIdentity = callerIdentity;
     }
 
     /**
@@ -38,6 +40,7 @@ public class AddressController {
     public ResponseEntity<AddressResult> addAddress(
             @PathVariable("id") UUID customerId,
             @Valid @RequestBody AddressRequest request) {
+        callerIdentity.requireSelfOrStaff(customerId);
         AddressResult result = service.addAddress(
                 customerId, request.label(), request.lat(), request.lng());
         return ResponseEntity.status(HttpStatus.CREATED).body(result);
@@ -53,6 +56,7 @@ public class AddressController {
     public ResponseEntity<Void> deleteAddress(
             @PathVariable("id") UUID customerId,
             @PathVariable("addressId") UUID addressId) {
+        callerIdentity.requireSelfOrStaff(customerId);
         service.deleteAddress(customerId, addressId);
         return ResponseEntity.noContent().build();
     }

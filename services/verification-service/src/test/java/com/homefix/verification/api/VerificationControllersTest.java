@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -32,6 +33,12 @@ import org.springframework.web.multipart.MultipartFile;
  * a {@code {providerId}} path variable, so they are exercised by direct method calls with the
  * acting admin placed on the {@link SecurityContextHolder}. Verifies delegation for each state
  * transition (Requirement 5.4-5.9), document upload assembly, and the auth guards.
+ *
+ * <p>The provider-facing {@code submitDocuments} and {@code get} now assert ownership through
+ * {@link CallerIdentity}, so those tests authenticate an actual provider subject; the ownership
+ * section at the bottom covers the cross-provider refusals and the staff override. The dispatch
+ * gate {@code assertJobAssignmentEligible} is deliberately ownership-free and is therefore still
+ * driven with no principal at all.
  */
 class VerificationControllersTest {
 
@@ -40,12 +47,13 @@ class VerificationControllersTest {
     private VerificationController providerController;
     private final UUID admin = UUID.randomUUID();
     private final UUID provider = UUID.randomUUID();
+    private final UUID otherProvider = UUID.randomUUID();
 
     @BeforeEach
     void setUp() {
         service = mock(VerificationService.class);
         adminController = new AdminVerificationController(service);
-        providerController = new VerificationController(service);
+        providerController = new VerificationController(service, new CallerIdentity());
     }
 
     @AfterEach
@@ -56,6 +64,18 @@ class VerificationControllersTest {
     private void authenticateAdmin(String name) {
         SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
                 name, "n/a", AuthorityUtils.createAuthorityList("ROLE_ADMIN")));
+    }
+
+    /** Authenticates a SERVICE_PROVIDER principal whose JWT subject is {@code id}. */
+    private void authenticateProvider(UUID id) {
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+                id.toString(), "n/a", AuthorityUtils.createAuthorityList("ROLE_SERVICE_PROVIDER")));
+    }
+
+    /** Authenticates a principal holding a single arbitrary role. */
+    private void authenticateWithRole(UUID id, String role) {
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+                id.toString(), "n/a", AuthorityUtils.createAuthorityList("ROLE_" + role)));
     }
 
     private Verification verification() {
@@ -119,6 +139,7 @@ class VerificationControllersTest {
 
     @Test
     void submitDocuments_readsMultipartAndDelegates() {
+        authenticateProvider(provider);
         MultipartFile gov = new MockMultipartFile("GOVERNMENT_ID", "id.jpg", "image/jpeg",
                 new byte[]{1, 2, 3});
         MultipartFile addr = new MockMultipartFile("ADDRESS_PROOF", "addr.pdf", "application/pdf",
@@ -138,6 +159,7 @@ class VerificationControllersTest {
 
     @Test
     void submitDocuments_unknownType_isRejected() {
+        authenticateProvider(provider);
         MultipartFile bogus = new MockMultipartFile("MYSTERY", "x.bin", "application/octet-stream",
                 new byte[]{1});
         assertThatThrownBy(() -> providerController.submitDocuments(provider, Map.of("MYSTERY", bogus)))
@@ -148,16 +170,98 @@ class VerificationControllersTest {
 
     @Test
     void get_returnsVerificationRecord() {
+        authenticateProvider(provider);
         when(service.getByProviderId(provider)).thenReturn(verification());
         var response = providerController.get(provider);
         assertThat(response.getStatusCode().value()).isEqualTo(200);
         assertThat(response.getBody().providerId()).isEqualTo(provider);
     }
 
+    /**
+     * The dispatch gate carries no ownership assertion on purpose (the Dispatch Engine asks about
+     * other providers), which is why this passes with no authenticated principal at all.
+     */
     @Test
     void jobAssignmentEligibility_returns204WhenServiceAllows() {
         var response = providerController.assertJobAssignmentEligible(provider);
         assertThat(response.getStatusCode().value()).isEqualTo(204);
         verify(service).assertCanReceiveJobAssignment(provider);
+    }
+
+    // ------------------------------------------------------------------ ownership (CallerIdentity)
+
+    @Test
+    void get_forAnotherProvidersRecord_isForbidden() {
+        authenticateProvider(otherProvider);
+
+        assertThatThrownBy(() -> providerController.get(provider))
+                .isInstanceOf(VerificationException.class)
+                .satisfies(e -> {
+                    assertThat(((VerificationException) e).getErrorCode()).isEqualTo("FORBIDDEN");
+                    assertThat(((VerificationException) e).getStatus().value()).isEqualTo(403);
+                });
+
+        verify(service, never()).getByProviderId(provider);
+    }
+
+    @Test
+    void submitDocuments_forAnotherProvider_isForbidden() {
+        authenticateProvider(otherProvider);
+        MultipartFile gov = new MockMultipartFile("GOVERNMENT_ID", "id.jpg", "image/jpeg",
+                new byte[]{1, 2, 3});
+
+        assertThatThrownBy(() -> providerController.submitDocuments(provider,
+                Map.of("GOVERNMENT_ID", gov)))
+                .isInstanceOf(VerificationException.class)
+                .satisfies(e -> assertThat(((VerificationException) e).getErrorCode())
+                        .isEqualTo("FORBIDDEN"));
+
+        verify(service, never()).submitDocuments(any(), anyList(), any());
+    }
+
+    @Test
+    void get_withoutAuthentication_isUnauthorized() {
+        assertThatThrownBy(() -> providerController.get(provider))
+                .isInstanceOf(VerificationException.class)
+                .satisfies(e -> assertThat(((VerificationException) e).getErrorCode())
+                        .isEqualTo("UNAUTHENTICATED"));
+    }
+
+    @Test
+    void get_withNonUuidPrincipal_isRejected() {
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+                "not-a-uuid", "n/a", AuthorityUtils.createAuthorityList("ROLE_SERVICE_PROVIDER")));
+
+        assertThatThrownBy(() -> providerController.get(provider))
+                .isInstanceOf(VerificationException.class)
+                .satisfies(e -> assertThat(((VerificationException) e).getErrorCode())
+                        .isEqualTo("INVALID_PRINCIPAL"));
+    }
+
+    @Test
+    void get_ownRecord_succeeds() {
+        authenticateProvider(provider);
+        when(service.getByProviderId(provider)).thenReturn(verification());
+
+        assertThat(providerController.get(provider).getStatusCode().value()).isEqualTo(200);
+    }
+
+    @Test
+    void adminMayReadAnyProvidersRecord() {
+        authenticateAdmin(admin.toString());
+        when(service.getByProviderId(provider)).thenReturn(verification());
+
+        var response = providerController.get(provider);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(200);
+        assertThat(response.getBody().providerId()).isEqualTo(provider);
+    }
+
+    @Test
+    void supportAgentMayReadAnyProvidersRecord() {
+        authenticateWithRole(UUID.randomUUID(), "SUPPORT_AGENT");
+        when(service.getByProviderId(provider)).thenReturn(verification());
+
+        assertThat(providerController.get(provider).getStatusCode().value()).isEqualTo(200);
     }
 }

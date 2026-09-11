@@ -1,5 +1,6 @@
 package com.homefix.dispatch.contract;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -8,6 +9,7 @@ import org.junit.jupiter.api.TestTemplate;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.homefix.dispatch.event.BookingCreatedEvent;
 
 import au.com.dius.pact.provider.PactVerifyProvider;
@@ -34,7 +36,7 @@ import au.com.dius.pact.provider.junitsupport.loader.PactFolder;
 @ExtendWith(PactVerificationInvocationContextProvider.class)
 class DispatchEngineProviderPactTest {
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
 
     @BeforeEach
     void before(PactVerificationContext context) {
@@ -63,10 +65,12 @@ class DispatchEngineProviderPactTest {
                 UUID.randomUUID(),
                 UUID.randomUUID(),
                 UUID.randomUUID(),
+                UUID.randomUUID(),
                 12.9716,
                 77.5946,
                 List.of("plumbing"),
-                false);
+                false,
+                Instant.now());
         return objectMapper.writeValueAsString(event);
     }
 }

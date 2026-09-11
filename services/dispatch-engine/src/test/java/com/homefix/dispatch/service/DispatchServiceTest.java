@@ -16,6 +16,7 @@ import com.homefix.dispatch.service.fake.ScriptedProviderQuery;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -54,7 +55,7 @@ class DispatchServiceTest {
 
     private static DispatchRequest emergencyRequest() {
         return new DispatchRequest(UUID.randomUUID(), UUID.randomUUID(),
-                12.9716, 77.5946, UUID.randomUUID(), List.of("plumbing"), true);
+                12.9716, 77.5946, UUID.randomUUID(), List.of("plumbing"), true, Instant.now());
     }
 
     private static ProviderCandidate candidate(double distanceScore) {

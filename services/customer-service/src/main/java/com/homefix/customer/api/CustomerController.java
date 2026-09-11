@@ -31,9 +31,11 @@ import jakarta.validation.Valid;
 public class CustomerController {
 
     private final CustomerProfileService service;
+    private final CallerIdentity callerIdentity;
 
-    public CustomerController(CustomerProfileService service) {
+    public CustomerController(CustomerProfileService service, CallerIdentity callerIdentity) {
         this.service = service;
+        this.callerIdentity = callerIdentity;
     }
 
     /**
@@ -49,6 +51,7 @@ public class CustomerController {
             @Valid @RequestPart("profile") ProfileUpdateRequest request,
             @RequestPart(name = "photo", required = false) MultipartFile photo) {
 
+        callerIdentity.requireSelfOrStaff(customerId);
         ProfilePhotoValidator.validate(photo);
         String photoUrl = request.photoUrl();
         CustomerProfile profile = service.updateProfile(
@@ -64,6 +67,7 @@ public class CustomerController {
     public ResponseEntity<DetectedLocation> detectLocation(
             @PathVariable("id") UUID customerId,
             @RequestBody LocationDetectionRequest request) {
+        callerIdentity.requireSelfOrStaff(customerId);
         DetectedLocation location = service.detectLocation(
                 request.lat(), request.lng(), request.gpsDenied());
         return ResponseEntity.ok(location);
@@ -76,6 +80,7 @@ public class CustomerController {
      */
     @PostMapping("/{id}/deletion")
     public ResponseEntity<Map<String, Object>> requestDeletion(@PathVariable("id") UUID customerId) {
+        callerIdentity.requireSelfOrStaff(customerId);
         DeletionRequest request = service.requestDeletion(customerId);
         Map<String, Object> body = Map.of(
                 "requestId", request.getId(),

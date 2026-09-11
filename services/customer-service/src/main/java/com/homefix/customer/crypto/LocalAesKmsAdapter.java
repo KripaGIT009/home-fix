@@ -37,7 +37,12 @@ public class LocalAesKmsAdapter implements KmsEncryptionPort {
     private final SecureRandom random = new SecureRandom();
 
     public LocalAesKmsAdapter(CustomerCryptoProperties properties) {
-        byte[] keyBytes = Base64.getDecoder().decode(properties.getLocalDataKey());
+        String base64DataKey = properties.getLocalDataKey();
+        if (base64DataKey == null || base64DataKey.isBlank()) {
+            throw new IllegalStateException(
+                    "homefix.kms.local-data-key is required (set KMS_LOCAL_DATA_KEY); there is no default key");
+        }
+        byte[] keyBytes = Base64.getDecoder().decode(base64DataKey);
         if (keyBytes.length != 32) {
             throw new IllegalStateException(
                     "homefix.kms.local-data-key must decode to 32 bytes (AES-256); got " + keyBytes.length);

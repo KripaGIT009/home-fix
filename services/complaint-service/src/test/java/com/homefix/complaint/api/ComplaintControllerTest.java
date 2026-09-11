@@ -167,4 +167,81 @@ class ComplaintControllerTest {
                 .satisfies(e -> assertThat(((ComplaintException) e).getErrorCode())
                         .isEqualTo("INVALID_PRINCIPAL"));
     }
+
+    // ---- Attribution: the complaint belongs to the JWT subject, never to client input ----------
+
+    /**
+     * Attribution guard: the {@code customerId} on the command handed to the service is the
+     * authenticated JWT subject, and matches none of the identifiers the client supplied in the
+     * body (booking id, provider id) — so a client cannot steer attribution by choosing what it
+     * sends.
+     */
+    @Test
+    void create_attributesComplaintToJwtSubject_notToAnyIdInTheRequestBody() throws Exception {
+        UUID jwtSubject = UUID.randomUUID();
+        UUID bookingId = UUID.randomUUID();
+        UUID providerId = UUID.randomUUID();
+        authenticate(jwtSubject.toString());
+        when(service.createComplaint(any(CreateComplaintCommand.class))).thenReturn(complaint());
+
+        String body = """
+                {"bookingId":"%s","providerId":"%s","category":"POOR_QUALITY","priority":"STANDARD",
+                 "description":"bad job"}
+                """.formatted(bookingId, providerId);
+
+        mvc.perform(post("/complaints").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isCreated());
+
+        var captor = org.mockito.ArgumentCaptor.forClass(CreateComplaintCommand.class);
+        verify(service).createComplaint(captor.capture());
+        assertThat(captor.getValue().customerId()).isEqualTo(jwtSubject);
+        assertThat(captor.getValue().customerId()).isNotIn(bookingId, providerId);
+        assertThat(captor.getValue().bookingId()).isEqualTo(bookingId);
+        assertThat(captor.getValue().providerId()).isEqualTo(providerId);
+    }
+
+    /**
+     * The same request body posted by two different principals produces two different attributions,
+     * proving the customer id is read from the security context and not from the payload.
+     */
+    @Test
+    void create_identicalBodyFromTwoPrincipals_isAttributedToEachJwtSubject() throws Exception {
+        when(service.createComplaint(any(CreateComplaintCommand.class))).thenReturn(complaint());
+        String body = """
+                {"bookingId":"%s","providerId":"%s","category":"POOR_QUALITY","priority":"STANDARD",
+                 "description":"bad job"}
+                """.formatted(UUID.randomUUID(), UUID.randomUUID());
+
+        UUID customerA = UUID.randomUUID();
+        authenticate(customerA.toString());
+        mvc.perform(post("/complaints").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isCreated());
+
+        UUID customerB = UUID.randomUUID();
+        SecurityContextHolder.clearContext();
+        authenticate(customerB.toString());
+        mvc.perform(post("/complaints").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isCreated());
+
+        var captor = org.mockito.ArgumentCaptor.forClass(CreateComplaintCommand.class);
+        verify(service, org.mockito.Mockito.times(2)).createComplaint(captor.capture());
+        assertThat(captor.getAllValues()).extracting(CreateComplaintCommand::customerId)
+                .containsExactly(customerA, customerB);
+    }
+
+    /**
+     * Structural guard for the attribution above: {@code CreateComplaintRequest} must never grow a
+     * caller-supplied customer/reporter/user identifier. If one is ever added, the controller's
+     * {@code currentUser()} attribution stops being the only source of truth and an explicit
+     * JWT-subject assertion becomes mandatory — fail here rather than ship that hole silently.
+     */
+    @Test
+    void createRequestDto_carriesNoCallerSuppliedIdentityField() {
+        assertThat(com.homefix.complaint.api.dto.CreateComplaintRequest.class.getRecordComponents())
+                .extracting(java.lang.reflect.RecordComponent::getName)
+                .noneMatch(name -> name.equalsIgnoreCase("customerId")
+                        || name.equalsIgnoreCase("reporterId")
+                        || name.equalsIgnoreCase("userId")
+                        || name.equalsIgnoreCase("raisedBy"));
+    }
 }

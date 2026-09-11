@@ -4,7 +4,8 @@ spring:
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/homefix}
     username: ${DB_USERNAME:homefix}
-    password: ${DB_PASSWORD:homefix}
+    # Required: no default, so the service fails fast when DB_PASSWORD is not set.
+    password: ${DB_PASSWORD}
   jpa:
     hibernate:
       ddl-auto: validate
@@ -21,7 +22,8 @@ homefix:
     enabled: true
     # HMAC-SHA256 signing secret shared with the shared JwtValidationFilter (Task 4).
     # Must be >= 32 bytes. Injected from AWS Secrets Manager in production.
-    jwt-secret: ${JWT_SECRET:change-me-in-production-please-use-32-bytes-min}
+    # Required: no default, so the service fails fast when JWT_SECRET is not set.
+    jwt-secret: ${JWT_SECRET}
   customer:
     # Maximum saved addresses per customer (Requirement 2.3).
     max-addresses: 10
@@ -35,7 +37,8 @@ homefix:
     provider: ${KMS_PROVIDER:local}
     # Base64-encoded 256-bit data key used by the local AES adapter for dev/test.
     # In production the AWS KMS adapter is selected and this value is unused.
-    local-data-key: ${KMS_LOCAL_DATA_KEY:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
+    # Required: no default, so the service fails fast when KMS_LOCAL_DATA_KEY is not set.
+    local-data-key: ${KMS_LOCAL_DATA_KEY}
   geocoding:
     # Selects the active reverse-geocoding adapter (Maps API abstraction).
     provider: ${GEOCODING_PROVIDER:noop}

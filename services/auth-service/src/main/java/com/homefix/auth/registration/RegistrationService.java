@@ -158,16 +158,32 @@ public class RegistrationService {
         return new VerificationResult(account.getId().toString(), roles, tokens);
     }
 
+    /**
+     * Resolves the role named in a registration request.
+     *
+     * <p>Only self-assignable roles are accepted. A request naming a staff role such as
+     * ADMIN or SUPER_ADMIN is refused with the same 400 as an unknown role, so public
+     * registration can never be used to mint a privileged account (the role name is echoed
+     * back for unknown values only, never confirmed as a real-but-refused role). Staff roles
+     * are granted out of band; see {@code docker/seed-test-users.sh} for the local path.
+     */
     private Role resolveRole(String roleName) {
         if (roleName == null || roleName.isBlank()) {
             return Role.CUSTOMER;
         }
+        Role role;
         try {
-            return Role.valueOf(roleName.trim().toUpperCase());
+            role = Role.valueOf(roleName.trim().toUpperCase());
         } catch (IllegalArgumentException ex) {
             throw new RegistrationException(HttpStatus.BAD_REQUEST, "INVALID_ROLE",
                     "Unsupported role: " + roleName);
         }
+        if (!role.isSelfAssignable()) {
+            log.warn("Registration requested a non-self-assignable role; refusing");
+            throw new RegistrationException(HttpStatus.BAD_REQUEST, "INVALID_ROLE",
+                    "Role cannot be self-assigned during registration.");
+        }
+        return role;
     }
 
     /**

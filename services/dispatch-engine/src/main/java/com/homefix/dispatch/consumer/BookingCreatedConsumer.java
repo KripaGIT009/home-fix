@@ -53,6 +53,24 @@ public class BookingCreatedConsumer extends IdempotentKafkaConsumer {
     @Override
     protected void handle(ConsumerRecord<String, String> record) {
         BookingCreatedEvent event = parse(record.value());
+
+        // The Booking Service publishes booking facts (addressId, subcategoryId), not denormalised
+        // coordinates or skill tags, so these fields arrive absent. Matching on absent values is
+        // worse than not matching at all: with primitives they defaulted to 0.0 and every candidate
+        // was scored against the Gulf of Guinea, silently producing a plausible-looking but wrong
+        // assignment. Refuse instead, so the record dead-letters with a reason an operator can act
+        // on. Completing this needs an enrichment step that resolves the address to coordinates and
+        // the subcategory to its skill tags; see docs/API_CONTRACTS.md, BookingCreated.
+        if (event.requiresEnrichment()) {
+            throw new UnsupportedOperationException(
+                    "BookingCreated for booking " + event.bookingId()
+                            + " carries no customer coordinates or required skill tags, so no"
+                            + " provider match is possible. The Dispatch Engine must resolve"
+                            + " addressId=" + event.addressId()
+                            + " and subcategoryId=" + event.subcategoryId()
+                            + " before matching; dispatching on absent values is refused.");
+        }
+
         DispatchRequest request = new DispatchRequest(
                 event.bookingId(),
                 event.customerId(),
@@ -60,7 +78,8 @@ public class BookingCreatedConsumer extends IdempotentKafkaConsumer {
                 event.customerLon(),
                 event.subcategoryId(),
                 event.requiredSkillTags(),
-                event.emergency());
+                event.emergency(),
+                event.occurredAt());
         log.debug("Dispatching {} booking {}", event.emergency() ? "emergency" : "scheduled",
                 event.bookingId());
         bulkheadDispatchExecutor.submit(request);

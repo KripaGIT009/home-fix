@@ -1,5 +1,7 @@
 package com.homefix.shared.outbox.kafka;
 
+import com.homefix.shared.outbox.OutboxEventEntity;
+
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
@@ -20,7 +22,7 @@ import java.util.UUID;
  * group is detected and skipped.
  */
 @Entity
-@Table(name = "processed_event")
+@Table(name = "processed_event", schema = OutboxEventEntity.SCHEMA)
 @IdClass(ProcessedEventEntity.ProcessedEventId.class)
 public class ProcessedEventEntity {
 

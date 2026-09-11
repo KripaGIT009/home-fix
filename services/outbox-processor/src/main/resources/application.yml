@@ -4,7 +4,8 @@ spring:
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/homefix}
     username: ${DB_USERNAME:homefix}
-    password: ${DB_PASSWORD:homefix}
+    # Required: no default, so the service fails fast when DB_PASSWORD is not set.
+    password: ${DB_PASSWORD}
   jpa:
     hibernate:
       ddl-auto: validate

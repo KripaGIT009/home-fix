@@ -10,6 +10,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -71,10 +72,25 @@ class CustomerProfileServiceTest {
                 deletionRepository, kms, geocoding, bookingClient, properties, clock);
     }
 
-    private void stubProfilePersistence() {
-        lenient().when(profileRepository.findById(CUSTOMER)).thenReturn(Optional.empty());
-        lenient().when(profileRepository.save(any(CustomerProfile.class)))
-                .thenAnswer(inv -> inv.getArgument(0));
+    /**
+     * Stateful stand-in for the profile table. Profiles are looked up by {@code user_id} — the id
+     * that arrives in the request path — never by primary key, which {@code CustomerProfile.forUser}
+     * generates independently. Rows are kept as a list keyed on the generated primary key so a
+     * duplicate insert for the same customer is visible rather than silently overwritten.
+     */
+    private List<CustomerProfile> stubProfilePersistence() {
+        List<CustomerProfile> rows = new ArrayList<>();
+        lenient().when(profileRepository.findByUserId(CUSTOMER)).thenAnswer(inv -> rows.stream()
+                .filter(row -> row.getUserId().equals(CUSTOMER))
+                .findFirst());
+        lenient().when(profileRepository.save(any(CustomerProfile.class))).thenAnswer(inv -> {
+            CustomerProfile saved = inv.getArgument(0);
+            if (rows.stream().noneMatch(row -> row.getId().equals(saved.getId()))) {
+                rows.add(saved);
+            }
+            return saved;
+        });
+        return rows;
     }
 
     // ----- Profile update + PII encryption (Requirement 2.1, 2.7, 26.3) -----
@@ -95,6 +111,31 @@ class CustomerProfileServiceTest {
         assertThat(kms.decrypt(profile.getDisplayNameEncrypted())).isEqualTo("Sherlock Holmes");
         assertThat(kms.decrypt(profile.getEmailEncrypted())).isEqualTo("sherlock@example.com");
         assertThat(profile.getPhotoUrl()).isEqualTo("https://cdn/photo.png");
+    }
+
+    /**
+     * Regression: the {@code {id}} in {@code PUT /customers/{id}/profile} is the caller's USER id,
+     * while a profile's primary key is an unrelated generated UUID. Looking the profile up by
+     * primary key therefore never matched and each update inserted a second profile row for the same
+     * customer. Updating twice must reuse one row, keyed on {@code user_id}.
+     */
+    @Test
+    void updateProfile_calledTwice_reusesTheSameProfileRow() {
+        List<CustomerProfile> rows = stubProfilePersistence();
+
+        CustomerProfile first = service.updateProfile(
+                CUSTOMER, "Sherlock Holmes", "sherlock@example.com", "https://cdn/one.png");
+        CustomerProfile second = service.updateProfile(
+                CUSTOMER, "Sherlock Holmes", "sherlock@example.com", "https://cdn/two.png");
+
+        // The profile is bound to the customer via user_id, not via its primary key.
+        assertThat(first.getUserId()).isEqualTo(CUSTOMER);
+        assertThat(first.getId()).isNotEqualTo(CUSTOMER);
+        // Exactly one profile row exists for this customer, and the second update mutated it.
+        assertThat(second.getId()).isEqualTo(first.getId());
+        assertThat(rows).hasSize(1);
+        assertThat(rows).allSatisfy(row -> assertThat(row.getUserId()).isEqualTo(CUSTOMER));
+        assertThat(second.getPhotoUrl()).isEqualTo("https://cdn/two.png");
     }
 
     // ----- Address creation + geocoding (Requirement 2.2) -----
@@ -239,7 +280,7 @@ class CustomerProfileServiceTest {
     @Test
     void requestDeletion_acknowledgesAndSchedulesAnonymizationWithin30Days() {
         CustomerProfile profile = CustomerProfile.forUser(CUSTOMER);
-        when(profileRepository.findById(CUSTOMER)).thenReturn(Optional.of(profile));
+        when(profileRepository.findByUserId(CUSTOMER)).thenReturn(Optional.of(profile));
         when(deletionRepository.save(any(DeletionRequest.class)))
                 .thenAnswer(inv -> inv.getArgument(0));
 
@@ -253,7 +294,7 @@ class CustomerProfileServiceTest {
 
     @Test
     void requestDeletion_forUnknownCustomer_isRejected() {
-        when(profileRepository.findById(CUSTOMER)).thenReturn(Optional.empty());
+        when(profileRepository.findByUserId(CUSTOMER)).thenReturn(Optional.empty());
         assertThatThrownBy(() -> service.requestDeletion(CUSTOMER))
                 .isInstanceOf(CustomerException.class)
                 .satisfies(ex -> assertThat(((CustomerException) ex).getErrorCode())
@@ -271,7 +312,7 @@ class CustomerProfileServiceTest {
                 Instant.parse("2023-12-01T00:00:00Z"), Instant.parse("2023-12-31T00:00:00Z"));
         when(deletionRepository.findByStatusAndAnonymizeAfterLessThanEqual(
                 any(), any())).thenReturn(List.of(due));
-        when(profileRepository.findById(CUSTOMER)).thenReturn(Optional.of(profile));
+        when(profileRepository.findByUserId(CUSTOMER)).thenReturn(Optional.of(profile));
         lenient().when(profileRepository.save(any(CustomerProfile.class)))
                 .thenAnswer(inv -> inv.getArgument(0));
         when(deletionRepository.save(any(DeletionRequest.class)))

@@ -122,7 +122,7 @@ class DispatchHttpAdaptersTest {
     void bookingTransitionAdapter_marksProviderAcceptedAndSearchingFailed() {
         statusToReturn = 200;
         HttpBookingTransitionAdapter adapter =
-                new HttpBookingTransitionAdapter(props(), new ResilienceFactory());
+                new HttpBookingTransitionAdapter(props(), new ResilienceFactory(), "test-internal-key");
 
         adapter.markProviderAccepted(UUID.randomUUID(), UUID.randomUUID());
         adapter.markSearchingFailed(UUID.randomUUID());
@@ -135,7 +135,7 @@ class DispatchHttpAdaptersTest {
         statusToReturn = 503;
         bodyToReturn = "{\"error\":\"down\"}";
         HttpBookingTransitionAdapter adapter =
-                new HttpBookingTransitionAdapter(props(), new ResilienceFactory());
+                new HttpBookingTransitionAdapter(props(), new ResilienceFactory(), "test-internal-key");
 
         assertThatThrownBy(() -> adapter.markSearchingFailed(UUID.randomUUID()))
                 .isInstanceOf(HttpBookingTransitionAdapter.BookingTransitionException.class);

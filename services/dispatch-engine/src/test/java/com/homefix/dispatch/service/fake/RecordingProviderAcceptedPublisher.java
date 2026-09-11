@@ -2,6 +2,7 @@ package com.homefix.dispatch.service.fake;
 
 import com.homefix.dispatch.service.ProviderAcceptedPublisher;
 
+import java.time.Instant;
 import java.util.UUID;
 
 /**
@@ -12,7 +13,9 @@ import java.util.UUID;
 public class RecordingProviderAcceptedPublisher extends ProviderAcceptedPublisher {
 
     private UUID publishedBookingId;
+    private UUID publishedCustomerId;
     private UUID publishedProviderId;
+    private Instant publishedBookingCreatedAt;
     private int publishCount;
 
     public RecordingProviderAcceptedPublisher() {
@@ -21,9 +24,11 @@ public class RecordingProviderAcceptedPublisher extends ProviderAcceptedPublishe
     }
 
     @Override
-    public void publish(UUID bookingId, UUID providerId) {
+    public void publish(UUID bookingId, UUID customerId, UUID providerId, Instant bookingCreatedAt) {
         this.publishedBookingId = bookingId;
+        this.publishedCustomerId = customerId;
         this.publishedProviderId = providerId;
+        this.publishedBookingCreatedAt = bookingCreatedAt;
         this.publishCount++;
     }
 
@@ -41,5 +46,14 @@ public class RecordingProviderAcceptedPublisher extends ProviderAcceptedPublishe
 
     public UUID publishedBookingId() {
         return publishedBookingId;
+    }
+
+    /** The customer the Chat Service needs in order to activate the booking's channel. */
+    public UUID publishedCustomerId() {
+        return publishedCustomerId;
+    }
+
+    public Instant publishedBookingCreatedAt() {
+        return publishedBookingCreatedAt;
     }
 }

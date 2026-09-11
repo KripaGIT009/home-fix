@@ -14,7 +14,8 @@ homefix:
     enabled: true
     # HMAC-SHA256 signing secret shared with the shared JwtValidationFilter (Task 4).
     # Must be >= 32 bytes. Injected from AWS Secrets Manager in production.
-    jwt-secret: ${JWT_SECRET:change-me-in-production-please-use-32-bytes-min}
+    # Required: no default, so the service fails fast when JWT_SECRET is not set.
+    jwt-secret: ${JWT_SECRET}
   pricing:
     # Selects the active PricingConfigCachePort adapter: 'redis' (production) or 'memory'
     # (dev/test). Both enforce the same 60-second TTL so Admin parameter updates are picked up
