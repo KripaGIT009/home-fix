@@ -5,7 +5,9 @@ import { useNavigate } from 'react-router-dom';
 /**
  * 403-style screen shown when an authenticated user lacks the role required for
  * a module. Mirrors the backend contract in Requirement 19.7 (ADMIN attempting
- * System Configuration receives a 403 Forbidden) at the UI layer.
+ * System Configuration receives a 403 Forbidden) at the UI layer. Every module
+ * is role-gated, so this also catches a non-staff session that reached the
+ * portal — hence the generic copy.
  */
 export function ForbiddenScreen() {
   const navigate = useNavigate();
@@ -17,8 +19,8 @@ export function ForbiddenScreen() {
           Access denied
         </Typography>
         <Typography variant="body2" color="text.secondary">
-          You don&apos;t have permission to view this module. System Configuration is restricted to
-          Super Admins.
+          Your account doesn&apos;t have permission to view this module. Ask a Super Admin if you
+          need access.
         </Typography>
         <Button variant="contained" onClick={() => navigate('/dashboard')}>
           Back to dashboard

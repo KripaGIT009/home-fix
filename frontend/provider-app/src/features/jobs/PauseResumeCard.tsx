@@ -5,13 +5,13 @@ import { Alert, Button, Card, CardContent, Stack, TextField, Typography } from '
 import PauseRoundedIcon from '@mui/icons-material/PauseRounded';
 import PlayArrowRoundedIcon from '@mui/icons-material/PlayArrowRounded';
 import { isApiError } from '@api/client';
+import type { BookingStatus } from '@lib/bookingStatus';
 import { usePauseJob, useResumeJob } from './hooks';
 import { pauseReasonSchema, type PauseReasonFormValues } from './schemas';
-import type { JobExecutionStatus } from './api';
 
 interface PauseResumeCardProps {
   bookingId: string;
-  status: JobExecutionStatus;
+  status: BookingStatus;
 }
 
 /**

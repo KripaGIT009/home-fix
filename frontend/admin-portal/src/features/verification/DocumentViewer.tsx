@@ -17,6 +17,17 @@ function isImage(contentType: string): boolean {
 }
 
 /**
+ * Sandbox for the document frames. These files are uploaded by providers and
+ * served from storage, so they are untrusted content rendered inside an admin
+ * session: the sandbox withholds forms, popups, top-level navigation, downloads
+ * and plugin access. `allow-scripts`/`allow-same-origin` are what the browser's
+ * built-in PDF viewer needs to render at all; together they would let framed
+ * *same-origin* content lift its own sandbox, which does not apply here because
+ * documents are served from the storage origin, not the portal's.
+ */
+const DOCUMENT_SANDBOX = 'allow-same-origin allow-scripts';
+
+/**
  * Inline document viewer (Requirement 19.3). Renders each submitted document
  * inside the dashboard without a separate download: PDFs are embedded in an
  * <iframe> (which uses the browser's native PDF renderer) and images in an
@@ -72,6 +83,7 @@ export function DocumentViewer({ documents }: DocumentViewerProps) {
             component="iframe"
             src={current.url}
             title={`${current.type} — ${current.fileName}`}
+            sandbox={DOCUMENT_SANDBOX}
             sx={{ width: '100%', height: 560, border: 0 }}
           />
         ) : isImage(current.contentType) ? (
@@ -86,6 +98,7 @@ export function DocumentViewer({ documents }: DocumentViewerProps) {
             component="iframe"
             src={current.url}
             title={`${current.type} — ${current.fileName}`}
+            sandbox={DOCUMENT_SANDBOX}
             sx={{ width: '100%', height: 560, border: 0 }}
           />
         )}

@@ -39,7 +39,7 @@ import { useAuthStore } from '@stores/authStore';
 export function ProfileScreen() {
   const navigate = useNavigate();
   const user = useAuthStore((state) => state.user);
-  const clearSession = useAuthStore((state) => state.clearSession);
+  const logout = useAuthStore((state) => state.logout);
   const verification = useVerificationState();
 
   const initials = (user?.displayName ?? '')
@@ -53,7 +53,10 @@ export function ProfileScreen() {
   const isApproved = verification.data?.status === 'APPROVED';
 
   const handleLogout = () => {
-    clearSession();
+    // The store revokes the refresh token server-side before clearing local
+    // state. Navigation is not awaited so the button never appears to hang on a
+    // slow network; the revoke completes in the background either way.
+    void logout();
     navigate('/login', { replace: true });
   };
 

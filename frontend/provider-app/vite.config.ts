@@ -33,6 +33,8 @@ export default defineConfig(({ mode }) => {
         '/api/auth': {
           target: authServiceTarget,
           changeOrigin: true,
+          // Proxy WebSocket upgrades too, not just plain HTTP.
+          ws: true,
           // Strip only the "/api" mount point: the Auth Service serves
           // "/auth/register/otp", so the "/auth" segment must survive.
           rewrite: (path) => path.replace(/^\/api/, ''),
@@ -41,6 +43,9 @@ export default defineConfig(({ mode }) => {
         '/api': {
           target: apiGatewayTarget,
           changeOrigin: true,
+          // The chat WebSocket and the location SSE stream both run through
+          // here; without `ws` the upgrade handshake is answered with a 400.
+          ws: true,
         },
       },
     },

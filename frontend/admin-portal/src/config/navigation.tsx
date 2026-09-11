@@ -16,6 +16,7 @@ import AssessmentRoundedIcon from '@mui/icons-material/AssessmentRounded';
 import HistoryRoundedIcon from '@mui/icons-material/HistoryRounded';
 import SettingsRoundedIcon from '@mui/icons-material/SettingsRounded';
 import type { UserRole } from '@stores/authStore';
+import { ADMIN_ROLES, REPORT_ROLES, SUPER_ADMIN_ROLES } from './roles';
 
 /** A single sidebar navigation entry / operational module (Requirement 19.2). */
 export interface NavItem {
@@ -23,11 +24,11 @@ export interface NavItem {
   path: string;
   icon: ReactNode;
   /**
-   * When set, only users holding one of these roles see the item and may open
-   * the route. Undefined means any authenticated admin (ADMIN or SUPER_ADMIN).
-   * System Configuration is SUPER_ADMIN-only (Requirement 19.6/19.7).
+   * Roles that may see the item and open the route. Every module sets this and
+   * matches the route guard in router.tsx, so the sidebar never offers a link
+   * that ends in a Forbidden screen (Requirement 19.6/19.7).
    */
-  roles?: UserRole[];
+  roles: readonly UserRole[];
 }
 
 /**
@@ -36,25 +37,80 @@ export interface NavItem {
  * router, so navigation and routing never drift apart.
  */
 export const NAV_ITEMS: readonly NavItem[] = [
-  { label: 'Dashboard', path: '/dashboard', icon: <DashboardRoundedIcon /> },
-  { label: 'User Management', path: '/users', icon: <PeopleRoundedIcon /> },
-  { label: 'Provider Management', path: '/providers', icon: <EngineeringRoundedIcon /> },
-  { label: 'Verification Queue', path: '/verification', icon: <FactCheckRoundedIcon /> },
-  { label: 'Service Categories', path: '/categories', icon: <CategoryRoundedIcon /> },
-  { label: 'Pricing Configuration', path: '/pricing', icon: <PriceChangeRoundedIcon /> },
-  { label: 'Dispatch Rules', path: '/dispatch', icon: <TuneRoundedIcon /> },
-  { label: 'Booking Management', path: '/bookings', icon: <EventNoteRoundedIcon /> },
-  { label: 'Payments & Refunds', path: '/payments', icon: <PaymentsRoundedIcon /> },
-  { label: 'Complaints', path: '/complaints', icon: <ReportProblemRoundedIcon /> },
-  { label: 'Review Moderation', path: '/reviews', icon: <RateReviewRoundedIcon /> },
-  { label: 'Coupon Management', path: '/coupons', icon: <LocalOfferRoundedIcon /> },
-  { label: 'Notification Templates', path: '/notifications', icon: <MarkEmailReadRoundedIcon /> },
-  { label: 'Report Generation', path: '/reports', icon: <AssessmentRoundedIcon /> },
-  { label: 'Audit Logs', path: '/audit-logs', icon: <HistoryRoundedIcon /> },
+  { label: 'Dashboard', path: '/dashboard', icon: <DashboardRoundedIcon />, roles: ADMIN_ROLES },
+  { label: 'User Management', path: '/users', icon: <PeopleRoundedIcon />, roles: ADMIN_ROLES },
+  {
+    label: 'Provider Management',
+    path: '/providers',
+    icon: <EngineeringRoundedIcon />,
+    roles: ADMIN_ROLES,
+  },
+  {
+    label: 'Verification Queue',
+    path: '/verification',
+    icon: <FactCheckRoundedIcon />,
+    roles: ADMIN_ROLES,
+  },
+  {
+    label: 'Service Categories',
+    path: '/categories',
+    icon: <CategoryRoundedIcon />,
+    roles: ADMIN_ROLES,
+  },
+  {
+    label: 'Pricing Configuration',
+    path: '/pricing',
+    icon: <PriceChangeRoundedIcon />,
+    roles: ADMIN_ROLES,
+  },
+  { label: 'Dispatch Rules', path: '/dispatch', icon: <TuneRoundedIcon />, roles: ADMIN_ROLES },
+  {
+    label: 'Booking Management',
+    path: '/bookings',
+    icon: <EventNoteRoundedIcon />,
+    roles: ADMIN_ROLES,
+  },
+  {
+    label: 'Payments & Refunds',
+    path: '/payments',
+    icon: <PaymentsRoundedIcon />,
+    roles: ADMIN_ROLES,
+  },
+  {
+    label: 'Complaints',
+    path: '/complaints',
+    icon: <ReportProblemRoundedIcon />,
+    roles: ADMIN_ROLES,
+  },
+  {
+    label: 'Review Moderation',
+    path: '/reviews',
+    icon: <RateReviewRoundedIcon />,
+    roles: ADMIN_ROLES,
+  },
+  {
+    label: 'Coupon Management',
+    path: '/coupons',
+    icon: <LocalOfferRoundedIcon />,
+    roles: ADMIN_ROLES,
+  },
+  {
+    label: 'Notification Templates',
+    path: '/notifications',
+    icon: <MarkEmailReadRoundedIcon />,
+    roles: ADMIN_ROLES,
+  },
+  {
+    label: 'Report Generation',
+    path: '/reports',
+    icon: <AssessmentRoundedIcon />,
+    roles: REPORT_ROLES,
+  },
+  { label: 'Audit Logs', path: '/audit-logs', icon: <HistoryRoundedIcon />, roles: ADMIN_ROLES },
   {
     label: 'System Configuration',
     path: '/system-config',
     icon: <SettingsRoundedIcon />,
-    roles: ['SUPER_ADMIN'],
+    roles: SUPER_ADMIN_ROLES,
   },
 ] as const;

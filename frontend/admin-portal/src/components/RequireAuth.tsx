@@ -7,11 +7,12 @@ interface RequireAuthProps {
   children: ReactNode;
   /**
    * When provided, the authenticated user must hold at least one of these
-   * roles to view the route. Used to gate SUPER_ADMIN-only modules such as
-   * System Configuration (Requirement 19.6/19.7). Unauthorized-but-authenticated
-   * users see a 403-style Forbidden screen rather than being bounced to login.
+   * roles to view the route. Every admin module passes a role set (see
+   * @config/roles); System Configuration is SUPER_ADMIN-only (Requirement
+   * 19.6/19.7). Unauthorized-but-authenticated users see a 403-style Forbidden
+   * screen rather than being bounced to login.
    */
-  roles?: UserRole[];
+  roles?: readonly UserRole[];
 }
 
 /**

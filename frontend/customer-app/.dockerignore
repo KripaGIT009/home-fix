@@ -1,5 +1,7 @@
-﻿node_modules
+node_modules
 dist
 .git
 Dockerfile
 .dockerignore
+android
+ios

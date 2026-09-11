@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Debug-variant manifest overlay.
+
+    Local backends are plaintext http://, and Android has blocked cleartext by
+    default since API 28. Rather than setting usesCleartextTraffic in the main
+    manifest - where it would ship in the release APK and silently downgrade
+    every user's traffic - it is set here: the manifest merger applies this file
+    to the debug variant only, so `assembleRelease` never sees it.
+
+    Keep this file out of the main source set, and do not copy the attribute
+    into app/src/main/AndroidManifest.xml.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application android:usesCleartextTraffic="true" />
+</manifest>

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { UseMutationResult, UseQueryResult } from '@tanstack/react-query';
 import type { ApiError } from '@api/client';
@@ -74,7 +74,11 @@ export function useLiveLocation(bookingId: string): {
   refetch: () => void;
 } {
   const queryClient = useQueryClient();
-  const queryKey = trackingKeys.location(bookingId);
+  // Memoised: `trackingKeys.location()` returns a fresh array on every call, and
+  // this key is a dependency of the SSE effect below. The screen re-renders once
+  // a second from its staleness ticker, so an unmemoised key tore down and
+  // recreated the EventSource on every tick.
+  const queryKey = useMemo(() => trackingKeys.location(bookingId), [bookingId]);
   const accessToken = useAuthStore((state) => state.accessToken);
   const [connected, setConnected] = useState(false);
 

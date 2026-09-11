@@ -1,6 +1,7 @@
 import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { PlaceholderScreen } from '@components/PlaceholderScreen';
 import { RequireAuth } from '@components/RequireAuth';
+import { ADMIN_ROLES, REPORT_ROLES, SUPER_ADMIN_ROLES } from '@config/roles';
 import { LoginScreen } from '@features/auth/LoginScreen';
 import { DashboardScreen } from '@features/dashboard/DashboardScreen';
 import { UserManagementScreen } from '@features/users/UserManagementScreen';
@@ -23,10 +24,16 @@ import { SystemConfigScreen } from '@features/system/SystemConfigScreen';
  * Admin Portal routes (Requirement 19). Each operational module maps to a
  * sidebar entry in @config/navigation, keeping routing and navigation aligned.
  *
- * All module routes require authentication via RequireAuth. System Configuration
- * additionally requires the SUPER_ADMIN role (Requirement 19.6/19.7): ADMIN users
- * neither see it in the sidebar nor can navigate to it — the guard renders a
- * Forbidden screen, mirroring the backend's 403.
+ * Every module is role-gated, not merely authentication-gated: holding a session
+ * is not the same as being staff, and a CUSTOMER or SERVICE_PROVIDER token is a
+ * perfectly valid session. The role sets live in @config/roles and mirror the
+ * sidebar's, so a user never sees a link to a module the guard will refuse:
+ * - general modules: ADMIN + SUPER_ADMIN
+ * - Report Generation: ADMIN + SUPER_ADMIN + FINANCE_ADMIN
+ * - System Configuration: SUPER_ADMIN only (Requirement 19.6/19.7)
+ *
+ * Unauthorized-but-authenticated users get a Forbidden screen, mirroring the
+ * backend's 403, rather than being bounced to login.
  */
 export const router = createBrowserRouter([
   {
@@ -40,7 +47,7 @@ export const router = createBrowserRouter([
   {
     path: '/dashboard',
     element: (
-      <RequireAuth>
+      <RequireAuth roles={ADMIN_ROLES}>
         <DashboardScreen />
       </RequireAuth>
     ),
@@ -48,7 +55,7 @@ export const router = createBrowserRouter([
   {
     path: '/users',
     element: (
-      <RequireAuth>
+      <RequireAuth roles={ADMIN_ROLES}>
         <UserManagementScreen />
       </RequireAuth>
     ),
@@ -56,7 +63,7 @@ export const router = createBrowserRouter([
   {
     path: '/providers',
     element: (
-      <RequireAuth>
+      <RequireAuth roles={ADMIN_ROLES}>
         <ProviderManagementScreen />
       </RequireAuth>
     ),
@@ -64,7 +71,7 @@ export const router = createBrowserRouter([
   {
     path: '/verification',
     element: (
-      <RequireAuth>
+      <RequireAuth roles={ADMIN_ROLES}>
         <VerificationQueueScreen />
       </RequireAuth>
     ),
@@ -72,7 +79,7 @@ export const router = createBrowserRouter([
   {
     path: '/categories',
     element: (
-      <RequireAuth>
+      <RequireAuth roles={ADMIN_ROLES}>
         <CategoryManagementScreen />
       </RequireAuth>
     ),
@@ -80,7 +87,7 @@ export const router = createBrowserRouter([
   {
     path: '/pricing',
     element: (
-      <RequireAuth>
+      <RequireAuth roles={ADMIN_ROLES}>
         <PricingConfigScreen />
       </RequireAuth>
     ),
@@ -88,7 +95,7 @@ export const router = createBrowserRouter([
   {
     path: '/dispatch',
     element: (
-      <RequireAuth>
+      <RequireAuth roles={ADMIN_ROLES}>
         <DispatchRuleScreen />
       </RequireAuth>
     ),
@@ -96,7 +103,7 @@ export const router = createBrowserRouter([
   {
     path: '/bookings',
     element: (
-      <RequireAuth>
+      <RequireAuth roles={ADMIN_ROLES}>
         <BookingManagementScreen />
       </RequireAuth>
     ),
@@ -104,7 +111,7 @@ export const router = createBrowserRouter([
   {
     path: '/payments',
     element: (
-      <RequireAuth>
+      <RequireAuth roles={ADMIN_ROLES}>
         <PaymentManagementScreen />
       </RequireAuth>
     ),
@@ -112,7 +119,7 @@ export const router = createBrowserRouter([
   {
     path: '/complaints',
     element: (
-      <RequireAuth>
+      <RequireAuth roles={ADMIN_ROLES}>
         <ComplaintManagementScreen />
       </RequireAuth>
     ),
@@ -120,7 +127,7 @@ export const router = createBrowserRouter([
   {
     path: '/reviews',
     element: (
-      <RequireAuth>
+      <RequireAuth roles={ADMIN_ROLES}>
         <ReviewModerationScreen />
       </RequireAuth>
     ),
@@ -128,7 +135,7 @@ export const router = createBrowserRouter([
   {
     path: '/coupons',
     element: (
-      <RequireAuth>
+      <RequireAuth roles={ADMIN_ROLES}>
         <CouponManagementScreen />
       </RequireAuth>
     ),
@@ -136,15 +143,16 @@ export const router = createBrowserRouter([
   {
     path: '/notifications',
     element: (
-      <RequireAuth>
+      <RequireAuth roles={ADMIN_ROLES}>
         <NotificationTemplateScreen />
       </RequireAuth>
     ),
   },
   {
+    // Reports are also the finance team's job, so FINANCE_ADMIN is allowed here.
     path: '/reports',
     element: (
-      <RequireAuth>
+      <RequireAuth roles={REPORT_ROLES}>
         <ReportGenerationScreen />
       </RequireAuth>
     ),
@@ -152,7 +160,7 @@ export const router = createBrowserRouter([
   {
     path: '/audit-logs',
     element: (
-      <RequireAuth>
+      <RequireAuth roles={ADMIN_ROLES}>
         <AuditLogScreen />
       </RequireAuth>
     ),
@@ -161,7 +169,7 @@ export const router = createBrowserRouter([
     // System Configuration is SUPER_ADMIN-only (Requirement 19.6/19.7).
     path: '/system-config',
     element: (
-      <RequireAuth roles={['SUPER_ADMIN']}>
+      <RequireAuth roles={SUPER_ADMIN_ROLES}>
         <SystemConfigScreen />
       </RequireAuth>
     ),

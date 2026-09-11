@@ -2,8 +2,8 @@ import { Card, CardActionArea, CardContent, Chip, Stack, Typography } from '@mui
 import PlaceRoundedIcon from '@mui/icons-material/PlaceRounded';
 import ScheduleRoundedIcon from '@mui/icons-material/ScheduleRounded';
 import BoltRoundedIcon from '@mui/icons-material/BoltRounded';
+import { describeBookingStatus } from '@lib/bookingStatus';
 import { formatCurrency, formatDateTime } from '@lib/format';
-import { describeJobStatus } from './status';
 import type { ActiveJob } from './api';
 
 interface ActiveJobCardProps {
@@ -17,7 +17,7 @@ interface ActiveJobCardProps {
  * opens the job details.
  */
 export function ActiveJobCard({ job, onOpen }: ActiveJobCardProps) {
-  const status = describeJobStatus(job.status);
+  const status = describeBookingStatus(job.status);
 
   return (
     <Card variant="outlined">

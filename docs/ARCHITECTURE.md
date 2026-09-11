@@ -1,4 +1,4 @@
-# HomeFix — Architecture and Diagrams
+4444444444444444# HomeFix — Architecture and Diagrams
 
 **Audience:** engineers joining the platform, and anyone reviewing its design.
 **Companion documents:** [API_CONTRACTS.md](API_CONTRACTS.md) for JSON payloads, [LOCAL_ACCESS.md](LOCAL_ACCESS.md) for test users and URLs, [../CODEBASE_REVIEW.md](../CODEBASE_REVIEW.md) for the findings audit.
@@ -110,7 +110,7 @@ graph TB
     end
 
     subgraph Data
-        PG[("PostgreSQL 16<br/>16 schemas")]
+        PG[("PostgreSQL 16<br/>16 service schemas<br/>+ shared outbox")]
         RD[("Redis 7")]
         KF[["Kafka 3.7"]]
     end
@@ -130,7 +130,7 @@ graph TB
     BOOK -->|sync| CAT
     DISP -->|sync| PROV
     DISP -->|sync| NOTIF
-    DISP -.->|"sync ⚠ endpoint missing"| BOOK
+    DISP -->|"sync, internal API"| BOOK
     CUST -->|sync| BOOK
     INV -->|sync| NOTIF
 
@@ -141,7 +141,7 @@ graph TB
     KF --> DISP & NOTIF & INV & CHAT & RATE & LOC
 ```
 
-`⚠` marks the dispatch-to-booking callback that does not exist in booking-service. See review section 8.3, finding 1.
+The dispatch-to-booking arrow is the internal transition API. It is the one call in this diagram that carries no end-user token: the Dispatch Engine acts on its own behalf, so it authenticates with a shared service credential instead. Those endpoints did not exist until recently, which is why no booking ever reached PROVIDER_ACCEPTED. See review section 12.1.
 
 Note that the SPAs talk to auth-service directly for the registration and refresh endpoints, bypassing the gateway. The nginx and Vite configs proxy `/api/auth` to port 8081 and everything else under `/api` to the gateway.
 
@@ -181,13 +181,15 @@ sequenceDiagram
     note over SVC: Servlet chain
     SVC->>SVC: CorrelationIdFilter → MDC
     SVC->>SVC: JwtValidationFilter<br/>verify HS256, roles → ROLE_*
-    SVC->>SVC: RbacEnforcementFilter<br/>⚠ no rules configured → pass through
+    SVC->>SVC: RbacEnforcementFilter<br/>match rule, check role
     end
 
     SVC-->>SPA: 200 booking JSON
 ```
 
-Two problems are visible in this path. The gateway introspects on every single request with no cache and no timeout, and the RBAC filter passes through whenever no rule matches, which is the case in all services except admin and reporting. See review sections 8.2 and 8.1.
+One problem remains visible in this path: the gateway introspects on every single request, with no cache and no timeout, so a slow auth-service ties up gateway connections.
+
+The role filter used to be the larger problem. It passes through when no rule matches, and until recently no service except admin and reporting configured any rule, so every staff endpoint accepted any valid token. Thirteen services now register rules. Public paths are still deliberately left unruled, because this filter runs inside the security chain and a rule on a public path would turn it into a 401. See review sections 8.2 and 12.1.
 
 ---
 
@@ -336,19 +338,18 @@ sequenceDiagram
     note over BOOK,PG: One transaction
     BOOK->>PG: INSERT booking (CREATED, then driven to<br/>SEARCHING_PROVIDER: confirm call, or<br/>same request when emergency)
     BOOK->>PG: INSERT booking_audit
-    BOOK->>PG: INSERT outbox_event (BookingCreated)
+    BOOK->>PG: INSERT outbox.outbox_event (BookingCreated)
     end
     BOOK-->>APP: 201 {bookingId, reference, status, priceBreakdown}
 
     loop every 1 s, batch 100
-        OUT->>PG: SELECT pending outbox_event
-        note right of OUT: ⚠ polls public.outbox_event,<br/>producers write booking.outbox_event
+        OUT->>PG: SELECT pending outbox.outbox_event
         OUT->>KF: publish BookingCreated, header eventId
         OUT->>PG: mark PUBLISHED
     end
 
     KF->>DISP: BookingCreated
-    note right of DISP: ⚠ consumer record has<br/>customerLat/Lon the producer omits,<br/>so search runs at (0,0)
+    note right of DISP: ⚠ producer omits customerLat/Lon<br/>and skill tags, so the consumer<br/>refuses the event rather than<br/>matching at (0,0). Enrichment pending.
     DISP->>PG: record processed_event
     DISP->>PROV: GET candidates in radius
     PROV-->>DISP: ranked provider list
@@ -366,11 +367,11 @@ sequenceDiagram
     end
 
     DISP->>BOOK: POST /internal/bookings/{id}/provider-accepted
-    note right of BOOK: ⚠ endpoint does not exist,<br/>and the requested transition<br/>SEARCHING_PROVIDER → PROVIDER_ACCEPTED<br/>is not legal
+    note right of BOOK: service credential, no user token.<br/>Walks SEARCHING_PROVIDER →<br/>PROVIDER_ASSIGNED → PROVIDER_ACCEPTED<br/>and records the provider.
     DISP->>PG: INSERT outbox_event (ProviderAccepted)
 ```
 
-This is the platform's core flow and it has four separate breaks, all listed in review section 8.3. Nothing downstream of the Kafka publish works end to end today.
+This was the platform's core flow and it had four separate breaks. Three are fixed: the relay now drains the schema producers actually write to, the internal endpoints exist, and the transition sequence is legal. The fourth remains: the event carries no customer coordinates or skill tags, so the Dispatch Engine refuses it rather than matching against a meaningless location. A booking therefore reaches SEARCHING_PROVIDER and stops. See review sections 12.1 and 12.2.
 
 ### 5.4 Job execution milestones
 
@@ -402,7 +403,7 @@ sequenceDiagram
     PAPP->>BOOK: POST /bookings/{ref}/start
     BOOK->>KF: JobStarted
     KF-->>LOC: JobStarted terminates the feed
-    note right of LOC: ⚠ listener is on topic<br/>booking.job-started,<br/>relay publishes JobStarted
+    note right of LOC: listens on JobStarted,<br/>configurable; was a hard-coded<br/>name no producer wrote to
 
     opt extra parts discovered
         PAPP->>BOOK: POST /bookings/{ref}/parts
@@ -563,11 +564,11 @@ graph LR
     T9 --> CRATE
     T9 --> CCHAT
     T10 --> CCHAT
-    T7 -.->|"⚠ listener on<br/>booking.job-started"| CLOC
+    T7 --> CLOC
     T1 & T2 & T3 & T4 & T5 & T6 & T7 & T8 & T9 & T10 & T11 --> CNOTIF
 ```
 
-Consumer groups: `dispatch-engine`, `notification-service`, `invoice-service`, `chat-service`, `rating-review-service`, `location-service`. Any event type without an explicit mapping falls through to the `domain-events` topic.
+Consumer groups: `dispatch-engine`, `notification-service`, `invoice-service`, `chat-service`, `rating-review-service`, `location-service`. Any event type without an explicit mapping falls through to the `domain-events` topic, which is where both complaint events currently land and where nothing subscribes.
 
 ### Outbox and delivery guarantees
 
@@ -595,15 +596,20 @@ Each service owns one PostgreSQL schema in a single database, and no service rea
 
 ```mermaid
 graph TB
-    subgraph "One PostgreSQL instance, 16 schemas"
+    subgraph "One PostgreSQL instance, 16 service schemas plus outbox"
         S1["auth"] --- S2["customer"] --- S3["provider"] --- S4["verification"]
         S5["catalog"] --- S6["booking"] --- S7["dispatch"] --- S8["location"]
         S9["payment"] --- S10["invoice"] --- S11["promotion"] --- S12["notification"]
         S13["complaint"] --- S14["chat"] --- S15["rating"] --- S16["admin"]
     end
+    subgraph "Shared infrastructure"
+        OB["outbox<br/>outbox_event, processed_event"]
+    end
 ```
 
-There is no Flyway or Liquibase. `docker/init-db.sql` creates the schemas only, services run `ddl-auto: validate`, and Compose overrides that to `update` so Hibernate creates tables on first boot. Any other deployment fails at startup. See review section 8.1.
+The outbox tables are the deliberate exception to the one-schema-per-service rule. They are infrastructure rather than domain data, and every producer plus the relay must agree on where they live, so they sit in a single shared `outbox` schema. Atomicity is unaffected: a producer still writes its event row in the same transaction as its domain change, in the same database. Before this, each producer wrote into its own schema while the relay polled another, so no event was ever published.
+
+There is still no Flyway or Liquibase. `docker/init-db.sql` creates the schemas only, services run `ddl-auto: validate`, and Compose overrides that to `update` so Hibernate creates tables on first boot. Any other deployment fails at startup. See review section 8.1.
 
 ### 7.1 Identity and profiles
 

@@ -32,5 +32,15 @@ module.exports = {
     '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
     'no-console': ['warn', { allow: ['warn', 'error'] }],
   },
-  ignorePatterns: ['dist', 'node_modules', 'vite.config.ts', '.eslintrc.cjs'],
+  // 'android'/'ios' are generated native projects; they carry a copy of the
+  // built bundle under app/src/main/assets, which is output, not source.
+  ignorePatterns: [
+    'dist',
+    'node_modules',
+    'android',
+    'ios',
+    'vite.config.ts',
+    'capacitor.config.ts',
+    '.eslintrc.cjs',
+  ],
 };

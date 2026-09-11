@@ -1,4 +1,5 @@
 import { apiClient } from '@api/client';
+import type { BookingStatus } from '@lib/bookingStatus';
 
 /**
  * Provider Service dashboard bindings (Requirement 14, 4).
@@ -12,14 +13,6 @@ import { apiClient } from '@api/client';
  * ApiError). The `me` segment resolves the authenticated Provider on the
  * server from the bearer token, so no id needs to be passed from the client.
  */
-
-/**
- * Booking lifecycle states relevant to a Provider's active work
- * (design.md BOOKING.status). A job is "active" while it is anywhere between
- * assignment and completion.
- */
-export type JobStatus =
-  'ASSIGNED' | 'ACCEPTED' | 'EN_ROUTE' | 'ARRIVED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
 
 /** Earnings summary shown at the top of the Dashboard (Requirement 14.1). */
 export interface EarningsSummary {
@@ -40,7 +33,8 @@ export interface ActiveJob {
   reference: string;
   /** Service subcategory name, e.g. "AC Repair". */
   serviceName: string;
-  status: JobStatus;
+  /** Booking lifecycle state; a job is "active" between assignment and payment. */
+  status: BookingStatus;
   /** Whether this is an emergency booking (surfaced prominently). */
   isEmergency: boolean;
   /** Scheduled/slot start time (ISO 8601). */

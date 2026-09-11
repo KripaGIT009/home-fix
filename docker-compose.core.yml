@@ -70,11 +70,17 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
     healthcheck:
+      # This probe starts a JVM, so it is inherently slow and the timeout has to allow for that.
+      # At the previous 10s timeout with a 20s start period it failed on a loaded machine every
+      # time, and because eight services depend on kafka being healthy, Compose then refused to
+      # start any of them. The broker itself was running fine throughout; only the probe was
+      # timing out. Widened to a realistic budget rather than reducing what it checks, since
+      # listing topics is what actually proves the broker is serving requests.
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
-      interval: 10s
-      timeout: 10s
+      interval: 15s
+      timeout: 30s
       retries: 20
-      start_period: 20s
+      start_period: 60s
 
   auth-service:
     build:

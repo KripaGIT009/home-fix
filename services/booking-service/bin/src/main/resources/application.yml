@@ -1,0 +1,79 @@
+spring:
+  application:
+    name: booking-service
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/homefix}
+    username: ${DB_USERNAME:homefix}
+    # Required: no default, so the service fails fast when DB_PASSWORD is not set.
+    password: ${DB_PASSWORD}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: booking
+    open-in-view: false
+
+server:
+  port: ${SERVER_PORT:8085}
+
+homefix:
+  security:
+    enabled: true
+    # HMAC-SHA256 signing secret shared with the shared JwtValidationFilter (Task 4).
+    # Must be >= 32 bytes. Injected from AWS Secrets Manager in production.
+    # Required: no default, so the service fails fast when JWT_SECRET is not set.
+    jwt-secret: ${JWT_SECRET}
+  booking:
+    # Shared credential the Dispatch Engine presents on /internal/** (X-Internal-Api-Key).
+    # Required: no default, so the service refuses internal calls rather than failing open.
+    internal-api-key: ${INTERNAL_API_KEY}
+    # Minimum lead time for a scheduled booking (Requirement 7.7).
+    min-lead-time: 2h
+    # Maximum scheduling horizon for a scheduled booking (Requirement 7.8).
+    max-horizon: 90d
+    # Emergency SLAs (Requirement 8.1): create within 2 s, reach SEARCHING_PROVIDER within
+    # an additional 3 s (total 5 s). Used for internal timing assertions/metrics.
+    emergency-create-within: 2s
+    emergency-searching-within: 3s
+    # Media upload limits (Requirement 7.2).
+    media:
+      max-files: 10
+      max-file-size: 52428800   # 50 MB in bytes
+      allowed-content-types: image/jpeg,image/png,video/mp4,video/quicktime
+    # Additional-quote customer response window before auto-completion (Requirement 9.9).
+    additional-quote-timeout: 60m
+    # Default cancellation fee applied when a Service_Subcategory has none configured
+    # (Requirement 9.18 range 0.00-999.99).
+    default-cancellation-fee: 0.00
+  catalog:
+    # Selects the active CatalogClientPort adapter: 'http' (production) or 'stub' (dev/test).
+    client: ${CATALOG_CLIENT:stub}
+    base-url: ${CATALOG_SERVICE_URL:http://catalog-service:8085}
+  pricing:
+    # Selects the active PricingClientPort adapter: 'http' (production) or 'stub' (dev/test).
+    client: ${PRICING_CLIENT:stub}
+    base-url: ${PRICING_ENGINE_URL:http://pricing-engine:8086}
+    # Timezone the Pricing Engine evaluates night/weekend surcharge windows in; must match its
+    # own homefix.pricing.zone-id (Requirement 6.5, 6.6).
+    zone: ${PRICING_ZONE:UTC}
+  media-storage:
+    # Selects the active MediaStoragePort adapter: 's3' (production) or 'local' (dev/test).
+    provider: ${MEDIA_STORAGE_PROVIDER:local}
+    bucket: ${MEDIA_BUCKET:homefix-media}
+  outbox:
+    enabled: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus,metrics
+      base-path: /
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  metrics:
+    tags:
+      application: booking-service

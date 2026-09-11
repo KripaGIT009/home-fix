@@ -1,4 +1,5 @@
 import { apiClient } from '@api/client';
+import type { BookingStatus } from '@lib/bookingStatus';
 
 /**
  * Booking Service job-execution bindings for the Provider App (Requirements 9,
@@ -23,25 +24,6 @@ import { apiClient } from '@api/client';
  * All calls flow through the shared Axios client (JWT + correlation id +
  * normalized ApiError).
  */
-
-/**
- * Booking lifecycle states as seen by a Provider executing a job
- * (design.md BOOKING.status, Requirement 9.1).
- */
-export type JobExecutionStatus =
-  | 'PROVIDER_ASSIGNED'
-  | 'PROVIDER_ACCEPTED'
-  | 'PROVIDER_ON_THE_WAY'
-  | 'PROVIDER_ARRIVED'
-  | 'JOB_STARTED'
-  | 'JOB_PAUSED'
-  | 'ADDITIONAL_QUOTE_REQUIRED'
-  | 'CUSTOMER_APPROVAL_PENDING'
-  | 'JOB_COMPLETED'
-  | 'CUSTOMER_CONFIRMED'
-  | 'PAYMENT_PENDING'
-  | 'PAYMENT_COMPLETED'
-  | 'CANCELLED';
 
 /** Which side of the job a photo documents (Requirement 11.2, 11.4). */
 export type PhotoKind = 'BEFORE' | 'AFTER';
@@ -79,7 +61,7 @@ export interface PartLineItem {
 export interface JobDetail {
   bookingId: string;
   reference: string;
-  status: JobExecutionStatus;
+  status: BookingStatus;
   serviceName: string;
   isEmergency: boolean;
   scheduledAt: string;
@@ -218,7 +200,7 @@ export async function addJobPart(
 export interface JobCompletionSummary {
   bookingId: string;
   reference: string;
-  status: JobExecutionStatus;
+  status: BookingStatus;
   /** Net job duration in minutes (JOB_STARTED intervals minus pauses — Req 11.6). */
   netDurationMinutes: number;
   parts: PartLineItem[];

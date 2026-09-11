@@ -1,5 +1,5 @@
-import { apiClient } from '@api/client';
-import type { AuthTokens, UserProfile } from '@stores/authStore';
+import { authClient } from '@api/client';
+import type { AuthTokens, UserProfile, UserRole } from '@stores/authStore';
 
 /**
  * Auth Service API bindings (Requirement 1).
@@ -9,10 +9,12 @@ import type { AuthTokens, UserProfile } from '@stores/authStore';
  * - POST /auth/register/verify  - verify OTP, create/return account + tokens
  * - POST /auth/login/social     - social login (Google, Apple)
  *
- * Calls are made through the shared Axios client, so they inherit the
- * Authorization + X-Correlation-ID interceptors and the normalized ApiError
- * rejection. The Vite dev server proxies `/api/auth/*` straight to the Auth
- * Service.
+ * Every call goes through `authClient`, which resolves against the Auth Service
+ * base URL (VITE_AUTH_BASE_URL, defaulting to the API base path) and carries the
+ * X-Correlation-ID interceptor and the normalized ApiError rejection. No
+ * Authorization header is sent: these endpoints authenticate by request body.
+ * nginx and the Vite dev server both proxy `/api/auth/*` straight to the Auth
+ * Service; a native build, having no proxy, points the variable at it directly.
  */
 
 /** Supported social identity providers (Requirement 1.5). */
@@ -40,21 +42,47 @@ export interface SocialLoginPayload {
   identityToken: string;
 }
 
-/** Shared shape returned by the verify + social-login endpoints. */
+/**
+ * The Auth Service's `TokenResponse` — the single body returned by
+ * /auth/register/verify, /auth/login/social and /auth/token/refresh alike.
+ *
+ * There is no nested `user` object: authentication yields the account id and
+ * its roles, nothing more. A display name, email or photo exist only once a
+ * profile fetch supplies them.
+ */
 export interface AuthSessionResponse {
+  /** Account id; becomes UserProfile.id. */
+  userId: string;
+  roles: UserRole[];
   accessToken: string;
   refreshToken: string;
-  user: UserProfile;
+  /** Always "Bearer". */
+  tokenType: string;
+  /** Access token lifetime in seconds. */
+  expiresInSeconds: number;
 }
 
-/** Normalize a session response into the store's token + profile shapes. */
-export function toSession(response: AuthSessionResponse): {
+/**
+ * Normalize a session response into the store's token + profile shapes.
+ *
+ * The mobile number is threaded in by the caller: the OTP flow already holds it
+ * in E.164 form and the response does not carry it. Social login has none to
+ * pass, so that profile goes without one rather than inventing a value.
+ */
+export function toSession(
+  response: AuthSessionResponse,
+  mobileNumber?: string,
+): {
   tokens: AuthTokens;
   user: UserProfile;
 } {
   return {
     tokens: { accessToken: response.accessToken, refreshToken: response.refreshToken },
-    user: response.user,
+    user: {
+      id: response.userId,
+      roles: response.roles,
+      ...(mobileNumber ? { mobileNumber } : {}),
+    },
   };
 }
 
@@ -83,7 +111,7 @@ export function toE164(mobileNumber: string): string {
 }
 /** POST /auth/register/otp - request an OTP for the given mobile number. */
 export async function requestOtp(payload: RequestOtpPayload): Promise<RequestOtpResponse> {
-  const { data } = await apiClient.post<RequestOtpResponse>('/auth/register/otp', {
+  const { data } = await authClient.post<RequestOtpResponse>('/auth/register/otp', {
     ...payload,
     mobileNumber: toE164(payload.mobileNumber),
   });
@@ -92,7 +120,7 @@ export async function requestOtp(payload: RequestOtpPayload): Promise<RequestOtp
 
 /** POST /auth/register/verify - verify the OTP and create/return a session. */
 export async function verifyOtp(payload: VerifyOtpPayload): Promise<AuthSessionResponse> {
-  const { data } = await apiClient.post<AuthSessionResponse>('/auth/register/verify', {
+  const { data } = await authClient.post<AuthSessionResponse>('/auth/register/verify', {
     ...payload,
     mobileNumber: toE164(payload.mobileNumber),
   });
@@ -101,6 +129,35 @@ export async function verifyOtp(payload: VerifyOtpPayload): Promise<AuthSessionR
 
 /** POST /auth/login/social - authenticate with a social identity token. */
 export async function socialLogin(payload: SocialLoginPayload): Promise<AuthSessionResponse> {
-  const { data } = await apiClient.post<AuthSessionResponse>('/auth/login/social', payload);
+  const { data } = await authClient.post<AuthSessionResponse>('/auth/login/social', payload);
   return data;
+}
+
+/** Request body for the refresh + logout endpoints. */
+export interface RefreshTokenPayload {
+  refreshToken: string;
+}
+
+/**
+ * POST /auth/token/refresh - exchange the persisted refresh token for a fresh
+ * access token (Requirement 1.9).
+ *
+ * Sent on `authClient`: it reaches the Auth Service through the same
+ * `/api/auth` route the register calls use, and stays out of the 401 retry
+ * interceptor that triggers it. Refresh tokens are single-use and rotate, so
+ * the caller must persist `refreshToken` from the response.
+ */
+export async function refreshSession(
+  payload: RefreshTokenPayload,
+): Promise<AuthSessionResponse> {
+  const { data } = await authClient.post<AuthSessionResponse>('/auth/token/refresh', payload);
+  return data;
+}
+
+/**
+ * POST /auth/logout - revoke the refresh token server-side (Requirement 1.12).
+ * Idempotent: the service answers 204 even for an already-revoked token.
+ */
+export async function revokeRefreshToken(payload: RefreshTokenPayload): Promise<void> {
+  await authClient.post('/auth/logout', payload);
 }

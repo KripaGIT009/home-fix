@@ -3,11 +3,11 @@ import { Alert, Box, Button, Chip, Stack, Typography } from '@mui/material';
 import { AppShell } from '@components/AppShell';
 import { QueryStateView } from '@components/QueryStateView';
 import { isApiError } from '@api/client';
+import { describeBookingStatus } from '@lib/bookingStatus';
 import { PhotoUploadCard } from './PhotoUploadCard';
 import { PartsEntryCard } from './PartsEntryCard';
 import { PauseResumeCard } from './PauseResumeCard';
 import { useCompleteJob, useJobDetail, useStartJob } from './hooks';
-import { describeJobStatus } from './status';
 import type { JobDetail } from './api';
 
 /**
@@ -46,7 +46,7 @@ function ActiveContent({ job }: { job: JobDetail }) {
   const hasBeforePhoto = beforePhotos.length > 0;
   const hasAfterPhoto = afterPhotos.length > 0;
 
-  const status = describeJobStatus(job.status);
+  const status = describeBookingStatus(job.status);
 
   // The job hasn't started yet: focus on the before-photo + start action.
   const notStarted =

@@ -19,9 +19,9 @@ import PlaceRoundedIcon from '@mui/icons-material/PlaceRounded';
 import ScheduleRoundedIcon from '@mui/icons-material/ScheduleRounded';
 import { AppShell } from '@components/AppShell';
 import { QueryStateView } from '@components/QueryStateView';
+import { describeBookingStatus } from '@lib/bookingStatus';
 import { formatCurrency, formatDateTime } from '@lib/format';
 import { useJobDetail } from './hooks';
-import { describeJobStatus } from './status';
 import { buildNavigationDeepLink } from './navigation';
 import type { JobDetail } from './api';
 
@@ -52,7 +52,7 @@ export function JobDetailsScreen() {
 
 function DetailContent({ job }: { job: JobDetail }) {
   const navigate = useNavigate();
-  const status = describeJobStatus(job.status);
+  const status = describeBookingStatus(job.status);
   const navLink = buildNavigationDeepLink(job.coordinates.latitude, job.coordinates.longitude);
 
   const showActiveCta =

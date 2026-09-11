@@ -59,7 +59,7 @@ interface AppShellProps {
 export function AppShell({ title, children, onBack, branded = false, action }: AppShellProps) {
   const navigate = useNavigate();
   const location = useLocation();
-  const clearSession = useAuthStore((state) => state.clearSession);
+  const logout = useAuthStore((state) => state.logout);
   const user = useAuthStore((state) => state.user);
 
   // Highlight the nav item whose route prefixes the current path.
@@ -74,7 +74,10 @@ export function AppShell({ title, children, onBack, branded = false, action }: A
     .join('');
 
   const handleLogout = () => {
-    clearSession();
+    // The store revokes the refresh token server-side before clearing local
+    // state. Navigation is not awaited so the button never appears to hang on a
+    // slow network; the revoke completes in the background either way.
+    void logout();
     navigate('/login', { replace: true });
   };
 

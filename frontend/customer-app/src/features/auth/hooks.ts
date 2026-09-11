@@ -38,8 +38,10 @@ export function useVerifyOtp(): UseMutationResult<AuthSessionResponse, ApiError,
 
   return useMutation<AuthSessionResponse, ApiError, VerifyOtpPayload>({
     mutationFn: verifyOtp,
-    onSuccess: (response) => {
-      const { tokens, user } = toSession(response);
+    // The response carries no mobile number, so the one just verified (already
+    // E.164 from the login screen) is threaded through into the profile.
+    onSuccess: (response, variables) => {
+      const { tokens, user } = toSession(response, variables.mobileNumber);
       setSession(tokens, user);
     },
   });
@@ -55,6 +57,8 @@ export function useSocialLogin(): UseMutationResult<
 
   return useMutation<AuthSessionResponse, ApiError, SocialLoginPayload>({
     mutationFn: socialLogin,
+    // No mobile number is involved in a social login; the profile goes without
+    // one until a profile fetch supplies it.
     onSuccess: (response) => {
       const { tokens, user } = toSession(response);
       setSession(tokens, user);

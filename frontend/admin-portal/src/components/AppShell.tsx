@@ -46,7 +46,7 @@ export function AppShell({ title, children }: AppShellProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const user = useAuthStore((state) => state.user);
-  const clearSession = useAuthStore((state) => state.clearSession);
+  const logout = useAuthStore((state) => state.logout);
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const items = useMemo(() => visibleNavItems(user?.roles ?? []), [user?.roles]);
@@ -61,7 +61,10 @@ export function AppShell({ title, children }: AppShellProps) {
   }, [user?.roles]);
 
   const handleLogout = () => {
-    clearSession();
+    // The store revokes the refresh token server-side before clearing local
+    // state. Navigation is not awaited so the button never appears to hang on a
+    // slow network; the revoke completes in the background either way.
+    void logout();
     navigate('/login', { replace: true });
   };
 
