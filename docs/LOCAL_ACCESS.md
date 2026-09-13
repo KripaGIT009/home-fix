@@ -27,14 +27,19 @@ done
 docker compose -f docker-compose.core.yml -p homefix-core up -d --build auth-service
 ```
 
-Two seeding steps are needed after a fresh start, because the pricing engine holds its parameters in memory and no catalog or user data is bootstrapped.
+One seeding step is needed after a fresh start, because the pricing engine holds its
+parameters in memory and no catalog data is bootstrapped.
 
 ```bash
 bash docker/seed-pricing.sh         # pricing parameters for every subcategory
-bash docker/seed-test-users.sh      # the test accounts listed below
 bash docker/smoke-flows.sh          # optional: end-to-end check of every service
 bash docker/verify-outbox-flow.sh   # optional: checks the event path works
 ```
+
+The test accounts in section 3 no longer need a script: auth-service creates them itself at
+startup when `DEV_SEED_ENABLED=true`, so they exist as soon as it reports ready.
+`docker/seed-test-users.sh` remains for the OTP-only accounts it always made, but running it
+is no longer necessary.
 
 The stack now reads its secrets from an environment file, so copy the example before the first start:
 
@@ -44,7 +49,34 @@ cp .env.example .env
 
 Compose fails with the name of the missing variable if you skip this, rather than starting with a placeholder secret.
 
-Re-run `seed-pricing.sh` after restarting pricing-engine. `seed-test-users.sh` is idempotent.
+### Memory
+
+Twenty JVMs plus Kafka and Postgres need more memory than Docker Desktop takes by default. On
+a 16 GB host the stack starts and then thrashes: containers intermittently stop answering,
+image builds die with `Unavailable: EOF`, and the Docker API itself starts returning 500s. In
+the worst case the engine falls over and every container exits 255 at once.
+
+Raise the WSL ceiling in `%UserProfile%\.wslconfig`, then `wsl --shutdown` and restart Docker
+Desktop:
+
+```ini
+[wsl2]
+memory=12GB
+```
+
+If you cannot spare the memory, run a slice instead of the whole stack. This one is enough to
+sign in and use the Dashboard and System Configuration modules:
+
+```bash
+docker compose -f docker-compose.core.yml -p homefix-core up -d \
+  postgres redis kafka auth-service api-gateway admin-service admin-portal
+```
+
+Add the services a given flow needs on top of that. Every service now carries
+`restart: "on-failure:5"`, so a container that loses a startup race to Kafka recovers on its
+own rather than staying down until someone notices.
+
+Re-run `seed-pricing.sh` after restarting pricing-engine; its parameters live in memory only. Account seeding is idempotent and runs on every auth-service start.
 
 ---
 
@@ -121,23 +153,56 @@ docker exec -it homefix-core-kafka-1 \
 
 ## 3. Test users
 
-There are no passwords anywhere in HomeFix. Authentication is a one-time code sent to a mobile number, so a "credential" here is a phone number plus the code you read out of the local SMS sink.
+Two ways in. **Username and password** is the everyday path and the one the Admin Portal
+defaults to. **OTP** still works for every account, and remains the only way into an account
+that has no credentials provisioned.
 
-Run `bash docker/seed-test-users.sh` to create these. The script prints the generated user id for each account and writes them to `docker/test-users.generated.txt`.
+The accounts are created by the Auth Service itself at startup when `DEV_SEED_ENABLED=true`
+(it is set in `.env.example`, so a copied `.env` has it on). Seeding is idempotent: an existing
+account keeps its id and simply gains the roles and credentials below, so re-running it never
+orphans data that already references the account.
 
-| Mobile number | Role | What it is for |
-|---------------|------|----------------|
-| `+919000000001` | CUSTOMER | Primary test customer: browse, book, pay, review |
-| `+919000000002` | CUSTOMER | Second customer, for chat and review counterparties |
-| `+919000000011` | SERVICE_PROVIDER | Primary test provider: accept jobs, run milestones |
-| `+919000000012` | SERVICE_PROVIDER | Second provider, so dispatch has more than one candidate |
-| `+919000000021` | ADMIN | Operations console: every admin module except system config |
-| `+919000000022` | SUPER_ADMIN | Adds System Configuration to the admin surface |
-| `+919000000023` | FINANCE_ADMIN | Payment reconciliation and settlement reports |
-| `+919000000024` | DISPATCHER | Manual assignment and dispatch weight tuning |
-| `+919000000025` | SUPPORT_AGENT | Complaint triage, status changes, refunds |
+Every account shares the password in `DEV_SEED_PASSWORD`, which defaults to `HomeFix@2026` in
+`.env.example`. Change it there and restart auth-service to rotate all nine at once.
 
-Staff roles cannot be obtained by registering. Public registration accepts only `CUSTOMER` and `SERVICE_PROVIDER`; anything else is refused with `INVALID_ROLE`. The seeding script therefore registers the account normally and then grants the staff role with a direct insert into `auth.user_account_role`, which is the same out-of-band path a real administrator would use.
+| Username | Password | Mobile number | Role | What it is for |
+|----------|----------|---------------|------|----------------|
+| `customer` | `HomeFix@2026` | `+919000000001` | CUSTOMER | Primary test customer: browse, book, pay, review |
+| `customer2` | `HomeFix@2026` | `+919000000002` | CUSTOMER | Second customer, for chat and review counterparties |
+| `provider` | `HomeFix@2026` | `+919000000011` | SERVICE_PROVIDER | Primary test provider: accept jobs, run milestones |
+| `provider2` | `HomeFix@2026` | `+919000000012` | SERVICE_PROVIDER | Second provider, so dispatch has more than one candidate |
+| `admin` | `HomeFix@2026` | `+919000000021` | ADMIN | Operations console: every admin module except system config |
+| `superadmin` | `HomeFix@2026` | `+919000000022` | SUPER_ADMIN + ADMIN | Adds System Configuration to the admin surface |
+| `finance` | `HomeFix@2026` | `+919000000023` | FINANCE_ADMIN | Payment reconciliation and settlement reports |
+| `dispatcher` | `HomeFix@2026` | `+919000000024` | DISPATCHER | Manual assignment and dispatch weight tuning |
+| `support` | `HomeFix@2026` | `+919000000025` | SUPPORT_AGENT | Complaint triage, status changes, refunds |
+
+None of this is a real credential. The whole stack ships with a throwaway signing secret and a
+file-based SMS gateway, and must never be pointed at production data. The seeder is off unless
+explicitly enabled, and the password has no default inside the service, so an enabled seeder
+that is given no password logs an error and seeds nothing rather than inventing one.
+
+Staff roles still cannot be obtained by registering. Public registration accepts only
+`CUSTOMER` and `SERVICE_PROVIDER`; anything else is refused with `INVALID_ROLE`. The seeder is
+the out-of-band path a real administrator would otherwise take by hand.
+
+### Signing in with a password
+
+In the Admin Portal (http://localhost:5175) the Password tab is selected by default: enter
+`admin` / `HomeFix@2026`. From the command line:
+
+```bash
+curl -s -X POST http://localhost:8081/auth/login/password   -H 'Content-Type: application/json'   -d '{"username":"admin","password":"HomeFix@2026"}'
+```
+
+The response is the same body every other authentication path returns — user id, roles, a
+15-minute access token and a 30-day refresh token.
+
+A wrong username and a wrong password answer identically (401 `INVALID_CREDENTIALS`), so the
+endpoint cannot be used to discover which usernames exist. Five consecutive failures lock that
+username for 30 minutes with a 429 and a `Retry-After`, mirroring the OTP flow's lockout. The
+lock is keyed on the username, so it survives a service restart and is cleared by a successful
+sign-in.
 
 ### Logging in
 

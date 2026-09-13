@@ -40,6 +40,18 @@ homefix:
       lockout: 30m
       max-requests-per-window: 5
       rate-limit-window: 1h
+    # Username/password sign-in. The lockout mirrors the OTP flow so both
+    # authentication surfaces resist brute force identically (Requirement 1.3).
+    password:
+      max-attempts: 5
+      lockout: 30m
+      failure-window: 15m
+    # LOCAL DEV ONLY: create the documented test accounts at startup, each with a
+    # console username and the supplied password. Off unless explicitly enabled, and
+    # the password has no default so an enabled seeder must be given one.
+    dev-seed:
+      enabled: ${DEV_SEED_ENABLED:false}
+      password: ${DEV_SEED_PASSWORD:}
     # Social login (Google, Apple) OIDC settings (Requirement 1.5, 23.10).
     # Audience is this platform's OAuth client / Services ID; injected from Secrets Manager.
     # Audience has no default: a blank audience would disable the ID-token 'aud' check.

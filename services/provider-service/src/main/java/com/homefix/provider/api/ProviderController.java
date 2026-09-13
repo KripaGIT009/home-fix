@@ -17,18 +17,26 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.homefix.provider.api.dto.ActiveJobResponse;
 import com.homefix.provider.api.dto.AvailabilityRequest;
+import com.homefix.provider.api.dto.BankAccountResponse;
+import com.homefix.provider.api.dto.EarningsSummaryResponse;
 import com.homefix.provider.api.dto.EarningResponse;
 import com.homefix.provider.api.dto.EmergencyAvailabilityRequest;
 import com.homefix.provider.api.dto.ProfileRequest;
 import com.homefix.provider.api.dto.ProfileResponse;
 import com.homefix.provider.api.dto.RadiusRequest;
 import com.homefix.provider.api.dto.SettlementRequestDto;
+import com.homefix.provider.api.dto.SettlementInfoResponse;
 import com.homefix.provider.api.dto.SettlementResponse;
 import com.homefix.provider.domain.ProviderProfile;
 import com.homefix.provider.domain.Settlement;
 import com.homefix.provider.service.AvailabilityCommand;
 import com.homefix.provider.service.ProfileUpdateCommand;
+import com.homefix.provider.booking.BookingClientPort;
+import com.homefix.provider.booking.CatalogSubcategoryNames;
+import com.homefix.provider.config.ProviderProperties;
+import com.homefix.provider.service.ProviderException;
 import com.homefix.provider.service.ProviderService;
 import com.homefix.provider.service.SettlementCommand;
 
@@ -47,18 +55,53 @@ import jakarta.validation.Valid;
 @RequestMapping("/providers/{id}")
 public class ProviderController {
 
+    /** Path segment a client may use instead of its own provider id. */
+    private static final String SELF_ALIAS = "me";
+
     private final ProviderService providerService;
     private final CallerIdentity callerIdentity;
+    private final ProviderProperties props;
+    private final BookingClientPort bookingClient;
+    private final CatalogSubcategoryNames subcategoryNames;
 
-    public ProviderController(ProviderService providerService, CallerIdentity callerIdentity) {
+    public ProviderController(ProviderService providerService, CallerIdentity callerIdentity,
+                              ProviderProperties props, BookingClientPort bookingClient,
+                              CatalogSubcategoryNames subcategoryNames) {
         this.providerService = providerService;
         this.callerIdentity = callerIdentity;
+        this.props = props;
+        this.bookingClient = bookingClient;
+        this.subcategoryNames = subcategoryNames;
+    }
+
+    /**
+     * Resolves the {@code {id}} path segment, accepting the literal {@code me} as an alias for the
+     * authenticated caller.
+     *
+     * <p>The provider app addresses its own resources as {@code /providers/me/...} so no screen has
+     * to thread the account id through every call. {@code me} resolves to the JWT subject, which is
+     * also the profile identity (see {@code ProviderProfile.createWithId}), so the ownership
+     * assertion that follows is satisfied by construction rather than bypassed.
+     *
+     * @throws ProviderException 400 when the segment is neither {@code me} nor a UUID
+     */
+    private UUID resolveProviderId(String rawId) {
+        if (SELF_ALIAS.equalsIgnoreCase(rawId)) {
+            return callerIdentity.requireCallerId();
+        }
+        try {
+            return UUID.fromString(rawId);
+        } catch (IllegalArgumentException e) {
+            throw new ProviderException(HttpStatus.BAD_REQUEST, "INVALID_PROVIDER_ID",
+                    "provider id must be a UUID or the literal '" + SELF_ALIAS + "'");
+        }
     }
 
     /** {@code PUT /providers/{id}/profile} — categories, skills, experience, radius (Req 4.1–4.3, 4.8). */
     @PutMapping("/profile")
-    public ResponseEntity<ProfileResponse> updateProfile(@PathVariable("id") UUID id,
+    public ResponseEntity<ProfileResponse> updateProfile(@PathVariable("id") String rawId,
                                                          @Valid @RequestBody ProfileRequest request) {
+        UUID id = resolveProviderId(rawId);
         callerIdentity.requireSelfOrStaff(id);
         List<ProfileUpdateCommand.CategorySelectionCommand> cats = request.categories().stream()
                 .map(c -> new ProfileUpdateCommand.CategorySelectionCommand(
@@ -73,8 +116,9 @@ public class ProviderController {
 
     /** {@code PUT /providers/{id}/radius} — update service radius (Req 4.4). */
     @PutMapping("/radius")
-    public ResponseEntity<ProfileResponse> updateRadius(@PathVariable("id") UUID id,
+    public ResponseEntity<ProfileResponse> updateRadius(@PathVariable("id") String rawId,
                                                         @Valid @RequestBody RadiusRequest request) {
+        UUID id = resolveProviderId(rawId);
         callerIdentity.requireSelfOrStaff(id);
         ProviderProfile profile = providerService.updateServiceRadius(id, request.serviceRadiusKm());
         return ResponseEntity.ok(ProfileResponse.from(profile));
@@ -82,8 +126,9 @@ public class ProviderController {
 
     /** {@code PUT /providers/{id}/availability} — general availability schedule (Req 4.5). */
     @PutMapping("/availability")
-    public ResponseEntity<ProfileResponse> updateAvailability(@PathVariable("id") UUID id,
+    public ResponseEntity<ProfileResponse> updateAvailability(@PathVariable("id") String rawId,
                                                              @Valid @RequestBody AvailabilityRequest request) {
+        UUID id = resolveProviderId(rawId);
         callerIdentity.requireSelfOrStaff(id);
         List<AvailabilityCommand.Slot> slots = request.slots().stream()
                 .map(s -> new AvailabilityCommand.Slot(s.dayOfWeek(), s.startHour(), s.endHour()))
@@ -95,8 +140,9 @@ public class ProviderController {
     /** {@code PUT /providers/{id}/emergency-availability} — toggle emergency flag (Req 4.6). */
     @PutMapping("/emergency-availability")
     public ResponseEntity<ProfileResponse> updateEmergencyAvailability(
-            @PathVariable("id") UUID id,
+            @PathVariable("id") String rawId,
             @Valid @RequestBody EmergencyAvailabilityRequest request) {
+        UUID id = resolveProviderId(rawId);
         callerIdentity.requireSelfOrStaff(id);
         ProviderProfile profile = providerService.updateEmergencyAvailability(id, request.emergencyAvailable());
         return ResponseEntity.ok(ProfileResponse.from(profile));
@@ -104,8 +150,9 @@ public class ProviderController {
 
     /** {@code POST /providers/{id}/settlements} — request a settlement (Req 14.2, 4.9). */
     @PostMapping("/settlements")
-    public ResponseEntity<SettlementResponse> requestSettlement(@PathVariable("id") UUID id,
+    public ResponseEntity<SettlementResponse> requestSettlement(@PathVariable("id") String rawId,
                                                                @Valid @RequestBody SettlementRequestDto request) {
+        UUID id = resolveProviderId(rawId);
         callerIdentity.requireSelfOrStaff(id);
         Settlement settlement = providerService.requestSettlement(id,
                 new SettlementCommand(request.amount(), request.bankAccountRef()));
@@ -115,9 +162,10 @@ public class ProviderController {
     /** {@code GET /providers/{id}/earnings} — paginated earnings history (Req 14.5). */
     @GetMapping("/earnings")
     public ResponseEntity<Page<EarningResponse>> earningsHistory(
-            @PathVariable("id") UUID id,
+            @PathVariable("id") String rawId,
             @RequestParam(name = "page", defaultValue = "0") int page,
             @RequestParam(name = "size", defaultValue = "20") int size) {
+        UUID id = resolveProviderId(rawId);
         callerIdentity.requireSelfOrStaff(id);
         Pageable pageable = PageRequest.of(Math.max(page, 0), Math.min(Math.max(size, 1), 100));
         Page<EarningResponse> result = providerService.earningsHistory(id, pageable)
@@ -125,9 +173,86 @@ public class ProviderController {
         return ResponseEntity.ok(result);
     }
 
+    /** {@code GET /providers/{id}/summary} — wallet balance and today's earnings (Req 14.1). */
+    @GetMapping("/summary")
+    public ResponseEntity<EarningsSummaryResponse> summary(@PathVariable("id") String rawId) {
+        UUID id = resolveProviderId(rawId);
+        callerIdentity.requireSelfOrStaff(id);
+        ProviderService.EarningsSnapshot snapshot = providerService.earningsSummary(id);
+        return ResponseEntity.ok(new EarningsSummaryResponse(
+                snapshot.walletBalance(), snapshot.todayNet(), snapshot.todayJobCount(),
+                props.getCurrency()));
+    }
+
+    /**
+     * {@code GET /providers/{id}/active-jobs} — jobs the provider currently has in flight
+     * (Requirement 28.8).
+     *
+     * <p>Assembled from the Booking Service's internal read surface, with service names resolved
+     * from the catalog. Both lookups degrade to empty rather than failing the request, so a
+     * transient outage downstream costs the provider the job list, not the whole dashboard.
+     *
+     * <p>{@code customerArea} is returned empty: the locality lives in the Customer Service and
+     * that lookup is not wired yet.
+     */
+    @GetMapping("/active-jobs")
+    public ResponseEntity<List<ActiveJobResponse>> activeJobs(@PathVariable("id") String rawId) {
+        UUID id = resolveProviderId(rawId);
+        callerIdentity.requireSelfOrStaff(id);
+        List<ActiveJobResponse> jobs = bookingClient.activeJobs(id).stream()
+                .map(job -> new ActiveJobResponse(
+                        job.bookingId(),
+                        job.reference(),
+                        subcategoryNames.nameOf(job.subcategoryId()),
+                        job.status(),
+                        job.emergency(),
+                        job.scheduledAt(),
+                        "",
+                        job.estimatedTotal()))
+                .toList();
+        return ResponseEntity.ok(jobs);
+    }
+
+    /** {@code GET /providers/{id}/settlement-info} — balance and bank accounts on file (Req 14.2). */
+    @GetMapping("/settlement-info")
+    public ResponseEntity<SettlementInfoResponse> settlementInfo(@PathVariable("id") String rawId) {
+        UUID id = resolveProviderId(rawId);
+        callerIdentity.requireSelfOrStaff(id);
+        ProviderProfile profile = providerService.settlementInfo(id);
+        List<BankAccountResponse> accounts = profile.getBankAccountEncrypted() == null
+                ? List.of()
+                : List.of(new BankAccountResponse(profile.getId().toString(),
+                        maskAccount(profile.getBankAccountEncrypted()),
+                        profile.isBankAccountVerified()));
+        return ResponseEntity.ok(new SettlementInfoResponse(
+                profile.getWalletBalance(), props.getCurrency(), accounts));
+    }
+
+    /** {@code GET /providers/{id}/settlements} — settlement request history (Req 14.3). */
+    @GetMapping("/settlements")
+    public ResponseEntity<List<SettlementResponse>> settlementHistory(@PathVariable("id") String rawId) {
+        UUID id = resolveProviderId(rawId);
+        callerIdentity.requireSelfOrStaff(id);
+        return ResponseEntity.ok(providerService.settlementHistory(id).stream()
+                .map(SettlementResponse::from)
+                .toList());
+    }
+
+    /**
+     * Renders a stored (encrypted) account reference as a masked tail.
+     *
+     * <p>The stored value is ciphertext, so there is no account number to mask here — the last
+     * four characters stand in as a stable discriminator between accounts without decrypting.
+     */
+    private static String maskAccount(String encrypted) {
+        String tail = encrypted.length() <= 4 ? encrypted : encrypted.substring(encrypted.length() - 4);
+        return "****" + tail;
+    }
+
     /** {@code GET /providers/{id}/profile} — read the current profile. */
     @GetMapping("/profile")
-    public ResponseEntity<ProfileResponse> getProfile(@PathVariable("id") UUID id) {
+    public ResponseEntity<ProfileResponse> getProfile(@PathVariable("id") String rawId) {
+        UUID id = resolveProviderId(rawId);
         callerIdentity.requireSelfOrStaff(id);
         return ResponseEntity.ok(ProfileResponse.from(providerService.getProfile(id)));
     }

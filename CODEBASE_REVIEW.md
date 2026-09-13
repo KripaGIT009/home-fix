@@ -459,3 +459,110 @@ These remain exactly as described earlier, listed in the order I would take them
 The task list still marks all 46 implementation tasks complete. The work above, and everything in
 12.3, contradicts that for the pipeline, deployment, authorization and integration tasks. Those should
 be reopened before the checklist is used to judge readiness.
+
+---
+
+## 13. Second pass — 2026-09-12
+
+Added while implementing password sign-in and running the full stack locally. Section 12
+remains accurate; this section records what the run turned up that the first pass did not.
+
+### 13.1 Added
+
+**Username and password authentication.** The platform previously had exactly one way in —
+an OTP to a mobile number — which is wrong for a staff console: operators sign in many times
+a day, and the code has to be read out of a log file locally or an SMS in production.
+
+- `POST /auth/login/password` authenticates an account that carries credentials and returns
+  the same `TokenResponse` body every other authentication path returns. It never creates an
+  account and the caller never names a role, so a password can authenticate but never
+  escalate: the roles returned are the ones already stored.
+- `UserAccount` gained a nullable unique `username` and a `password_hash`, both null for the
+  OTP-only and social accounts that already existed. Hashing goes through the existing
+  cost-12 bcrypt encoder, which had been configured but had no caller.
+- An unknown username, an account with no password set, and a wrong password all return one
+  401 `INVALID_CREDENTIALS`, and the encoder is run against a dummy hash in the first two
+  cases so response time does not separate them either.
+- Five consecutive failures lock the username for 30 minutes with a 429 and `Retry-After`,
+  mirroring the OTP lockout. State lives in Redis under `auth:pwd:*` with TTL-based expiry,
+  so a restart cannot clear a lock.
+- The Admin Portal login screen now offers Password (default) and Mobile OTP. Both assert the
+  session holds a staff role before storing it, as the OTP path already did.
+- Verified: auth-service suite passes including 14 new tests; lockout confirmed live against
+  the running stack (5th attempt → 429 `ACCOUNT_LOCKED`); sign-in confirmed end-to-end in a
+  real browser through the portal's nginx proxy.
+
+**Startup account seeding.** Staff roles are correctly not self-assignable, which left a
+fresh database with no account able to open the Admin Portal at all; the gap was filled by a
+shell script issuing SQL inserts after the fact. `DevAccountSeeder` now creates the nine
+documented test accounts at startup, off unless `homefix.auth.dev-seed.enabled` is true and
+inert unless given a password that has no default. It is idempotent and preserves account
+ids, so re-running never orphans data that references an account.
+
+### 13.2 Found — the Admin Portal is a console over endpoints that mostly do not exist
+
+This is the largest finding of the second pass and it is not in section 12.
+
+The Admin Portal calls 15 `GET /admin/**` endpoints. **Two answer 200. Thirteen do not.**
+Probed through the gateway with a `SUPER_ADMIN` token against the running stack:
+
+| Portal calls | Status | What actually exists |
+|---|---|---|
+| `/admin/dashboard` | **200** | admin-service `DashboardController` |
+| `/admin/system-config` | **200** | admin-service `SystemConfigurationController` |
+| `/admin/audit-logs` | 400 | exists, but rejects the portal's parameters |
+| `/admin/users` | 404 | nothing: no user-list endpoint anywhere on the platform |
+| `/admin/providers` | 404 | provider-service exposes only `/providers/{id}` — no list |
+| `/admin/bookings` | 404 | booking-service `/bookings` is POST-only (GET → 405) |
+| `/admin/payments` | 404 | payment-service `/payments` is POST-only (GET → 405) |
+| `/admin/complaints` | 404 | complaint-service `/complaints` is POST-only (GET → 405) |
+| `/admin/coupons` | 405 | promotion-service `/coupons` is POST-only (GET → 405) |
+| `/admin/reviews` | 404 | rating-review `/reviews` GET → 500 |
+| `/admin/reports/types` | 404 | reporting-service `/reports` is POST-only (GET → 405) |
+| `/admin/notification-templates` | 404 | notification-service has no controller at all |
+| `/admin/verification/queue` | 404 | admin-service has `/admin/verification-queue` — near miss |
+| `/admin/dispatch/config` | 404 | admin-service has `/admin/dispatch/weights` — near miss |
+| `/admin/pricing/config` | 404 | pricing-engine has `/admin/pricing/**`, no `/config` |
+
+The two near misses are not one-line path corrections either:
+
+- `/admin/verification-queue` returns `{providerId, submittedAt, documents[]}`; the portal
+  expects `{providerId, displayName, mobileNumber, primarySkill, submittedAt, documentCount}`.
+  It is also backed by `StubVerificationQueueAdapter`, which returns an empty list — the HTTP
+  adapter over verification-service was never written.
+- `/admin/dispatch/weights` returns five flat `*Weight` numbers; the portal expects a nested
+  `weights` object plus four radius and timeout parameters the backend does not hold.
+
+So this is not drift to be patched at the path level. **Eleven of the sixteen admin modules
+have no backend**, and the shape mismatches on the other two show the UI was built against
+`design.md` rather than against anything that was implemented. The domain services are
+genuinely missing the list/search/filter endpoints an operations console needs — every one of
+them was built as a command surface (POST to act on a known id) with no query side.
+
+Fixing it properly means, per module, a paged and filtered list endpoint on the owning
+service, an admin-service route or gateway rule, and RBAC rules on the new paths. That is a
+substantial piece of backend work, not a cleanup. It should be planned as such, and until it
+is, the portal's module screens will keep showing "Not Found" — which is at least honest,
+since the shared query client surfaces the 404 rather than rendering an empty table that
+looks like real data.
+
+`.kiro/specs/tasks.md` marks the admin tasks complete. They are not.
+
+### 13.3 Operational note
+
+Running all 20 services plus Kafka and Postgres needs more memory than Docker Desktop is
+given by default. On a 16 GB host the stack starts but thrashes: containers intermittently
+stop answering, buildkit dies mid-build with `Unavailable: EOF`, and the Docker API itself
+returns 500s. rating-review-service failed its first start outright on a Kafka DNS race
+during the startup stampede and came up on restart.
+
+Raise the WSL memory ceiling in `%UserProfile%\.wslconfig` before judging anything about the
+stack's behaviour:
+
+```ini
+[wsl2]
+memory=12GB
+```
+
+Stopping the four services no admin module calls — chat, location, outbox-processor and
+invoice — was enough to make the portal respond consistently on a 16 GB machine.

@@ -10,6 +10,7 @@ import type { AuthTokens, UserProfile, UserRole } from '@stores/authStore';
  * Endpoints (see design.md — Auth Service):
  * - POST /auth/register/otp     — send OTP to a mobile number
  * - POST /auth/register/verify  — verify OTP, return account + tokens
+ * - POST /auth/login/password   — username + password sign-in
  * - POST /auth/login/social     — social login (Google, Apple)
  * - POST /auth/token/refresh    — rotate the refresh token, mint an access token
  * - POST /auth/logout           — revoke the refresh token
@@ -43,6 +44,11 @@ export interface RequestOtpResponse {
 export interface VerifyOtpPayload {
   mobileNumber: string;
   otp: string;
+}
+
+export interface PasswordLoginPayload {
+  username: string;
+  password: string;
 }
 
 export interface SocialLoginPayload {
@@ -104,6 +110,20 @@ export async function requestOtp(payload: RequestOtpPayload): Promise<RequestOtp
 /** POST /auth/register/verify — verify the OTP and return a session. */
 export async function verifyOtp(payload: VerifyOtpPayload): Promise<AuthSessionResponse> {
   const { data } = await authClient.post<AuthSessionResponse>('/auth/register/verify', payload);
+  return data;
+}
+
+/**
+ * POST /auth/login/password — authenticate with a username and password.
+ *
+ * Returns the same session body as the OTP and social paths. Unlike OTP
+ * verification this never creates an account: the credentials must already have
+ * been provisioned, which is why staff can sign in here but nobody can register
+ * here. A wrong username and a wrong password are answered identically (401
+ * INVALID_CREDENTIALS), so the form must not try to tell the user which it was.
+ */
+export async function passwordLogin(payload: PasswordLoginPayload): Promise<AuthSessionResponse> {
+  const { data } = await authClient.post<AuthSessionResponse>('/auth/login/password', payload);
   return data;
 }
 

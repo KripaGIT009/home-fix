@@ -76,12 +76,12 @@ function MetricsGrid({ metrics }: { metrics: DashboardMetrics }) {
     },
     {
       label: 'New registrations (24h)',
-      value: formatNumber(metrics.newRegistrations24h),
+      value: formatNumber(metrics.newRegistrationsLast24h),
       icon: <PersonAddRoundedIcon fontSize="small" />,
     },
     {
       label: 'Gross revenue (24h)',
-      value: formatCurrency(metrics.grossRevenue24h, currency),
+      value: formatCurrency(metrics.grossRevenueLast24h, currency),
       icon: <PaymentsRoundedIcon fontSize="small" />,
       tone: 'positive' as const,
     },
@@ -92,7 +92,7 @@ function MetricsGrid({ metrics }: { metrics: DashboardMetrics }) {
     },
     {
       label: 'Open complaints',
-      value: formatNumber(metrics.openComplaints),
+      value: formatNumber(metrics.openComplaintCount),
       icon: <ReportProblemRoundedIcon fontSize="small" />,
       tone: 'warning' as const,
     },

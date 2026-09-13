@@ -1,6 +1,9 @@
 package com.homefix.provider.service;
 
 import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -17,6 +20,7 @@ import com.homefix.provider.config.ProviderProperties;
 import com.homefix.provider.crypto.KmsEncryptionPort;
 import com.homefix.provider.domain.AvailabilitySlot;
 import com.homefix.provider.domain.ProviderCategorySelection;
+import com.homefix.provider.domain.EarningType;
 import com.homefix.provider.domain.ProviderEarning;
 import com.homefix.provider.domain.ProviderEarningRepository;
 import com.homefix.provider.domain.ProviderProfile;
@@ -314,6 +318,53 @@ public class ProviderService {
     @Transactional(readOnly = true)
     public ProviderProfile getProfile(UUID providerId) {
         return getExisting(providerId);
+    }
+
+    /**
+     * Wallet balance plus the running total credited so far today (Requirement 14.1).
+     *
+     * <p>"Today" is the civil day in {@code homefix.provider.earnings-day-zone}, not a rolling
+     * 24-hour window, so the figure resets at local midnight the way a provider expects. Only
+     * {@link EarningType#JOB_CREDIT} rows count towards the job tally — fee and penalty rows are
+     * itemised separately in the ledger and would otherwise inflate the count.
+     */
+    @Transactional(readOnly = true)
+    public EarningsSnapshot earningsSummary(UUID providerId) {
+        ProviderProfile profile = getExisting(providerId);
+        Instant dayStart = LocalDate.now(ZoneId.of(props.getEarningsDayZone()))
+                .atStartOfDay(ZoneId.of(props.getEarningsDayZone()))
+                .toInstant();
+        List<ProviderEarning> today =
+                earningRepository.findByProviderIdAndCreditedAtGreaterThanEqual(providerId, dayStart);
+        BigDecimal net = today.stream()
+                .map(ProviderEarning::getNet)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        int jobs = (int) today.stream()
+                .filter(e -> e.getType() == EarningType.JOB_CREDIT)
+                .count();
+        return new EarningsSnapshot(profile.getWalletBalance(), net, jobs);
+    }
+
+    /** Settlement request history, newest first (Requirement 14.3). */
+    @Transactional(readOnly = true)
+    public List<Settlement> settlementHistory(UUID providerId) {
+        getExisting(providerId);
+        return settlementRepository.findByProviderIdOrderByRequestedAtDesc(providerId);
+    }
+
+    /**
+     * Wallet balance and the bank account on file for settlements (Requirement 14.2).
+     *
+     * <p>The profile carries at most one account today, so the list is empty or a single entry;
+     * returning a list keeps the contract stable once multiple accounts are supported.
+     */
+    @Transactional(readOnly = true)
+    public ProviderProfile settlementInfo(UUID providerId) {
+        return getExisting(providerId);
+    }
+
+    /** Wallet balance and today's credited total, as returned by {@link #earningsSummary(UUID)}. */
+    public record EarningsSnapshot(BigDecimal walletBalance, BigDecimal todayNet, int todayJobCount) {
     }
 
     private ProviderProfile getExisting(UUID providerId) {

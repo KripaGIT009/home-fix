@@ -23,6 +23,9 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import com.homefix.provider.booking.BookingClientPort;
+import com.homefix.provider.booking.CatalogSubcategoryNames;
+import com.homefix.provider.config.ProviderProperties;
 import com.homefix.provider.domain.ProviderProfile;
 import com.homefix.provider.service.ProviderService;
 
@@ -51,8 +54,11 @@ class ProviderControllerOwnershipTest {
     @BeforeEach
     void setUp() {
         providerService = mock(ProviderService.class);
+        BookingClientPort bookingClient = mock(BookingClientPort.class);
+        CatalogSubcategoryNames subcategoryNames = mock(CatalogSubcategoryNames.class);
         mvc = MockMvcBuilders
-                .standaloneSetup(new ProviderController(providerService, new CallerIdentity()))
+                .standaloneSetup(new ProviderController(providerService, new CallerIdentity(),
+                        new ProviderProperties(), bookingClient, subcategoryNames))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }
@@ -95,6 +101,43 @@ class ProviderControllerOwnershipTest {
                 .andExpect(jsonPath("$.errorCode").value("FORBIDDEN"));
 
         verify(providerService, never()).updateServiceRadius(eq(providerB), anyInt());
+    }
+
+    // ------------------------------------------------------------------ the "me" self alias
+
+    @Test
+    void meResolvesToTheAuthenticatedCaller() throws Exception {
+        authenticate(providerA, "SERVICE_PROVIDER");
+        when(providerService.getProfile(providerA)).thenReturn(profile(providerA));
+
+        mvc.perform(get("/providers/me/profile"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(providerA.toString()));
+
+        // Resolved from the token, never from the path — provider B is untouched.
+        verify(providerService).getProfile(providerA);
+        verify(providerService, never()).getProfile(providerB);
+    }
+
+    @Test
+    void meCannotBeUsedToReachAnotherProvider() throws Exception {
+        authenticate(providerB, "SERVICE_PROVIDER");
+        when(providerService.getProfile(providerB)).thenReturn(profile(providerB));
+
+        mvc.perform(get("/providers/me/profile"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(providerB.toString()));
+
+        verify(providerService, never()).getProfile(providerA);
+    }
+
+    @Test
+    void aPathSegmentThatIsNeitherUuidNorMeIsRejected() throws Exception {
+        authenticate(providerA, "SERVICE_PROVIDER");
+
+        mvc.perform(get("/providers/{id}/profile", "not-a-uuid"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("INVALID_PROVIDER_ID"));
     }
 
     // ------------------------------------------------------------------ self-service succeeds

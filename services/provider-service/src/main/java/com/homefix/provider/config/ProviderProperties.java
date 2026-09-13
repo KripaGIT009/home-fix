@@ -43,6 +43,12 @@ public class ProviderProperties {
     /** Aggregate rating below which a provider is auto-flagged for review (Requirement 4.7). */
     private BigDecimal reviewRatingThreshold = new BigDecimal("3.0");
 
+    /** ISO 4217 currency the wallet, earnings and settlement amounts are denominated in. */
+    private String currency = "INR";
+
+    /** Zone whose civil day bounds the dashboard's "today" earnings window (Requirement 14.1). */
+    private String earningsDayZone = "Asia/Kolkata";
+
     public int getMaxActiveCategories() {
         return maxActiveCategories;
     }
@@ -121,5 +127,21 @@ public class ProviderProperties {
 
     public void setReviewRatingThreshold(BigDecimal reviewRatingThreshold) {
         this.reviewRatingThreshold = reviewRatingThreshold;
+    }
+
+    public String getCurrency() {
+        return currency;
+    }
+
+    public void setCurrency(String currency) {
+        this.currency = currency;
+    }
+
+    public String getEarningsDayZone() {
+        return earningsDayZone;
+    }
+
+    public void setEarningsDayZone(String earningsDayZone) {
+        this.earningsDayZone = earningsDayZone;
     }
 }

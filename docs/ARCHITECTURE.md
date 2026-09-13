@@ -403,7 +403,7 @@ sequenceDiagram
     PAPP->>BOOK: POST /bookings/{ref}/start
     BOOK->>KF: JobStarted
     KF-->>LOC: JobStarted terminates the feed
-    note right of LOC: listens on JobStarted,<br/>configurable; was a hard-coded<br/>name no producer wrote to
+    note right of LOC: listens on JobStarted,<br/>configurable — was a hard-coded<br/>name no producer wrote to
 
     opt extra parts discovered
         PAPP->>BOOK: POST /bookings/{ref}/parts
@@ -443,7 +443,7 @@ sequenceDiagram
     PAY-->>APP: 201 {transactionId, status: SUCCESS}
 
     GWY->>PAY: POST /payments/callbacks/{id}<br/>X-Signature: HMAC(payload)
-    note right of PAY: ⚠ HMAC covers only `payload`;<br/>succeeded / failureReason / id<br/>come from the unsigned request
+    note right of PAY: ⚠ HMAC covers only `payload` —<br/>succeeded / failureReason / id<br/>come from the unsigned request
 
     KF->>INV: PaymentCompleted
     INV->>PG: SELECT FOR UPDATE invoice_sequence

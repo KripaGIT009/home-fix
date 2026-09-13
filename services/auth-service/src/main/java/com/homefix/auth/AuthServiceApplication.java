@@ -6,7 +6,9 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 
 import com.homefix.auth.config.AuthTokenProperties;
 import com.homefix.auth.config.OtpProperties;
+import com.homefix.auth.config.PasswordLoginProperties;
 import com.homefix.auth.config.SocialLoginProperties;
+import com.homefix.auth.seed.DevSeedProperties;
 
 /**
  * Entry point for the HomeFix Auth Service.
@@ -16,7 +18,8 @@ import com.homefix.auth.config.SocialLoginProperties;
  * simply by being on the classpath (Tasks 4-6).
  */
 @SpringBootApplication
-@EnableConfigurationProperties({OtpProperties.class, AuthTokenProperties.class, SocialLoginProperties.class})
+@EnableConfigurationProperties({OtpProperties.class, AuthTokenProperties.class, SocialLoginProperties.class,
+        PasswordLoginProperties.class, DevSeedProperties.class})
 public class AuthServiceApplication {
 
     public static void main(String[] args) {

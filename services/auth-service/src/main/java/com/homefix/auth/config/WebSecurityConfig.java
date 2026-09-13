@@ -51,6 +51,7 @@ public class WebSecurityConfig {
                         .requestMatchers(
                                 "/auth/register/**",
                                 "/auth/login/social",
+                                "/auth/login/password",
                                 "/auth/token/refresh",
                                 "/auth/logout",
                                 "/auth/introspect",

@@ -4,6 +4,7 @@ import { useAuthStore } from '@stores/authStore';
 import { ApiError } from '@api/client';
 import { isStaff } from '@config/roles';
 import {
+  passwordLogin,
   requestOtp,
   socialLogin,
   toSession,
@@ -11,6 +12,7 @@ import {
   type AuthSessionResponse,
   type RequestOtpPayload,
   type RequestOtpResponse,
+  type PasswordLoginPayload,
   type SocialLoginPayload,
   type VerifyOtpPayload,
 } from './api';
@@ -64,6 +66,31 @@ export function useVerifyOtp(): UseMutationResult<AuthSessionResponse, ApiError,
     onSuccess: (response, variables) => {
       const { tokens, user } = toSession(response, variables.mobileNumber);
       setSession(tokens, user);
+    },
+  });
+}
+
+/**
+ * Sign in with a username and password — the staff path into the console.
+ *
+ * Runs the same staff assertion as the OTP flow. The password endpoint issues
+ * tokens for any account that holds credentials, customers included, so a
+ * successful authentication is still not evidence of Admin Portal access.
+ */
+export function usePasswordLogin(): UseMutationResult<
+  AuthSessionResponse,
+  ApiError,
+  PasswordLoginPayload
+> {
+  const setSession = useAuthStore((state) => state.setSession);
+
+  return useMutation<AuthSessionResponse, ApiError, PasswordLoginPayload>({
+    mutationFn: async (payload) => assertStaffSession(await passwordLogin(payload)),
+    // The response carries no mobile number and the form collected none, so the
+    // profile records the username the operator actually signed in with.
+    onSuccess: (response, variables) => {
+      const { tokens, user } = toSession(response);
+      setSession(tokens, { ...user, displayName: variables.username });
     },
   });
 }

@@ -109,6 +109,14 @@ public class ProviderRbacConfig {
         // Settlement request and earnings history also admit Finance (Requirements 14.2, 14.5, 4.9).
         rules.put("POST /providers/*/settlements", PROVIDER_FINANCE_TIER);
         rules.put("GET /providers/*/earnings", PROVIDER_FINANCE_TIER);
+        // Wallet/settlement reads sit in the same finance tier as the earnings history they
+        // summarise (Requirements 14.1-14.3).
+        rules.put("GET /providers/*/summary", PROVIDER_FINANCE_TIER);
+        // The active-job list is operational rather than financial, so it follows the same
+        // tier as the profile read that dispatch and support already rely on.
+        rules.put("GET /providers/*/active-jobs", PROFILE_READ_TIER);
+        rules.put("GET /providers/*/settlement-info", PROVIDER_FINANCE_TIER);
+        rules.put("GET /providers/*/settlements", PROVIDER_FINANCE_TIER);
         // Profile read is additionally visible to dispatch and support.
         rules.put("GET /providers/*/profile", PROFILE_READ_TIER);
     }

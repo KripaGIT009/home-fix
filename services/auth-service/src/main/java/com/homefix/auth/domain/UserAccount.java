@@ -41,6 +41,19 @@ public class UserAccount {
     @Column(name = "verified", nullable = false)
     private boolean verified;
 
+    /**
+     * Optional console username for password sign-in. Staff use the Admin Portal, which has
+     * no phone to hand, so an account may additionally carry a username and a bcrypt hash.
+     * Both are nullable: an OTP-only or social account has neither, and an account with a
+     * username but no hash cannot sign in with a password.
+     */
+    @Column(name = "username", unique = true, length = 64)
+    private String username;
+
+    /** Bcrypt hash (cost >= 12) of the console password. Never the password itself. */
+    @Column(name = "password_hash", length = 100)
+    private String passwordHash;
+
     @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "user_account_role", joinColumns = @JoinColumn(name = "user_id"))
     @Column(name = "role", nullable = false, length = 32)
@@ -105,6 +118,31 @@ public class UserAccount {
 
     public void addRole(Role role) {
         this.roles.add(role);
+    }
+
+    public String getUsername() {
+        return username;
+    }
+
+    public String getPasswordHash() {
+        return passwordHash;
+    }
+
+    /**
+     * Whether this account can be signed in to with a username and password. An account
+     * carrying a username but no hash (or the reverse) cannot, so both are required.
+     */
+    public boolean hasPasswordCredentials() {
+        return username != null && passwordHash != null;
+    }
+
+    /**
+     * Attaches or replaces the console credentials. The caller passes an already-encoded
+     * hash: this entity never sees a raw password, so it can never store one by accident.
+     */
+    public void setCredentials(String username, String passwordHash) {
+        this.username = username;
+        this.passwordHash = passwordHash;
     }
 
     public Instant getCreatedAt() {

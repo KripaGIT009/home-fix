@@ -4,7 +4,7 @@ import { apiClient } from '@api/client';
  * Admin Service dashboard bindings (Requirement 19.1).
  *
  * Endpoint (see design.md — Admin Service):
- * - GET /admin/dashboard/metrics — the 7 live platform metrics
+ * - GET /admin/dashboard — the 7 live platform metrics
  *
  * Calls flow through the shared Axios client (JWT + correlation id + normalized
  * ApiError). The metrics are refreshed by the client every 60 seconds
@@ -21,19 +21,22 @@ import { apiClient } from '@api/client';
 export interface DashboardMetrics {
   activeBookings: number;
   activeProvidersOnline: number;
-  newRegistrations24h: number;
-  grossRevenue24h: number;
+  newRegistrationsLast24h: number;
+  grossRevenueLast24h: number;
   /** Average provider response time over the last 24h, in seconds. */
   avgProviderResponseTimeSeconds: number;
-  openComplaints: number;
+  openComplaintCount: number;
   /** Mean of all Review ratings on a 1.0–5.0 scale. */
   platformRating: number;
-  /** ISO 4217 currency for grossRevenue24h. */
-  currency: string;
+  /**
+   * ISO 4217 currency for grossRevenueLast24h. Optional: the Admin Service does not
+   * send it (see API_CONTRACTS.md), so the screen falls back to INR.
+   */
+  currency?: string;
 }
 
-/** GET /admin/dashboard/metrics — the 7 live dashboard metrics (Req 19.1). */
+/** GET /admin/dashboard — the 7 live dashboard metrics (Req 19.1). */
 export async function fetchDashboardMetrics(): Promise<DashboardMetrics> {
-  const { data } = await apiClient.get<DashboardMetrics>('/admin/dashboard/metrics');
+  const { data } = await apiClient.get<DashboardMetrics>('/admin/dashboard');
   return data;
 }

@@ -24,6 +24,14 @@ homefix:
     # Must be >= 32 bytes. Injected from AWS Secrets Manager in production.
     # Required: no default, so the service fails fast when JWT_SECRET is not set.
     jwt-secret: ${JWT_SECRET}
+  booking:
+    # 'http' reads live active jobs from the Booking Service; 'stub' reports none (Req 28.8).
+    client: ${BOOKING_CLIENT:stub}
+    base-url: ${BOOKING_SERVICE_URI:http://booking-service:8084}
+    # Must match the Booking Service's homefix.booking.internal-api-key.
+    internal-api-key: ${INTERNAL_API_KEY:}
+  catalog:
+    base-url: ${CATALOG_SERVICE_URI:http://catalog-service:8085}
   provider:
     max-active-categories: 5
     max-subcategories-per-category: 10

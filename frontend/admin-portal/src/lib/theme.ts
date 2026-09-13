@@ -20,13 +20,30 @@ export const brand = {
   accentSoft: '#EFF4FF',
   ink: '#0F172A',
   muted: '#64748B',
+  /** One step darker than `muted`, for secondary text that must still pass AA. */
+  subtle: '#475569',
   line: '#E6EBF2',
+  /** Hairline used inside dense surfaces (table rows) where `line` reads heavy. */
+  lineSoft: '#F1F5F9',
   canvas: '#F5F7FB',
   amber: '#F59E0B',
+  amberSoft: '#FFF7ED',
   green: '#16A34A',
   greenSoft: '#ECFDF3',
   red: '#DC2626',
   redSoft: '#FEF2F2',
+
+  /**
+   * Navigation ramp. The sidebar is dark so the console reads as a tool rather
+   * than a document: it anchors the left edge, pushes the white content region
+   * forward, and keeps the accent available for meaning (selection, primary
+   * actions) instead of spending it on chrome.
+   */
+  navBg: '#0B1220',
+  navBgRaised: '#111C32',
+  navText: '#94A3B8',
+  navTextActive: '#FFFFFF',
+  navLine: 'rgba(148, 163, 184, 0.14)',
 } as const;
 
 /** Soft, layered elevations — closer to a native app than MUI's defaults. */
@@ -34,6 +51,8 @@ const shadows = {
   card: '0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px -12px rgba(15, 23, 42, 0.12)',
   raised: '0 2px 4px rgba(15, 23, 42, 0.05), 0 16px 32px -16px rgba(15, 23, 42, 0.20)',
   bar: '0 -1px 0 rgba(15, 23, 42, 0.06)',
+  /** Menus and popovers: tight and dark enough to separate from a white page. */
+  overlay: '0 4px 6px -2px rgba(15, 23, 42, 0.06), 0 24px 48px -16px rgba(15, 23, 42, 0.24)',
 } as const;
 
 export const theme = createTheme({
@@ -51,11 +70,11 @@ export const theme = createTheme({
     error: { main: brand.red, light: brand.redSoft, contrastText: '#FFFFFF' },
     info: { main: brand.accent },
     background: { default: brand.canvas, paper: '#FFFFFF' },
-    text: { primary: brand.ink, secondary: brand.muted },
+    text: { primary: brand.ink, secondary: brand.subtle },
     divider: brand.line,
   },
 
-  shape: { borderRadius: 14 },
+  shape: { borderRadius: 12 },
 
   typography: {
     fontFamily: '"Inter", "Segoe UI", "Roboto", "Helvetica Neue", Arial, sans-serif',
@@ -224,6 +243,87 @@ export const theme = createTheme({
       styleOverrides: {
         tooltip: { borderRadius: 8, fontSize: '0.75rem', backgroundColor: brand.ink },
       },
+    },
+
+    // Tables are where an operator spends the day, so they get explicit
+    // treatment rather than MUI's defaults: a quiet tinted header that stays
+    // put while the body scrolls, hairline row rules, and a hover band that
+    // makes it obvious which row an action will apply to.
+    MuiTableHead: {
+      styleOverrides: {
+        root: {
+          '& .MuiTableCell-head': {
+            backgroundColor: brand.canvas,
+            color: brand.subtle,
+            fontWeight: 700,
+            fontSize: '0.75rem',
+            letterSpacing: '0.04em',
+            textTransform: 'uppercase',
+            borderBottom: `1px solid ${brand.line}`,
+            whiteSpace: 'nowrap',
+          },
+        },
+      },
+    },
+    MuiTableCell: {
+      styleOverrides: {
+        root: {
+          borderBottom: `1px solid ${brand.lineSoft}`,
+          fontSize: '0.8125rem',
+          paddingTop: 10,
+          paddingBottom: 10,
+        },
+      },
+    },
+    MuiTableRow: {
+      styleOverrides: {
+        root: {
+          '&:last-of-type .MuiTableCell-root': { borderBottom: 'none' },
+          '&.MuiTableRow-hover:hover': { backgroundColor: brand.canvas },
+        },
+      },
+    },
+    MuiTableContainer: {
+      styleOverrides: { root: { borderRadius: 12 } },
+    },
+
+    MuiMenu: {
+      defaultProps: { elevation: 0 },
+      styleOverrides: {
+        paper: {
+          borderRadius: 12,
+          border: `1px solid ${brand.line}`,
+          boxShadow: shadows.overlay,
+          marginTop: 6,
+          minWidth: 200,
+        },
+        list: { padding: 6 },
+      },
+    },
+    MuiMenuItem: {
+      styleOverrides: {
+        root: {
+          borderRadius: 8,
+          fontSize: '0.875rem',
+          minHeight: 38,
+          gap: 10,
+        },
+      },
+    },
+
+    MuiDialog: {
+      styleOverrides: { paper: { borderRadius: 16, boxShadow: shadows.overlay } },
+    },
+    MuiDialogTitle: {
+      styleOverrides: { root: { fontSize: '1.0625rem', fontWeight: 700, paddingBottom: 8 } },
+    },
+
+    MuiSkeleton: {
+      styleOverrides: { root: { borderRadius: 8, backgroundColor: brand.lineSoft } },
+    },
+
+    MuiIconButton: {
+      styleOverrides: { root: { borderRadius: 10 } },
     },
   },
 });

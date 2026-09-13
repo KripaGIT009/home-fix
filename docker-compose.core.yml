@@ -23,6 +23,10 @@ name: homefix-core
 
 services:
   postgres:
+    # A transient startup race (Kafka DNS not yet resolvable during the
+    # start-up stampede) otherwise leaves the service down for good, needing a
+    # manual restart. Bounded, so a genuinely broken service still stops.
+    restart: "on-failure:5"
     image: postgres:16-alpine
     # Headroom for the whole stack: every DB-backed service holds a small pool
     # (see SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE below), and the default
@@ -44,6 +48,10 @@ services:
       retries: 20
 
   redis:
+    # A transient startup race (Kafka DNS not yet resolvable during the
+    # start-up stampede) otherwise leaves the service down for good, needing a
+    # manual restart. Bounded, so a genuinely broken service still stops.
+    restart: "on-failure:5"
     image: redis:7-alpine
     ports:
       - "6380:6379"
@@ -54,6 +62,10 @@ services:
       retries: 20
 
   kafka:
+    # A transient startup race (Kafka DNS not yet resolvable during the
+    # start-up stampede) otherwise leaves the service down for good, needing a
+    # manual restart. Bounded, so a genuinely broken service still stops.
+    restart: "on-failure:5"
     image: apache/kafka:3.7.1
     ports:
       - "9095:9092"
@@ -83,6 +95,10 @@ services:
       start_period: 60s
 
   auth-service:
+    # A transient startup race (Kafka DNS not yet resolvable during the
+    # start-up stampede) otherwise leaves the service down for good, needing a
+    # manual restart. Bounded, so a genuinely broken service still stops.
+    restart: "on-failure:5"
     build:
       context: ./services/auth-service
     environment:
@@ -108,6 +124,12 @@ services:
       # LOCAL DEV ONLY: echo the OTP to the auth-service log so the flow can be tested
       # without a real SMS gateway. Never enable outside local/dev.
       HOMEFIX_SMS_LOGOTP: "true"
+      # LOCAL DEV ONLY: create the test accounts in docs/LOCAL_ACCESS.md at startup,
+      # each with a console username and this password, so the portals can be signed
+      # in to on a fresh database. Staff roles cannot be self-assigned at registration,
+      # so without this nothing can open the Admin Portal. Never enable outside dev.
+      DEV_SEED_ENABLED: "${DEV_SEED_ENABLED:-false}"
+      DEV_SEED_PASSWORD: "${DEV_SEED_PASSWORD:-}"
     ports:
       - "8081:8081"
     volumes:
@@ -126,6 +148,10 @@ services:
       start_period: 40s
 
   api-gateway:
+    # A transient startup race (Kafka DNS not yet resolvable during the
+    # start-up stampede) otherwise leaves the service down for good, needing a
+    # manual restart. Bounded, so a genuinely broken service still stops.
+    restart: "on-failure:5"
     build:
       context: ./services/api-gateway
     environment:
@@ -155,6 +181,10 @@ services:
       start_period: 40s
 
   catalog-service:
+    # A transient startup race (Kafka DNS not yet resolvable during the
+    # start-up stampede) otherwise leaves the service down for good, needing a
+    # manual restart. Bounded, so a genuinely broken service still stops.
+    restart: "on-failure:5"
     build:
       context: ./services/catalog-service
     environment:
@@ -183,6 +213,10 @@ services:
       start_period: 40s
 
   customer-service:
+    # A transient startup race (Kafka DNS not yet resolvable during the
+    # start-up stampede) otherwise leaves the service down for good, needing a
+    # manual restart. Bounded, so a genuinely broken service still stops.
+    restart: "on-failure:5"
     build:
       context: ./services/customer-service
     environment:
@@ -211,6 +245,10 @@ services:
       start_period: 40s
 
   pricing-engine:
+    # A transient startup race (Kafka DNS not yet resolvable during the
+    # start-up stampede) otherwise leaves the service down for good, needing a
+    # manual restart. Bounded, so a genuinely broken service still stops.
+    restart: "on-failure:5"
     build:
       context: ./services/pricing-engine
     environment:
@@ -238,6 +276,10 @@ services:
       start_period: 40s
 
   booking-service:
+    # A transient startup race (Kafka DNS not yet resolvable during the
+    # start-up stampede) otherwise leaves the service down for good, needing a
+    # manual restart. Bounded, so a genuinely broken service still stops.
+    restart: "on-failure:5"
     build:
       context: ./services/booking-service
     environment:
@@ -272,6 +314,10 @@ services:
       start_period: 40s
 
   dispatch-engine:
+    # A transient startup race (Kafka DNS not yet resolvable during the
+    # start-up stampede) otherwise leaves the service down for good, needing a
+    # manual restart. Bounded, so a genuinely broken service still stops.
+    restart: "on-failure:5"
     build:
       context: ./services/dispatch-engine
     environment:
@@ -307,6 +353,10 @@ services:
       start_period: 40s
 
   location-service:
+    # A transient startup race (Kafka DNS not yet resolvable during the
+    # start-up stampede) otherwise leaves the service down for good, needing a
+    # manual restart. Bounded, so a genuinely broken service still stops.
+    restart: "on-failure:5"
     build:
       context: ./services/location-service
     environment:
@@ -338,6 +388,10 @@ services:
       start_period: 40s
 
   provider-service:
+    # A transient startup race (Kafka DNS not yet resolvable during the
+    # start-up stampede) otherwise leaves the service down for good, needing a
+    # manual restart. Bounded, so a genuinely broken service still stops.
+    restart: "on-failure:5"
     build:
       context: ./services/provider-service
     environment:
@@ -350,6 +404,11 @@ services:
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
       # Base64 AES-256 data key for the local KMS adapter (no default any more).
       KMS_DATA_KEY: ${KMS_DATA_KEY:?set KMS_DATA_KEY, see .env.example}
+      # Read live active jobs from the Booking Service's internal surface (Req 28.8).
+      BOOKING_CLIENT: http
+      BOOKING_SERVICE_URI: http://booking-service:8084
+      CATALOG_SERVICE_URI: http://catalog-service:8085
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?set INTERNAL_API_KEY, see .env.example}
     ports:
       - "8083:8083"
     depends_on:
@@ -363,6 +422,10 @@ services:
       start_period: 60s
 
   verification-service:
+    # A transient startup race (Kafka DNS not yet resolvable during the
+    # start-up stampede) otherwise leaves the service down for good, needing a
+    # manual restart. Bounded, so a genuinely broken service still stops.
+    restart: "on-failure:5"
     build:
       context: ./services/verification-service
     environment:
@@ -386,6 +449,10 @@ services:
       start_period: 60s
 
   payment-service:
+    # A transient startup race (Kafka DNS not yet resolvable during the
+    # start-up stampede) otherwise leaves the service down for good, needing a
+    # manual restart. Bounded, so a genuinely broken service still stops.
+    restart: "on-failure:5"
     build:
       context: ./services/payment-service
     environment:
@@ -418,6 +485,10 @@ services:
       start_period: 60s
 
   invoice-service:
+    # A transient startup race (Kafka DNS not yet resolvable during the
+    # start-up stampede) otherwise leaves the service down for good, needing a
+    # manual restart. Bounded, so a genuinely broken service still stops.
+    restart: "on-failure:5"
     build:
       context: ./services/invoice-service
     environment:
@@ -449,6 +520,10 @@ services:
       start_period: 60s
 
   notification-service:
+    # A transient startup race (Kafka DNS not yet resolvable during the
+    # start-up stampede) otherwise leaves the service down for good, needing a
+    # manual restart. Bounded, so a genuinely broken service still stops.
+    restart: "on-failure:5"
     build:
       context: ./services/notification-service
     environment:
@@ -476,6 +551,10 @@ services:
       start_period: 60s
 
   complaint-service:
+    # A transient startup race (Kafka DNS not yet resolvable during the
+    # start-up stampede) otherwise leaves the service down for good, needing a
+    # manual restart. Bounded, so a genuinely broken service still stops.
+    restart: "on-failure:5"
     build:
       context: ./services/complaint-service
     environment:
@@ -506,6 +585,10 @@ services:
       start_period: 60s
 
   chat-service:
+    # A transient startup race (Kafka DNS not yet resolvable during the
+    # start-up stampede) otherwise leaves the service down for good, needing a
+    # manual restart. Bounded, so a genuinely broken service still stops.
+    restart: "on-failure:5"
     build:
       context: ./services/chat-service
     environment:
@@ -532,6 +615,10 @@ services:
       start_period: 60s
 
   rating-review-service:
+    # A transient startup race (Kafka DNS not yet resolvable during the
+    # start-up stampede) otherwise leaves the service down for good, needing a
+    # manual restart. Bounded, so a genuinely broken service still stops.
+    restart: "on-failure:5"
     build:
       context: ./services/rating-review-service
     environment:
@@ -562,6 +649,10 @@ services:
       start_period: 60s
 
   promotion-service:
+    # A transient startup race (Kafka DNS not yet resolvable during the
+    # start-up stampede) otherwise leaves the service down for good, needing a
+    # manual restart. Bounded, so a genuinely broken service still stops.
+    restart: "on-failure:5"
     build:
       context: ./services/promotion-service
     environment:
@@ -589,6 +680,10 @@ services:
       start_period: 60s
 
   admin-service:
+    # A transient startup race (Kafka DNS not yet resolvable during the
+    # start-up stampede) otherwise leaves the service down for good, needing a
+    # manual restart. Bounded, so a genuinely broken service still stops.
+    restart: "on-failure:5"
     build:
       context: ./services/admin-service
     environment:
@@ -612,6 +707,10 @@ services:
       start_period: 60s
 
   reporting-service:
+    # A transient startup race (Kafka DNS not yet resolvable during the
+    # start-up stampede) otherwise leaves the service down for good, needing a
+    # manual restart. Bounded, so a genuinely broken service still stops.
+    restart: "on-failure:5"
     build:
       context: ./services/reporting-service
     environment:
@@ -627,6 +726,10 @@ services:
       start_period: 60s
 
   outbox-processor:
+    # A transient startup race (Kafka DNS not yet resolvable during the
+    # start-up stampede) otherwise leaves the service down for good, needing a
+    # manual restart. Bounded, so a genuinely broken service still stops.
+    restart: "on-failure:5"
     build:
       context: ./services/outbox-processor
     environment:
@@ -652,6 +755,10 @@ services:
       retries: 30
       start_period: 60s
   customer-app:
+    # A transient startup race (Kafka DNS not yet resolvable during the
+    # start-up stampede) otherwise leaves the service down for good, needing a
+    # manual restart. Bounded, so a genuinely broken service still stops.
+    restart: "on-failure:5"
     build:
       context: ./frontend/customer-app
     ports:
@@ -661,6 +768,10 @@ services:
       - auth-service
 
   provider-app:
+    # A transient startup race (Kafka DNS not yet resolvable during the
+    # start-up stampede) otherwise leaves the service down for good, needing a
+    # manual restart. Bounded, so a genuinely broken service still stops.
+    restart: "on-failure:5"
     build:
       context: ./frontend/provider-app
     ports:
@@ -670,6 +781,10 @@ services:
       - auth-service
 
   admin-portal:
+    # A transient startup race (Kafka DNS not yet resolvable during the
+    # start-up stampede) otherwise leaves the service down for good, needing a
+    # manual restart. Bounded, so a genuinely broken service still stops.
+    restart: "on-failure:5"
     build:
       context: ./frontend/admin-portal
     ports:

@@ -8,6 +8,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
+import com.homefix.auth.password.PasswordLoginException;
 import com.homefix.auth.registration.RegistrationException;
 import com.homefix.auth.social.SocialIdentityException;
 import com.homefix.auth.token.TokenException;
@@ -25,6 +26,21 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(RegistrationException.class)
     public ResponseEntity<ErrorResponseDto> handleRegistration(RegistrationException ex) {
+        ErrorResponseDto body = ErrorResponseDto.builder()
+                .errorCode(ex.getErrorCode())
+                .message(ex.getMessage())
+                .correlationId(MDC.get(CORRELATION_MDC_KEY))
+                .build();
+
+        ResponseEntity.BodyBuilder response = ResponseEntity.status(ex.getStatus());
+        if (ex.getRetryAfterSeconds() != null) {
+            response.header(HttpHeaders.RETRY_AFTER, Long.toString(ex.getRetryAfterSeconds()));
+        }
+        return response.body(body);
+    }
+
+    @ExceptionHandler(PasswordLoginException.class)
+    public ResponseEntity<ErrorResponseDto> handlePasswordLogin(PasswordLoginException ex) {
         ErrorResponseDto body = ErrorResponseDto.builder()
                 .errorCode(ex.getErrorCode())
                 .message(ex.getMessage())

@@ -12,6 +12,9 @@ import {
   ListItemButton,
   ListItemIcon,
   ListItemText,
+  ListSubheader,
+  Menu,
+  MenuItem,
   Stack,
   Toolbar,
   Tooltip,
@@ -19,28 +22,42 @@ import {
 } from '@mui/material';
 import MenuRoundedIcon from '@mui/icons-material/MenuRounded';
 import LogoutRoundedIcon from '@mui/icons-material/LogoutRounded';
+import ExpandMoreRoundedIcon from '@mui/icons-material/ExpandMoreRounded';
 import { BrandLogo } from './BrandLogo';
 import { useAuthStore } from '@stores/authStore';
 import { visibleNavItems } from '@config/navFilter';
+import { NAV_SECTIONS } from '@config/navSections';
+import { brand } from '@lib/theme';
 
 /** Fixed width of the desktop sidebar drawer. */
-const DRAWER_WIDTH = 264;
+const DRAWER_WIDTH = 268;
 
 interface AppShellProps {
   title: string;
   children: ReactNode;
 }
 
+/** Longest-match wins, so /providers does not light up for /provider-earnings. */
+function isActive(pathname: string, path: string): boolean {
+  return pathname === path || pathname.startsWith(`${path}/`);
+}
+
 /**
- * Desktop-first app shell (Requirement 28.3): a permanent left sidebar with the
- * operational modules, a top app bar showing the current module title and the
- * signed-in admin, and a scrollable content region. On small screens the
- * sidebar collapses into a temporary drawer toggled from the app bar, but the
- * layout is optimised for large administrative screens.
+ * Desktop-first app shell (Requirement 28.3): a permanent dark navigation rail
+ * carrying the operational modules, a top bar with the current module title and
+ * the signed-in operator, and a scrollable content region. On small screens the
+ * rail collapses into a temporary drawer toggled from the top bar.
  *
- * The sidebar is RBAC-aware: System Configuration only appears for SUPER_ADMIN
- * (Requirement 19.6). Hiding it complements the route guard in RequireAuth so
- * ADMIN users neither see nor can navigate to the module.
+ * The rail is dark on purpose. With sixteen modules listed, a white sidebar and
+ * a white content area blur into one surface and the eye has to hunt for the
+ * boundary; a dark rail fixes the left edge and frees the accent colour to mean
+ * "selected" rather than merely decorating chrome.
+ *
+ * Modules are grouped into sections rather than listed flat, because sixteen
+ * undifferentiated links is a menu you read every time instead of a map you
+ * learn. The grouping is presentational only — access is still decided per item
+ * by roles, so System Configuration appears for SUPER_ADMIN alone
+ * (Requirement 19.6) and an empty section renders nothing at all.
  */
 export function AppShell({ title, children }: AppShellProps) {
   const navigate = useNavigate();
@@ -48,19 +65,35 @@ export function AppShell({ title, children }: AppShellProps) {
   const user = useAuthStore((state) => state.user);
   const logout = useAuthStore((state) => state.logout);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
 
   const items = useMemo(() => visibleNavItems(user?.roles ?? []), [user?.roles]);
+
+  /** The visible items regrouped into their sections; empty sections drop out. */
+  const sections = useMemo(
+    () =>
+      NAV_SECTIONS.map((section) => ({
+        title: section.title,
+        items: items.filter((item) => section.paths.includes(item.path)),
+      })).filter((section) => section.items.length > 0),
+    [items],
+  );
 
   const roleLabel = useMemo(() => {
     const roles = user?.roles ?? [];
     if (roles.includes('SUPER_ADMIN')) return 'Super Admin';
     if (roles.includes('ADMIN')) return 'Admin';
     if (roles.includes('FINANCE_ADMIN')) return 'Finance Admin';
+    if (roles.includes('DISPATCHER')) return 'Dispatcher';
     if (roles.includes('SUPPORT_AGENT')) return 'Support Agent';
     return 'Staff';
   }, [user?.roles]);
 
+  const operatorName = user?.displayName ?? 'Administrator';
+  const initials = operatorName.slice(0, 2).toUpperCase();
+
   const handleLogout = () => {
+    setMenuAnchor(null);
     // The store revokes the refresh token server-side before clearing local
     // state. Navigation is not awaited so the button never appears to hang on a
     // slow network; the revoke completes in the background either way.
@@ -74,61 +107,111 @@ export function AppShell({ title, children }: AppShellProps) {
   };
 
   const drawerContent = (
-    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <Toolbar sx={{ gap: 1 }}>
-        <BrandLogo size={32} />
-        <Typography
-          variant="overline"
-          sx={{ color: 'text.secondary', letterSpacing: '0.14em', lineHeight: 1 }}
+    <Box
+      sx={{
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        bgcolor: brand.navBg,
+        color: brand.navTextActive,
+      }}
+    >
+      <Toolbar sx={{ gap: 1.25, borderBottom: `1px solid ${brand.navLine}` }}>
+        <BrandLogo size={30} inverted />
+        <Box
+          sx={{
+            px: 0.85,
+            py: 0.25,
+            borderRadius: 1,
+            bgcolor: 'rgba(255,255,255,0.10)',
+            border: `1px solid ${brand.navLine}`,
+          }}
         >
-          Admin
-        </Typography>
+          <Typography
+            variant="overline"
+            sx={{ color: brand.navText, letterSpacing: '0.12em', lineHeight: 1.6, fontSize: 10 }}
+          >
+            Ops
+          </Typography>
+        </Box>
       </Toolbar>
-      <Divider />
-      <List component="nav" aria-label="Operational modules" sx={{ flexGrow: 1, py: 1 }}>
-        {items.map((item) => {
-          const selected =
-            location.pathname === item.path || location.pathname.startsWith(`${item.path}/`);
-          return (
-            <ListItemButton
-              key={item.path}
-              selected={selected}
-              onClick={() => handleNavigate(item.path)}
-              sx={{
-                mx: 1,
-                borderRadius: 2,
-                mb: 0.25,
-                position: 'relative',
-                '&.Mui-selected': {
-                  color: 'primary.main',
-                  '& .MuiListItemIcon-root': { color: 'primary.main' },
-                  '&::before': {
-                    content: '""',
-                    position: 'absolute',
-                    left: 0,
-                    top: 8,
-                    bottom: 8,
-                    width: 3,
-                    borderRadius: 3,
-                    backgroundColor: 'primary.main',
-                  },
-                },
-              }}
-            >
-              <ListItemIcon sx={{ minWidth: 40, color: 'text.secondary' }}>
-                {item.icon}
-              </ListItemIcon>
-              <ListItemText
-                primary={item.label}
-                primaryTypographyProps={{
-                  variant: 'body2',
-                  fontWeight: selected ? 700 : 500,
+
+      <Box sx={{ flexGrow: 1, overflowY: 'auto', py: 1.5 }}>
+        {sections.map((section) => (
+          <List
+            key={section.title}
+            component="nav"
+            aria-label={section.title}
+            disablePadding
+            sx={{ mb: 1 }}
+            subheader={
+              <ListSubheader
+                disableSticky
+                sx={{
+                  bgcolor: 'transparent',
+                  color: 'rgba(148, 163, 184, 0.7)',
+                  fontSize: 10,
+                  fontWeight: 700,
+                  letterSpacing: '0.11em',
+                  textTransform: 'uppercase',
+                  lineHeight: 2.4,
+                  px: 3,
                 }}
-              />
-            </ListItemButton>
-          );
-        })}
-      </List>
+              >
+                {section.title}
+              </ListSubheader>
+            }
+          >
+            {section.items.map((item) => {
+              const selected = isActive(location.pathname, item.path);
+              return (
+                <ListItemButton
+                  key={item.path}
+                  selected={selected}
+                  onClick={() => handleNavigate(item.path)}
+                  sx={{
+                    mx: 1.25,
+                    px: 1.5,
+                    py: 0.85,
+                    borderRadius: 2,
+                    mb: 0.25,
+                    color: brand.navText,
+                    '&:hover': {
+                      bgcolor: brand.navBgRaised,
+                      color: brand.navTextActive,
+                      '& .MuiListItemIcon-root': { color: brand.navTextActive },
+                    },
+                    '&.Mui-selected': {
+                      bgcolor: 'rgba(37, 99, 235, 0.22)',
+                      color: brand.navTextActive,
+                      '& .MuiListItemIcon-root': { color: '#93C5FD' },
+                      '&:hover': { bgcolor: 'rgba(37, 99, 235, 0.3)' },
+                    },
+                  }}
+                >
+                  <ListItemIcon sx={{ minWidth: 34, color: 'inherit', '& svg': { fontSize: 20 } }}>
+                    {item.icon}
+                  </ListItemIcon>
+                  <ListItemText
+                    primary={item.label}
+                    primaryTypographyProps={{
+                      variant: 'body2',
+                      fontWeight: selected ? 600 : 500,
+                      fontSize: '0.8125rem',
+                    }}
+                  />
+                </ListItemButton>
+              );
+            })}
+          </List>
+        ))}
+      </Box>
+
+      <Box sx={{ p: 2, borderTop: `1px solid ${brand.navLine}` }}>
+        <Typography variant="caption" sx={{ color: 'rgba(148, 163, 184, 0.65)' }}>
+          Signed in as {roleLabel}
+        </Typography>
+      </Box>
     </Box>
   );
 
@@ -141,6 +224,12 @@ export function AppShell({ title, children }: AppShellProps) {
         sx={{
           zIndex: (t) => t.zIndex.drawer + 1,
           borderBottom: (t) => `1px solid ${t.palette.divider}`,
+          // The rail owns the far left; the bar starts where the content does,
+          // so the brand mark is never stated twice on the same row.
+          width: { md: `calc(100% - ${DRAWER_WIDTH}px)` },
+          ml: { md: `${DRAWER_WIDTH}px` },
+          backdropFilter: 'saturate(180%) blur(8px)',
+          backgroundColor: 'rgba(255, 255, 255, 0.86)',
         }}
       >
         <Toolbar>
@@ -152,31 +241,94 @@ export function AppShell({ title, children }: AppShellProps) {
           >
             <MenuRoundedIcon />
           </IconButton>
-          <Typography variant="h6" component="h1" sx={{ flexGrow: 1, fontWeight: 700 }}>
-            {title}
-          </Typography>
-          <Stack direction="row" spacing={1.5} alignItems="center">
-            <Chip label={roleLabel} color="primary" size="small" variant="outlined" />
-            <Stack alignItems="flex-end" sx={{ display: { xs: 'none', sm: 'flex' } }}>
-              <Typography variant="body2" fontWeight={600} lineHeight={1.1}>
-                {user?.displayName ?? 'Administrator'}
-              </Typography>
-              {user?.email ? (
-                <Typography variant="caption" color="text.secondary">
-                  {user.email}
-                </Typography>
-              ) : null}
-            </Stack>
-            <Avatar
-              {...(user?.photoUrl ? { src: user.photoUrl } : {})}
-              alt={user?.displayName ?? 'Administrator'}
-              sx={{ width: 34, height: 34 }}
+
+          <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+            <Typography
+              variant="h6"
+              component="h1"
+              noWrap
+              sx={{ fontWeight: 700, lineHeight: 1.2 }}
+            >
+              {title}
+            </Typography>
+          </Box>
+
+          <Stack direction="row" spacing={1.25} alignItems="center">
+            <Chip
+              label={roleLabel}
+              size="small"
+              variant="outlined"
+              sx={{
+                display: { xs: 'none', sm: 'inline-flex' },
+                color: brand.accent,
+                borderColor: 'rgba(37, 99, 235, 0.28)',
+                bgcolor: brand.accentSoft,
+              }}
             />
-            <Tooltip title="Log out">
-              <IconButton onClick={handleLogout} aria-label="Log out">
-                <LogoutRoundedIcon />
-              </IconButton>
+
+            <Tooltip title="Account">
+              <Box
+                component="button"
+                type="button"
+                aria-label="Account menu"
+                aria-haspopup="menu"
+                onClick={(event) => setMenuAnchor(event.currentTarget)}
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 1,
+                  px: 0.75,
+                  py: 0.5,
+                  border: `1px solid ${brand.line}`,
+                  borderRadius: 2,
+                  bgcolor: 'transparent',
+                  cursor: 'pointer',
+                  font: 'inherit',
+                  '&:hover': { bgcolor: brand.canvas },
+                }}
+              >
+                <Avatar
+                  {...(user?.photoUrl ? { src: user.photoUrl } : {})}
+                  alt={operatorName}
+                  sx={{ width: 30, height: 30, fontSize: '0.75rem', bgcolor: brand.accent }}
+                >
+                  {initials}
+                </Avatar>
+                <Stack alignItems="flex-start" sx={{ display: { xs: 'none', md: 'flex' } }}>
+                  <Typography variant="body2" fontWeight={600} lineHeight={1.15}>
+                    {operatorName}
+                  </Typography>
+                  {user?.email ? (
+                    <Typography variant="caption" color="text.secondary" lineHeight={1.15}>
+                      {user.email}
+                    </Typography>
+                  ) : null}
+                </Stack>
+                <ExpandMoreRoundedIcon fontSize="small" sx={{ color: 'text.secondary' }} />
+              </Box>
             </Tooltip>
+
+            <Menu
+              anchorEl={menuAnchor}
+              open={Boolean(menuAnchor)}
+              onClose={() => setMenuAnchor(null)}
+              anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+              transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+            >
+              <Box sx={{ px: 1.5, py: 1 }}>
+                <Typography variant="body2" fontWeight={600}>
+                  {operatorName}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {user?.email ?? user?.mobileNumber ?? roleLabel}
+                </Typography>
+              </Box>
+              <Divider sx={{ my: 0.5 }} />
+              <MenuItem onClick={handleLogout}>
+                <LogoutRoundedIcon fontSize="small" />
+                Log out
+              </MenuItem>
+            </Menu>
           </Stack>
         </Toolbar>
       </AppBar>
@@ -194,7 +346,11 @@ export function AppShell({ title, children }: AppShellProps) {
           ModalProps={{ keepMounted: true }}
           sx={{
             display: { xs: 'block', md: 'none' },
-            '& .MuiDrawer-paper': { boxSizing: 'border-box', width: DRAWER_WIDTH },
+            '& .MuiDrawer-paper': {
+              boxSizing: 'border-box',
+              width: DRAWER_WIDTH,
+              border: 'none',
+            },
           }}
         >
           {drawerContent}
@@ -208,8 +364,7 @@ export function AppShell({ title, children }: AppShellProps) {
             '& .MuiDrawer-paper': {
               boxSizing: 'border-box',
               width: DRAWER_WIDTH,
-              borderRight: (t) => `1px solid ${t.palette.divider}`,
-              backgroundColor: '#FFFFFF',
+              border: 'none',
             },
           }}
         >
@@ -223,10 +378,11 @@ export function AppShell({ title, children }: AppShellProps) {
           flexGrow: 1,
           width: { md: `calc(100% - ${DRAWER_WIDTH}px)` },
           minWidth: 0,
+          bgcolor: 'background.default',
         }}
       >
         <Toolbar />
-        <Box sx={{ p: { xs: 2, md: 3 } }}>{children}</Box>
+        <Box sx={{ p: { xs: 2, md: 3 }, maxWidth: 1480, mx: 'auto' }}>{children}</Box>
       </Box>
     </Box>
   );
