@@ -40,7 +40,7 @@ class StubAdaptersTest {
     void pricingStubReturnsItemizedEstimateWhoseComponentsSumToTotal() {
         StubPricingClientAdapter pricing = new StubPricingClientAdapter();
         PriceEstimateRequest req = new PriceEstimateRequest(CATEGORY, SUB, UUID.randomUUID(),
-                false, java.time.Instant.now());
+                false, java.time.Instant.now(), null);
 
         PriceEstimate estimate = pricing.estimate(req);
 
@@ -56,9 +56,9 @@ class StubAdaptersTest {
         StubPricingClientAdapter pricing = new StubPricingClientAdapter();
 
         PriceEstimate normal = pricing.estimate(
-                new PriceEstimateRequest(CATEGORY, SUB, UUID.randomUUID(), false, java.time.Instant.now()));
+                new PriceEstimateRequest(CATEGORY, SUB, UUID.randomUUID(), false, java.time.Instant.now(), null));
         PriceEstimate emergency = pricing.estimate(
-                new PriceEstimateRequest(CATEGORY, SUB, UUID.randomUUID(), true, java.time.Instant.now()));
+                new PriceEstimateRequest(CATEGORY, SUB, UUID.randomUUID(), true, java.time.Instant.now(), null));
 
         assertThat(emergency.components().get("emergencyCharge")).isGreaterThan(BigDecimal.ZERO);
         assertThat(emergency.total()).isGreaterThan(normal.total());

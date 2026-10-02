@@ -25,6 +25,10 @@ public interface PaymentGatewayPort {
      * Verifies the cryptographic signature of a gateway callback (Requirement 12.5). Adapters use
      * the gateway's documented signing scheme (typically HMAC-SHA256 over the raw payload).
      *
+     * <p>A valid signature only authenticates the payload bytes. Everything the callback decides
+     * (target transaction, outcome, amount, failure reason) must then be read from that same signed
+     * payload, never from unsigned request fields; see {@code SignedCallbackPayload}.
+     *
      * @return {@code true} if the signature is valid for the given payload.
      */
     boolean verifyCallbackSignature(String payload, String signature);

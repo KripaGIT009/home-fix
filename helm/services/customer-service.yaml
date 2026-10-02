@@ -1,0 +1,29 @@
+# customer-service - per-service values for helm/homefix-service.
+# Mirrors the service's entry in docker-compose.core.yml, minus dev-only settings
+# (inline secrets, ddl-auto=update, debug logging, dev seeding/OTP echo).
+# The port must equal the Dockerfile EXPOSE and compose SERVER_PORT.
+#
+# KMS_PROVIDER=local (AES key from the Secret) and GEOCODING_PROVIDER=noop mirror
+# compose; no AWS KMS or geocoding adapter exists yet.
+
+serviceName: customer-service
+containerPort: 8082
+
+dependencies:
+  postgres: true
+  redis: false
+  kafka: false
+
+# Keys read from the existing Secret "customer-service-secrets". DB_* keys are added
+# automatically by dependencies.postgres (db_host, db_port, db_name, db_username,
+# db_password).
+secrets:
+  env:
+    JWT_SECRET: jwt_secret
+    KMS_LOCAL_DATA_KEY: kms_data_key
+    INTERNAL_API_KEY: internal_api_key
+
+config:
+  KMS_PROVIDER: "local"
+  GEOCODING_PROVIDER: "noop"
+  BOOKING_SERVICE_URL: "http://booking-service:8084"

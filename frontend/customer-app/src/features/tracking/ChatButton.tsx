@@ -22,7 +22,7 @@ export function ChatButton({ bookingId, onOpen }: { bookingId: string; onOpen: (
       disabled={disabled}
       aria-label="Open chat with your provider"
     >
-      {channel.data && !channel.data.active ? 'Chat closed' : 'Message provider'}
+      {channel.data && !channel.data.active ? 'Chat closed' : 'Message your pro'}
     </Button>
   );
 }

@@ -11,7 +11,7 @@ import org.springframework.stereotype.Component;
 public class BookingClientProperties {
 
     /** Base URL of the Booking Service. */
-    private String baseUrl = "http://booking-service:8085";
+    private String baseUrl = "http://booking-service:8084";
 
     public String getBaseUrl() {
         return baseUrl;

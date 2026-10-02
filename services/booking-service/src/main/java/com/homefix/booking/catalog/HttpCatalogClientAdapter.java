@@ -1,7 +1,9 @@
 package com.homefix.booking.catalog;
 
 import java.time.Duration;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import org.slf4j.Logger;
@@ -29,6 +31,11 @@ import com.homefix.shared.resilience.TransientFailures;
  * bookable", which the booking flow reports as service-unavailable: with the catalog down there
  * is no way to tell an active service from a deactivated one, and accepting the booking risks
  * dispatching work for a service that has been withdrawn.
+ *
+ * <p>{@link #subcategoryNames()} reads the same listing for the booking read endpoints, under its
+ * own fallback: an empty map. A name is only a label there, so an unreachable catalog degrades the
+ * label rather than failing the read. Both calls share the {@value #DEPENDENCY} breaker, so a
+ * catalog outage observed by one short-circuits the other.
  */
 @Component
 @ConditionalOnProperty(name = "homefix.catalog.client", havingValue = "http")
@@ -43,6 +50,7 @@ public class HttpCatalogClientAdapter implements CatalogClientPort {
 
     private final RestClient restClient;
     private final ResilientCall<Boolean> resilientCall;
+    private final ResilientCall<Map<UUID, String>> namesCall;
 
     public HttpCatalogClientAdapter(@Value("${homefix.catalog.base-url}") String baseUrl,
                                     ResilienceFactory resilienceFactory) {
@@ -60,6 +68,13 @@ public class HttpCatalogClientAdapter implements CatalogClientPort {
                             + "bookable: {}", cause.getMessage());
                     return Boolean.FALSE;
                 });
+        this.namesCall = ResilientCall.forDependency(
+                resilienceFactory, DEPENDENCY, TimeoutProfile.CRITICAL_PATH,
+                cause -> {
+                    log.warn("Service Catalog unavailable; subcategory names unresolved: {}",
+                            cause.getMessage());
+                    return Map.of();
+                });
     }
 
     @Override
@@ -68,15 +83,7 @@ public class HttpCatalogClientAdapter implements CatalogClientPort {
             return false;
         }
         return resilientCall.execute(() -> {
-            List<CategoryView> catalog = restClient.get()
-                    .uri("/catalog/categories")
-                    .retrieve()
-                    // 5xx is transient: surface it so retry and the breaker act on it (Req 24.2).
-                    .onStatus(status -> status.is5xxServerError(), (req, res) -> {
-                        throw new TransientFailures.ServerErrorException(
-                                res.getStatusCode().value(), "Service Catalog returned 5xx");
-                    })
-                    .body(CATEGORY_LIST);
+            List<CategoryView> catalog = fetchActiveCatalog();
             if (catalog == null) {
                 return false;
             }
@@ -88,6 +95,43 @@ public class HttpCatalogClientAdapter implements CatalogClientPort {
         });
     }
 
+    @Override
+    public Map<UUID, String> subcategoryNames() {
+        return namesCall.execute(() -> {
+            List<CategoryView> catalog = fetchActiveCatalog();
+            Map<UUID, String> names = new HashMap<>();
+            if (catalog == null) {
+                return names;
+            }
+            for (CategoryView category : catalog) {
+                if (category.subcategories() == null) {
+                    continue;
+                }
+                for (SubcategoryView sub : category.subcategories()) {
+                    // A nameless entry is skipped rather than mapped to null, so callers see the
+                    // same "missing id" they already handle for a deactivated subcategory.
+                    if (sub.id() != null && sub.name() != null && !sub.name().isBlank()) {
+                        names.put(sub.id(), sub.name());
+                    }
+                }
+            }
+            return names;
+        });
+    }
+
+    /** {@code GET /catalog/categories}: the active catalog, deactivated entries already excluded. */
+    private List<CategoryView> fetchActiveCatalog() {
+        return restClient.get()
+                .uri("/catalog/categories")
+                .retrieve()
+                // 5xx is transient: surface it so retry and the breaker act on it (Req 24.2).
+                .onStatus(status -> status.is5xxServerError(), (req, res) -> {
+                    throw new TransientFailures.ServerErrorException(
+                            res.getStatusCode().value(), "Service Catalog returned 5xx");
+                })
+                .body(CATEGORY_LIST);
+    }
+
     private static final org.springframework.core.ParameterizedTypeReference<List<CategoryView>>
             CATEGORY_LIST = new org.springframework.core.ParameterizedTypeReference<>() {
             };
@@ -97,6 +141,6 @@ public class HttpCatalogClientAdapter implements CatalogClientPort {
     }
 
     /** Active subcategory projection nested in {@link CategoryView}. */
-    record SubcategoryView(UUID id) {
+    record SubcategoryView(UUID id, String name) {
     }
 }

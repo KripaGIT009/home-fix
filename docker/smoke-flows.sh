@@ -77,10 +77,17 @@ field() { printf '%s' "${CURRENT_BODY}" | sed "s/.*\"$1\":\"\([^\"]*\)\".*/\1/";
 # Registers a fresh account and echoes its access token.
 SMS_LOG="${SMS_LOG:-$(dirname "$0")/dev-sms/dev-sms.log}"
 
+# The role is chosen when the OTP is requested -- the auth service stores it on the
+# OTP session and applies it at verification -- so it must be sent here, not at verify.
+# Omitting it silently yields a CUSTOMER, which made the "provider" checks below
+# exercise a customer token and fail on role enforcement rather than on the endpoint.
 login() {
   local mobile="$1"
+  local role="${2:-}"
+  local body="{\"mobileNumber\":\"${mobile}\"}"
+  [ -n "${role}" ] && body="{\"mobileNumber\":\"${mobile}\",\"role\":\"${role}\"}"
   curl_retry -o /dev/null -X POST -H 'Content-Type: application/json' \
-    -d "{\"mobileNumber\":\"${mobile}\"}" "${AUTH}/auth/register/otp"
+    -d "${body}" "${AUTH}/auth/register/otp"
   sleep 1
   # This number's code from the dev SMS file; container logs only as fallback.
   local otp
@@ -167,16 +174,20 @@ check 'unknown subcategory has no parameters' '404|422' \
 
 # ------------------------------------------------------------------ booking --
 section 'Booking — creation and state machine (Requirements 7-9)'
+# A booking must name a saved address: dispatch resolves the job's coordinates from it. This
+# one is in Ara, inside the seeded test providers' service radius (seed-provider-profiles.sql).
+check 'customer saves a service address' '201'   -X POST -H "${AUTHZ}" -H "${JSON}" -d '{"label":"Home","lat":25.5571,"lng":84.6612}'   "${CUSTOMER}/customers/${CUSTOMER_ID}/addresses"
+ADDRESS_ID="$(field addressId)"
 SCHEDULED="$(date -u -d '+6 hours' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v+6H +%Y-%m-%dT%H:%M:%SZ)"
 check 'scheduled booking is created' '201' \
   -X POST -H "${AUTHZ}" -H "${JSON}" \
-  -d "{\"categoryId\":\"${CATEGORY_ID}\",\"subcategoryId\":\"${SUBCATEGORY_ID}\",\"emergency\":false,\"scheduledAt\":\"${SCHEDULED}\",\"description\":\"Kitchen tap dripping\"}" \
+  -d "{\"addressId\":\"${ADDRESS_ID}\",\"categoryId\":\"${CATEGORY_ID}\",\"subcategoryId\":\"${SUBCATEGORY_ID}\",\"emergency\":false,\"scheduledAt\":\"${SCHEDULED}\",\"description\":\"Kitchen tap dripping\"}" \
   "${BOOKING}/bookings"
 BOOKING_REF="$(field reference)"
 BOOKING_ID="$(field bookingId)"
 check 'emergency booking dispatches immediately' '201' \
   -X POST -H "${AUTHZ}" -H "${JSON}" \
-  -d "{\"categoryId\":\"${CATEGORY_ID}\",\"subcategoryId\":\"${SUBCATEGORY_ID}\",\"emergency\":true,\"description\":\"Burst pipe\"}" \
+  -d "{\"addressId\":\"${ADDRESS_ID}\",\"categoryId\":\"${CATEGORY_ID}\",\"subcategoryId\":\"${SUBCATEGORY_ID}\",\"emergency\":true,\"description\":\"Burst pipe\"}" \
   "${BOOKING}/bookings"
 if printf '%s' "${CURRENT_BODY}" | grep -q 'SEARCHING_PROVIDER'; then
   printf '  PASS  %-52s %s\n' 'emergency booking enters SEARCHING_PROVIDER' 'ok'
@@ -187,11 +198,11 @@ else
 fi
 check 'unknown subcategory is refused' '422|503' \
   -X POST -H "${AUTHZ}" -H "${JSON}" \
-  -d "{\"categoryId\":\"${CATEGORY_ID}\",\"subcategoryId\":\"11111111-1111-1111-1111-111111111111\",\"emergency\":true}" \
+  -d "{\"addressId\":\"${ADDRESS_ID}\",\"categoryId\":\"${CATEGORY_ID}\",\"subcategoryId\":\"11111111-1111-1111-1111-111111111111\",\"emergency\":true}" \
   "${BOOKING}/bookings"
 check 'booking lead time is enforced' '422|400' \
   -X POST -H "${AUTHZ}" -H "${JSON}" \
-  -d "{\"categoryId\":\"${CATEGORY_ID}\",\"subcategoryId\":\"${SUBCATEGORY_ID}\",\"emergency\":false,\"scheduledAt\":\"2020-01-01T00:00:00Z\"}" \
+  -d "{\"addressId\":\"${ADDRESS_ID}\",\"categoryId\":\"${CATEGORY_ID}\",\"subcategoryId\":\"${SUBCATEGORY_ID}\",\"emergency\":false,\"scheduledAt\":\"2020-01-01T00:00:00Z\"}" \
   "${BOOKING}/bookings"
 check 'booking endpoints require a token' '401|403' \
   -X POST -H "${JSON}" -d '{}' "${BOOKING}/bookings"
@@ -200,7 +211,7 @@ check 'illegal transition is rejected' '404|409|422' \
 
 # ----------------------------------------------------------------- provider --
 section 'Provider — profile, availability, earnings (Requirement 4)'
-PROVIDER_SESSION="$(login "+9197${STAMP: -8}")"
+PROVIDER_SESSION="$(login "+9197${STAMP: -8}" SERVICE_PROVIDER)"
 PROVIDER_TOKEN="$(printf '%s' "${PROVIDER_SESSION}" | sed 's/.*"accessToken":"\([^"]*\)".*/\1/')"
 PROVIDER_ID="$(printf '%s' "${PROVIDER_SESSION}" | sed 's/.*"userId":"\([^"]*\)".*/\1/')"
 PROVIDER_AUTHZ="Authorization: Bearer ${PROVIDER_TOKEN}"
@@ -219,9 +230,11 @@ check 'admin approval requires the ADMIN role' '401|403|404|422' \
 
 # ----------------------------------------------------------------- location --
 section 'Location — ingestion, snapshot, ETA (Requirement 10)'
+# The body carries the reporting provider (LocationUpdateRequest.providerId);
+# omitting it is a 400, which used to be masked by the unnamed-@PathVariable 500.
 check 'location ingest' '200|202|204|404|422' \
   -X POST -H "${PROVIDER_AUTHZ}" -H "${JSON}" \
-  -d '{"latitude":25.5541,"longitude":84.6636}' "${LOCATION}/locations/${BOOKING_ID}"
+  -d '{"providerId":"'"${PROVIDER_ID}"'","latitude":25.5541,"longitude":84.6636}' "${LOCATION}/locations/${BOOKING_ID}"
 check 'location snapshot' '200|404' -H "${AUTHZ}" "${LOCATION}/locations/${BOOKING_ID}"
 check 'location requires auth' '401|403' "${LOCATION}/locations/${BOOKING_ID}"
 
@@ -291,11 +304,16 @@ check 'gateway returns a correlation id' '200' -H "${AUTHZ}" -D - -o /dev/null "
 
 # --------------------------------------------------------------------- SPAs --
 section 'Single-page apps'
+SPA_SEQ=0
 for entry in "customer-app:5173" "provider-app:5174" "admin-portal:5175"; do
   check "${entry%%:*} serves" '200' "http://localhost:${entry#*:}/"
+  # A fresh number per app per run. A number may request at most five OTPs an
+  # hour, so the previous fixed number spent three of its allowance on every
+  # run, making a second run within the hour fail 429 on a working proxy.
   check "${entry%%:*} proxies auth" '202' \
-    -X POST -H "${JSON}" -d '{"mobileNumber":"+919812340000"}' \
+    -X POST -H "${JSON}" -d "{\"mobileNumber\":\"+9198${STAMP: -7}${SPA_SEQ}\"}" \
     "http://localhost:${entry#*:}/api/auth/register/otp"
+  SPA_SEQ=$((SPA_SEQ + 1))
   check "${entry%%:*} proxies the gateway" '200' -H "${AUTHZ}" \
     "http://localhost:${entry#*:}/api/catalog/categories"
 done

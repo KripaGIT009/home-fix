@@ -13,6 +13,14 @@ spring:
       hibernate:
         default_schema: auth
     open-in-view: false
+  # Schema migrations own the DDL; Hibernate only validates against it. V1 is the baseline
+  # schema, so on a database Hibernate already populated (ddl-auto=update, the old local default)
+  # Flyway records V1 as applied instead of re-creating tables that exist.
+  flyway:
+    schemas: auth
+    default-schema: auth
+    baseline-on-migrate: true
+    baseline-version: 1
   data:
     redis:
       host: ${REDIS_HOST:localhost}
@@ -29,10 +37,20 @@ homefix:
     # Required: no default, so the service fails fast when JWT_SECRET is not set.
     jwt-secret: ${JWT_SECRET}
   auth:
+    # Shared service credential other services present on /internal/** (X-Internal-Api-Key),
+    # e.g. the Notification Service's contact lookup. Same INTERNAL_API_KEY the Booking Service
+    # uses. Unset means every internal call is refused (fail closed); sign-in is unaffected, so
+    # this deliberately does not stop the service from starting.
+    internal-api-key: ${INTERNAL_API_KEY:}
     token:
       issuer: homefix-auth
       access-ttl: 15m
       refresh-ttl: 30d
+    # One-off removal at startup (SCAN, idempotent) of refresh tokens that earlier versions stored
+    # in clear as auth:refresh:{token}; tokens are now keyed by their SHA-256. Sessions holding a
+    # pre-upgrade refresh token sign in again. Safe to turn off once every environment has run it.
+    legacy-refresh-cleanup:
+      enabled: ${LEGACY_REFRESH_CLEANUP_ENABLED:true}
     otp:
       ttl: 5m
       length: 6

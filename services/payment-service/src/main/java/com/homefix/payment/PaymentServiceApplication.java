@@ -5,6 +5,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.autoconfigure.domain.EntityScan;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 import com.homefix.payment.config.PaymentProperties;
 
@@ -20,9 +21,13 @@ import com.homefix.payment.config.PaymentProperties;
  * <p>The shared security, observability, and outbox libraries auto-configure from the classpath.
  * The shared outbox JPA entities/repositories live in {@code com.homefix.shared.outbox}, so both
  * they and this service's own persistence package are explicitly scanned.
+ *
+ * <p>{@code @EnableScheduling} drives the sweep that re-sends provider wallet credits still owed
+ * after a payment succeeded ({@code WalletCreditSweeper}).
  */
 @SpringBootApplication
 @EnableConfigurationProperties(PaymentProperties.class)
+@EnableScheduling
 // One base package per source root, not one class per entity/repository:
 // ProcessedEventRepository sits in the com.homefix.shared.outbox.kafka SUBpackage, so
 // naming both classes scans that subpackage twice and the duplicate bean definition

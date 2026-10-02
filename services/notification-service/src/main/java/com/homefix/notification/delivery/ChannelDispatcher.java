@@ -16,9 +16,9 @@ import org.springframework.stereotype.Component;
  * the orchestrator so {@link NotificationDeliveryService} deals only with the abstract notion of
  * "deliver on channel X".
  *
- * <p>A channel whose recipient address is missing is treated as an unrecoverable delivery
- * failure for that channel (it cannot succeed on retry), signalled via
- * {@link NotificationDeliveryException}.
+ * <p>The orchestrator asks {@link #canAddress} first and skips a channel the recipient has no
+ * address for, since retrying cannot help. Dispatching to such a channel anyway is still refused
+ * with {@link NotificationDeliveryException} as a guard.
  */
 @Component
 public class ChannelDispatcher {
@@ -37,7 +37,22 @@ public class ChannelDispatcher {
     }
 
     /**
-     * Dispatches the message on the given channel.
+     * Whether the recipient has an address on the channel. In-app delivery is addressed by user id
+     * and is always possible; SMS, email and push need a phone number, email address and device
+     * token respectively.
+     */
+    public boolean canAddress(NotificationChannel channel, NotificationContact contact) {
+        return switch (channel) {
+            case SMS -> hasText(contact.mobileNumber());
+            case EMAIL -> hasText(contact.emailAddress());
+            case PUSH -> hasText(contact.deviceToken());
+            case IN_APP -> true;
+        };
+    }
+
+    /**
+     * Dispatches the message on the given channel, with that channel's text (an admin may have
+     * edited, say, the SMS wording independently of the email).
      *
      * @throws NotificationDeliveryException if the channel address is missing or the vendor fails
      */
@@ -46,22 +61,27 @@ public class ChannelDispatcher {
         switch (channel) {
             case SMS -> {
                 requireAddress(contact.mobileNumber(), "SMS");
-                smsPort.send(contact.mobileNumber(), message.body());
+                smsPort.send(contact.mobileNumber(), message.bodyFor(channel));
             }
             case EMAIL -> {
                 requireAddress(contact.emailAddress(), "email");
-                emailPort.send(contact.emailAddress(), message.title(), message.body());
+                emailPort.send(contact.emailAddress(), message.titleFor(channel), message.bodyFor(channel));
             }
             case PUSH -> {
                 requireAddress(contact.deviceToken(), "push");
-                pushPort.send(contact.deviceToken(), message.title(), message.body());
+                pushPort.send(contact.deviceToken(), message.titleFor(channel), message.bodyFor(channel));
             }
-            case IN_APP -> inAppPort.publish(event.recipientUserId(), message.title(), message.body());
+            case IN_APP -> inAppPort.publish(event.recipientUserId(),
+                    message.titleFor(channel), message.bodyFor(channel));
         }
     }
 
+    private static boolean hasText(String address) {
+        return address != null && !address.isBlank();
+    }
+
     private static void requireAddress(String address, String channelLabel) {
-        if (address == null || address.isBlank()) {
+        if (!hasText(address)) {
             throw new NotificationDeliveryException("missing " + channelLabel + " address for recipient");
         }
     }

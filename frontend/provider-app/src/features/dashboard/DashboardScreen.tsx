@@ -6,12 +6,14 @@ import { QueryStateView } from '@components/QueryStateView';
 import { useAuthStore } from '@stores/authStore';
 import { EarningsSummaryCard } from './EarningsSummaryCard';
 import { ActiveJobCard } from './ActiveJobCard';
+import { PendingOffersSection } from './PendingOffersSection';
 import { useActiveJobs, useEarningsSummary } from './hooks';
 
 /**
- * Provider Dashboard (Requirement 28.8): earnings summary (wallet balance +
- * today's earnings) followed by the active job list with status indicators.
- * Mobile-first single-column layout inside the shared AppShell.
+ * Provider Dashboard (Requirement 28.8): open job offers (polled, shown only
+ * while there are any), the earnings summary (wallet balance + today's
+ * earnings), and the active job list with status indicators. Mobile-first
+ * single-column layout inside the shared AppShell.
  */
 export function DashboardScreen() {
   const navigate = useNavigate();
@@ -21,6 +23,7 @@ export function DashboardScreen() {
   const activeJobs = useActiveJobs();
 
   const openJob = (bookingId: string) => navigate(`/jobs/${bookingId}`);
+  const openOffer = (bookingId: string) => navigate(`/jobs/${bookingId}/request`);
 
   const initials = (displayName ?? '')
     .split(' ')
@@ -47,6 +50,8 @@ export function DashboardScreen() {
             </Typography>
           </Box>
         </Stack>
+
+        <PendingOffersSection onOpen={openOffer} />
 
         {summary.isLoading ? (
           <Skeleton variant="rounded" height={168} sx={{ borderRadius: 4 }} />
@@ -83,7 +88,7 @@ export function DashboardScreen() {
           error={activeJobs.error}
           onRetry={() => void activeJobs.refetch()}
           isEmpty={jobCount === 0}
-          emptyMessage="No active jobs right now. New job offers will appear here."
+          emptyMessage="No active jobs right now. New job offers will appear above."
         >
           <Stack spacing={1.5}>
             {activeJobs.data?.map((job) => (

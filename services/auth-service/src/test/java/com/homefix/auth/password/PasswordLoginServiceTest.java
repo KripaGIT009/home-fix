@@ -23,6 +23,8 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 import com.homefix.auth.config.PasswordLoginProperties;
+import com.homefix.auth.domain.AccountDisabledException;
+import com.homefix.auth.domain.AccountStatus;
 import com.homefix.auth.domain.Role;
 import com.homefix.auth.domain.UserAccount;
 import com.homefix.auth.domain.UserAccountRepository;
@@ -268,5 +270,34 @@ class PasswordLoginServiceTest {
             return ex;
         }
         throw new AssertionError("expected a PasswordLoginException, but none was thrown");
+    }
+
+    // ----- Disabled accounts (Requirement 19.2) -----
+
+    @ParameterizedTest
+    @ValueSource(strings = {"SUSPENDED", "DEACTIVATED"})
+    void refusesTheCorrectPasswordForADisabledAccountWithoutIssuingTokens(String status) {
+        UserAccount account = accountWithCredentials(USERNAME, PASSWORD, Role.ADMIN);
+        account.changeStatus(AccountStatus.valueOf(status));
+        stubFound(account);
+
+        assertThatThrownBy(() -> service.authenticate(USERNAME, PASSWORD))
+                .isInstanceOf(AccountDisabledException.class)
+                .satisfies(ex -> assertThat(((AccountDisabledException) ex).getStatus())
+                        .isEqualTo(HttpStatus.FORBIDDEN));
+        verify(tokenService, never()).issueTokens(anyString(), anyList());
+    }
+
+    /** The status is revealed only to a caller who already knows the password. */
+    @Test
+    void aWrongPasswordForADisabledAccountIsThePlainCredentialFailure() {
+        UserAccount account = accountWithCredentials(USERNAME, PASSWORD, Role.ADMIN);
+        account.changeStatus(AccountStatus.SUSPENDED);
+        stubFound(account);
+
+        assertThatThrownBy(() -> service.authenticate(USERNAME, "wrong"))
+                .isInstanceOf(PasswordLoginException.class)
+                .satisfies(ex -> assertThat(((PasswordLoginException) ex).getErrorCode())
+                        .isEqualTo("INVALID_CREDENTIALS"));
     }
 }

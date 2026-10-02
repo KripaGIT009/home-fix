@@ -20,7 +20,10 @@ import com.homefix.complaint.api.dto.ComplaintResponse;
 import com.homefix.complaint.api.dto.ComplaintStatsResponse;
 import com.homefix.complaint.api.dto.CreateComplaintRequest;
 import com.homefix.complaint.api.dto.RefundRequest;
+import com.homefix.complaint.api.dto.RefundResponse;
 import com.homefix.complaint.domain.Complaint;
+import com.homefix.complaint.domain.ComplaintRefund;
+import com.homefix.complaint.service.ApproveRefundCommand;
 import com.homefix.complaint.service.AttachmentMetadata;
 import com.homefix.complaint.service.ComplaintException;
 import com.homefix.complaint.service.ComplaintService;
@@ -66,12 +69,17 @@ public class ComplaintController {
         return ComplaintResponse.from(complaintService.changeStatus(complaintId, req.status()));
     }
 
-    /** Support_Agent: approve a refund; coordinates with the Payment Service (16.5, 16.6). */
+    /**
+     * Support_Agent: approve a refund; coordinates with the Payment Service (16.5, 16.6). The
+     * approving agent is the JWT subject. A complaint is refunded at most once; the body is the
+     * recorded refund, SUCCEEDED or FAILED (a rejection is not an error, see 16.6).
+     */
     @PostMapping("/{complaintId}/refund")
-    public ResponseEntity<Void> approveRefund(@PathVariable UUID complaintId,
-                                              @Valid @RequestBody RefundRequest req) {
-        complaintService.approveRefund(complaintId, req.amount());
-        return ResponseEntity.accepted().build();
+    public ResponseEntity<RefundResponse> approveRefund(@PathVariable UUID complaintId,
+                                                        @Valid @RequestBody RefundRequest req) {
+        ComplaintRefund refund = complaintService.approveRefund(new ApproveRefundCommand(
+                complaintId, req.amount(), req.reason(), currentUser(), req.idempotencyKey()));
+        return ResponseEntity.accepted().body(RefundResponse.from(refund));
     }
 
     /** Support_Agent: set the complaint to DISPUTED, holding the provider settlement (16.7). */

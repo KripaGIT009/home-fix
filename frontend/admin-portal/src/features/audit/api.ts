@@ -16,7 +16,8 @@ export type AuditAction = 'CREATE' | 'UPDATE' | 'DELETE' | 'APPROVE' | 'REJECT';
 export interface AuditLogEntry {
   id: string;
   actorId: string;
-  actorName: string;
+  /** The Admin Service holds only the actor's id; the screen falls back to it. */
+  actorName?: string | null;
   action: AuditAction;
   entityType: string;
   entityId: string;
@@ -27,13 +28,17 @@ export interface AuditLogEntry {
 
 export interface AuditLogPage {
   entries: AuditLogEntry[];
-  /** Cursor/token for the next page, when more results exist. */
-  nextCursor?: string;
+  /** Opaque keyset cursor for the next page; null/absent on the last page. */
+  nextCursor?: string | null;
 }
 
-export interface AuditLogQuery {
+/** The filters a user picks; changing them starts again from the first page. */
+export interface AuditLogFilters {
   action?: AuditAction | '';
   entityType?: string;
+}
+
+export interface AuditLogQuery extends AuditLogFilters {
   cursor?: string;
 }
 

@@ -1,14 +1,16 @@
 package com.homefix.outbox.support;
 
-import java.util.ArrayList;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 import com.homefix.outbox.alert.OutboxAlertPort;
-import com.homefix.outbox.relay.Sleeper;
 import com.homefix.shared.outbox.kafka.KafkaProducerTemplate;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
@@ -23,8 +25,8 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * Shared in-memory doubles for the outbox-processor unit tests: a recording alert port, a
- * no-op/recording sleeper, and helpers that build a {@link KafkaProducerTemplate} over a mocked
+ * Shared in-memory doubles for the outbox-processor unit tests: a recording alert port, a clock
+ * the test can move forward, and helpers that build a {@link KafkaProducerTemplate} over a mocked
  * {@link KafkaTemplate} whose send either ACKs or fails a configurable number of times.
  */
 public final class TestSupport {
@@ -48,13 +50,35 @@ public final class TestSupport {
         }
     }
 
-    /** No-op sleeper that records each backoff delay so the retry schedule can be asserted. */
-    public static final class RecordingSleeper implements Sleeper {
-        public final List<Long> sleeps = new ArrayList<>();
+    /** A clock that stands still until the test advances it, for asserting persisted schedules. */
+    public static final class MutableClock extends Clock {
+        private volatile Instant now;
+
+        public MutableClock(Instant start) {
+            this.now = start;
+        }
+
+        public void advance(Duration by) {
+            now = now.plus(by);
+        }
+
+        public void set(Instant instant) {
+            now = instant;
+        }
 
         @Override
-        public void sleep(long millis) {
-            sleeps.add(millis);
+        public Instant instant() {
+            return now;
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return ZoneOffset.UTC;
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            return this;
         }
     }
 
@@ -67,14 +91,27 @@ public final class TestSupport {
         return new SendCounter(failuresBeforeSuccess, false);
     }
 
-    /** Builds a {@link KafkaProducerTemplate} whose sends always fail. */
+    /**
+     * Builds a {@link KafkaProducerTemplate} whose sends always fail with an error the relay treats
+     * as non-retriable, so every failure spends an attempt.
+     */
     public static SendCounter producerAlwaysFailing() {
         return new SendCounter(Integer.MAX_VALUE, true);
+    }
+
+    /** Builds a {@link KafkaProducerTemplate} whose sends always fail with {@code failure}. */
+    public static SendCounter producerAlwaysFailingWith(Throwable failure) {
+        return new SendCounter(Integer.MAX_VALUE, true, failure, Map.of());
     }
 
     /** Builds a {@link KafkaProducerTemplate} whose sends always ACK. */
     public static SendCounter producerAlwaysSucceeding() {
         return new SendCounter(0, false);
+    }
+
+    /** As {@link #producerAlwaysSucceeding()}, with extra producer config (e.g. max.block.ms). */
+    public static SendCounter producerAlwaysSucceeding(Map<String, Object> extraConfig) {
+        return new SendCounter(0, false, null, extraConfig);
     }
 
     /**
@@ -87,13 +124,19 @@ public final class TestSupport {
         public String lastTopic;
         public String lastKey;
 
-        @SuppressWarnings("unchecked")
         private SendCounter(int failuresBeforeSuccess, boolean alwaysFail) {
+            this(failuresBeforeSuccess, alwaysFail, null, Map.of());
+        }
+
+        @SuppressWarnings("unchecked")
+        private SendCounter(int failuresBeforeSuccess, boolean alwaysFail, Throwable failure,
+                            Map<String, Object> extraConfig) {
             KafkaTemplate<String, String> template = mock(KafkaTemplate.class);
             ProducerFactory<String, String> factory = mock(ProducerFactory.class);
             Map<String, Object> config = new HashMap<>();
             config.put(ProducerConfig.ACKS_CONFIG, "all");
             config.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true);
+            config.putAll(extraConfig);
             when(template.getProducerFactory()).thenReturn(factory);
             when(factory.getConfigurationProperties()).thenReturn(config);
 
@@ -103,8 +146,9 @@ public final class TestSupport {
                 lastKey = record.key();
                 sends++;
                 if (alwaysFail || sends <= failuresBeforeSuccess) {
-                    return CompletableFuture.failedFuture(
-                            new IllegalStateException("simulated broker unavailable"));
+                    return CompletableFuture.failedFuture(failure != null
+                            ? failure
+                            : new IllegalStateException("simulated broker unavailable"));
                 }
                 SendResult<String, String> result = mock(SendResult.class);
                 when(result.getRecordMetadata()).thenReturn(

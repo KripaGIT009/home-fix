@@ -4,6 +4,8 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
 
+import org.springframework.test.util.ReflectionTestUtils;
+
 import com.homefix.booking.domain.Booking;
 import com.homefix.booking.domain.BookingStatus;
 
@@ -24,6 +26,20 @@ public final class Bookings {
     public static Booking inState(BookingStatus status) {
         Booking b = create();
         b.applyStatus(status);
+        return b;
+    }
+
+    /**
+     * A booking placed by {@code customerId} for {@code subcategoryId} at a fixed
+     * {@code createdAt}, for read-side ordering tests. {@code Booking} stamps its creation time
+     * itself and exposes no setter, so the field is overwritten after construction; two bookings
+     * created back to back could otherwise share an instant and have no defined order.
+     */
+    public static Booking placed(UUID customerId, UUID subcategoryId, String reference,
+                                 Instant createdAt, Instant scheduledAt) {
+        Booking b = Booking.create(reference, customerId, UUID.randomUUID(), subcategoryId,
+                UUID.randomUUID(), false, scheduledAt, new BigDecimal("100.00"));
+        ReflectionTestUtils.setField(b, "createdAt", createdAt);
         return b;
     }
 }

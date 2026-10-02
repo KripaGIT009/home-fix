@@ -13,6 +13,14 @@ spring:
       hibernate:
         default_schema: promotion
     open-in-view: false
+  # Schema migrations own the DDL; Hibernate only validates against it. V1 is the baseline
+  # schema, so on a database Hibernate already populated (ddl-auto=update, the old local default)
+  # Flyway records V1 as applied instead of re-creating tables that exist.
+  flyway:
+    schemas: promotion
+    default-schema: promotion
+    baseline-on-migrate: true
+    baseline-version: 1
   data:
     redis:
       host: ${REDIS_HOST:localhost}
@@ -32,6 +40,11 @@ homefix:
     # Maximum number of optimistic-lock retries when a concurrent redemption/cancellation collides
     # on the same coupon row before returning a 409 (Requirement 21.3, Property 20).
     max-redemption-retries: 5
+    # Shared service credential other services present on /internal/** (X-Internal-Api-Key),
+    # e.g. the Pricing Engine's coupon quote. Same INTERNAL_API_KEY the other services use.
+    # No usable default: when unset every /internal/** request is refused (the rest of the
+    # service is unaffected).
+    internal-api-key: ${INTERNAL_API_KEY:}
   outbox:
     enabled: true
 

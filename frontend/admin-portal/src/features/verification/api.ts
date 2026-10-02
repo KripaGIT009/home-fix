@@ -13,26 +13,32 @@ import { apiClient } from '@api/client';
 /** A submitted document reference for inline viewing (Requirement 19.3). */
 export interface VerificationDocument {
   id: string;
-  /** Human label, e.g. "Aadhaar", "PAN card", "Trade certificate". */
+  /** Human label, e.g. "Government ID", "PAN card", "Trade certificate". */
   type: string;
   /** MIME type, used to choose an inline renderer (PDF vs image). */
-  contentType: string;
+  contentType?: string | null;
   /**
-   * URL the browser can render inline. The Admin Service returns a short-lived,
-   * pre-signed URL so the document viewer can embed it without a separate
-   * download step (Requirement 19.3).
+   * URL the browser can render inline: a short-lived, pre-signed URL so the
+   * document viewer can embed it without a separate download step
+   * (Requirement 19.3). Null when the storage backend cannot issue one; the
+   * viewer then names the document and says no preview is available.
    */
-  url: string;
-  fileName: string;
+  url?: string | null;
+  /** Original upload name; null while the storage adapter cannot report it. */
+  fileName?: string | null;
 }
 
-/** A provider awaiting verification review. */
+/**
+ * A provider awaiting verification review. The Verification Service owns the
+ * submission; the provider's name, mobile number and skill live in other
+ * services and may come back null or absent.
+ */
 export interface VerificationQueueEntry {
   providerId: string;
-  displayName: string;
-  mobileNumber: string;
+  displayName?: string | null;
+  mobileNumber?: string | null;
   /** Primary skill/trade the provider registered under. */
-  primarySkill: string;
+  primarySkill?: string | null;
   /** ISO 8601 submission timestamp; the queue is sorted by this, oldest first. */
   submittedAt: string;
   documentCount: number;
@@ -70,7 +76,10 @@ export async function fetchVerificationDocuments(
   return data;
 }
 
-/** POST /admin/verification/{id}/decision — approve or reject the submission. */
+/**
+ * POST /admin/verification/{id}/decision — approve or reject the submission.
+ * Answers 204 with no body; 409 when the provider is no longer awaiting review.
+ */
 export async function submitVerificationDecision(
   providerId: string,
   payload: DecisionPayload,

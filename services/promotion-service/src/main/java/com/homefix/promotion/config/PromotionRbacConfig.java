@@ -71,7 +71,10 @@ import jakarta.annotation.PostConstruct;
 @Configuration
 public class PromotionRbacConfig {
 
-    /** Staff tier permitted to create and (de)activate coupons (logical OR). */
+    /**
+     * Staff tier permitted to create and (de)activate coupons and to use the Admin Portal coupon
+     * screens (logical OR).
+     */
     private static final List<String> ADMIN_TIER = List.of("ADMIN", "SUPER_ADMIN");
 
     /**
@@ -100,6 +103,12 @@ public class PromotionRbacConfig {
     @PostConstruct
     public void registerEndpointRoles() {
         var rules = rbacProperties.getEndpointRoles();
+        // Admin Portal coupon management (Requirement 19.2): list, create, deactivate. A separate
+        // prefix, so these cannot widen any /coupons rule below; "/**" also matches the bare
+        // "/admin/coupons" collection path.
+        rules.put("GET /admin/coupons/**", ADMIN_TIER);
+        rules.put("POST /admin/coupons/**", ADMIN_TIER);
+        rules.put("PATCH /admin/coupons/**", ADMIN_TIER);
         // Admin lifecycle actions on a specific coupon (Requirement 21.4).
         rules.put("POST /coupons/*/activate", ADMIN_TIER);
         rules.put("POST /coupons/*/deactivate", ADMIN_TIER);

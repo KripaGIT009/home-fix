@@ -1,210 +1,161 @@
 name: CD — Production Promotion
 
+# Promotes images CI already built and pushed to production. Manual only: there
+# is no automatic promotion after CI, and nothing is rebuilt here — production
+# runs exactly the image (tag = commit SHA) that passed CI.
+#
+# Gates, in order, before anything is deployed:
+#   1. image_tag is a full commit SHA reachable from main;
+#   2. the CI workflow has a successful run on main for that SHA (which includes
+#      the staging deploy whenever STAGING_DEPLOY_ENABLED is on);
+#   3. the "production" GitHub environment's protection rules (configure
+#      required reviewers there);
+#   4. preflight in deploy-services.yml: every image exists in ECR, the namespace
+#      and every "<service>-secrets" Secret exist with the keys the chart reads.
+# Each service is then `helm upgrade --install --atomic`ed and health-checked
+# through its Service; a failed health check rolls that release back.
+#
+# ── Infrastructure this needs and the repository does NOT provide ──
+#   GitHub environment "production" with variables:
+#     AWS_REGION               e.g. ap-south-1
+#     AWS_DEPLOY_ROLE_ARN      IAM role trusted for this repo + environment via
+#                              GitHub OIDC (token.actions.githubusercontent.com),
+#                              with ecr:DescribeImages and EKS cluster access
+#                              (access entry / aws-auth) to deploy into the namespace
+#     ECR_REGISTRY             <account>.dkr.ecr.<region>.amazonaws.com
+#     EKS_CLUSTER_NAME         infra/terraform names it "<project>-<env>-cluster"
+#     K8S_NAMESPACE            namespace the releases go into (must exist)
+#     REDIS_HOST, REDIS_PORT   only if a deployed service needs Redis
+#     KAFKA_BOOTSTRAP_SERVERS  only if a deployed service needs Kafka
+#   ECR repositories named exactly after each service (auth-service, ...).
+#   One Kubernetes Secret per service, "<service>-secrets", in K8S_NAMESPACE,
+#   holding the keys listed in helm/services/<service>.yaml (db_host, db_port,
+#   db_name, db_username, db_password, jwt_secret, ...). Populate them from AWS
+#   Secrets Manager (e.g. External Secrets Operator); never commit them.
+#   A database schema for every service (no migrations exist yet).
+# The same list applies to the "staging" environment used by ci.yml.
+
 on:
-  # Triggered manually after staging integration tests pass, or by the CI
-  # workflow via `workflow_run` once all staging jobs succeed.
   workflow_dispatch:
     inputs:
-      service:
-        description: 'Service name to promote (e.g. hello-world-service)'
-        required: true
-        default: 'hello-world-service'
       image_tag:
-        description: 'Docker image tag to promote to production'
+        description: 'Full 40-character commit SHA on main whose CI run pushed the images'
         required: true
-      staging_run_id:
-        description: 'GitHub Actions run ID of the CI workflow that passed staging'
-        required: false
+      services:
+        description: 'Comma-separated directory names under services/, or "all"'
+        required: true
 
-  # Automatic trigger: promote only when the CI workflow completes
-  # successfully on main (integration-test-staging must have passed).
-  workflow_run:
-    workflows:
-      - 'CI — Lint, Test, Build, Push, Deploy to Staging'
-    types:
-      - completed
-    branches:
-      - main
+permissions:
+  contents: read
 
-env:
-  AWS_REGION: ${{ vars.AWS_REGION || 'ap-south-1' }}
-  ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
-  EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME || 'homefix-eks' }}
-  HELM_RELEASE_PREFIX: homefix
-  PRODUCTION_NAMESPACE: production
-  JAVA_VERSION: '21'
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
 
 jobs:
-  # ─────────────────────────────────────────────
-  # Guard: ensure upstream CI was a full success
-  # ─────────────────────────────────────────────
-  check-upstream:
-    name: Verify Staging Gate Passed
+  plan:
+    name: Verify promotion
     runs-on: ubuntu-latest
-    # When triggered via workflow_run, skip if the upstream run failed.
-    if: >
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      services: ${{ steps.services.outputs.json }}
+    env:
+      IMAGE_TAG: ${{ github.event.inputs.image_tag }}
+      REQUESTED: ${{ github.event.inputs.services }}
     steps:
-      - name: Confirm promotion eligibility
-        run: |
-          echo "Upstream CI concluded: ${{ github.event.workflow_run.conclusion || 'manually triggered' }}"
-          echo "Service  : ${{ github.event.inputs.service || 'determined from upstream' }}"
-          echo "Image tag: ${{ github.event.inputs.image_tag || 'determined from upstream' }}"
-
-  # ─────────────────────────────────────────────
-  # Production deployment
-  # ─────────────────────────────────────────────
-  deploy-production:
-    name: Deploy to Production (EKS)
-    runs-on: ubuntu-latest
-    needs: check-upstream
-    environment:
-      name: production
-      url: https://homefix.app
-    steps:
-      - name: Checkout code
+      - name: Checkout the commit being promoted
         uses: actions/checkout@v4
-
-      - name: Resolve service and tag
-        id: svc
-        run: |
-          SERVICE="${{ github.event.inputs.service || 'hello-world-service' }}"
-          TAG="${{ github.event.inputs.image_tag || github.sha }}"
-          echo "name=${SERVICE}" >> "$GITHUB_OUTPUT"
-          echo "tag=${TAG::8}" >> "$GITHUB_OUTPUT"
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+          fetch-depth: 0
 
-      - name: Log in to Amazon ECR
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Confirm image exists in ECR
+      - name: The tag is a commit on main
         run: |
-          aws ecr describe-images \
-            --repository-name "${{ steps.svc.outputs.name }}" \
-            --image-ids imageTag="${{ steps.svc.outputs.tag }}" \
-            --region "${{ env.AWS_REGION }}"
+          if ! [[ "${IMAGE_TAG}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::image_tag must be a full 40-character lowercase commit SHA."
+            exit 1
+          fi
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "${IMAGE_TAG}" origin/main; then
+            echo "::error::${IMAGE_TAG} is not on main. Only main is promoted to production."
+            exit 1
+          fi
 
-      - name: Update kubeconfig for EKS
+      - name: CI succeeded for that commit
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          aws eks update-kubeconfig \
-            --name "${{ env.EKS_CLUSTER_NAME }}" \
-            --region "${{ env.AWS_REGION }}"
+          count=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?branch=main&head_sha=${IMAGE_TAG}&status=success" \
+            --jq '.total_count')
+          if [ "${count}" -lt 1 ]; then
+            echo "::error::No successful CI run on main for ${IMAGE_TAG}; its images were not built, tested and pushed."
+            exit 1
+          fi
+          echo "Found ${count} successful CI run(s) for ${IMAGE_TAG}."
 
-      - name: Install Helm
-        uses: azure/setup-helm@v4
-        with:
-          version: 'v3.14.0'
-
-      - name: Helm upgrade / install to production
+      - name: Resolve services
+        id: services
         run: |
-          helm upgrade --install \
-            "${{ env.HELM_RELEASE_PREFIX }}-${{ steps.svc.outputs.name }}" \
-            helm/homefix-service \
-            --namespace "${{ env.PRODUCTION_NAMESPACE }}" \
-            --create-namespace \
-            --set image.repository="${{ env.ECR_REGISTRY }}/${{ steps.svc.outputs.name }}" \
-            --set image.tag="${{ steps.svc.outputs.tag }}" \
-            --set environment=production \
-            --values helm/homefix-service/values-production.yaml \
-            --wait \
-            --timeout 10m \
-            --atomic
+          # Resolve against the promoted commit's tree, so the list and the Helm
+          # values match the images being deployed.
+          git checkout --quiet "${IMAGE_TAG}"
+          mapfile -t all < <(for d in services/*/; do [ -f "${d}pom.xml" ] && basename "${d}"; done)
+          if [ "${REQUESTED}" = "all" ]; then
+            selected=("${all[@]}")
+          else
+            selected=()
+            IFS=',' read -ra wanted <<< "${REQUESTED}"
+            for w in "${wanted[@]}"; do
+              w=$(echo "${w}" | xargs)
+              [ -z "${w}" ] && continue
+              if [ ! -f "services/${w}/pom.xml" ]; then
+                echo "::error::Unknown service '${w}'. Known: ${all[*]}"
+                exit 1
+              fi
+              selected+=("${w}")
+            done
+          fi
+          if [ "${#selected[@]}" -eq 0 ]; then
+            echo "::error::No services selected."
+            exit 1
+          fi
+          json=$(printf '%s\n' "${selected[@]}" | sort -u | jq -R . | jq -cs .)
+          echo "json=${json}" >> "$GITHUB_OUTPUT"
+          echo "Promoting ${json} at ${IMAGE_TAG}" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Verify production rollout
-        run: |
-          kubectl rollout status deployment \
-            "${{ env.HELM_RELEASE_PREFIX }}-${{ steps.svc.outputs.name }}" \
-            -n "${{ env.PRODUCTION_NAMESPACE }}" \
-            --timeout=10m
+  deploy:
+    name: Production
+    needs: plan
+    uses: ./.github/workflows/deploy-services.yml
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      environment: production
+      services: ${{ needs.plan.outputs.services }}
+      image-tag: ${{ github.event.inputs.image_tag }}
 
-      - name: Smoke test production
-        run: |
-          PROD_URL="${{ vars.PRODUCTION_BASE_URL || 'https://homefix.app' }}"
-          echo "Running smoke test against ${PROD_URL}..."
-          # Basic liveness check — replace with real smoke test script as services mature
-          curl --fail --silent --retry 3 --retry-delay 5 \
-            "${PROD_URL}/actuator/health" | grep -q '"status":"UP"' || \
-          echo "Health check endpoint not yet available — skipping for initial scaffold."
-
-      - name: Tag release in ECR
-        run: |
-          # Re-tag the image with the Git ref for immutable production traceability
-          MANIFEST=$(aws ecr batch-get-image \
-            --repository-name "${{ steps.svc.outputs.name }}" \
-            --image-ids imageTag="${{ steps.svc.outputs.tag }}" \
-            --query 'images[0].imageManifest' \
-            --output text \
-            --region "${{ env.AWS_REGION }}")
-
-          aws ecr put-image \
-            --repository-name "${{ steps.svc.outputs.name }}" \
-            --image-tag "prod-${{ steps.svc.outputs.tag }}" \
-            --image-manifest "${MANIFEST}" \
-            --region "${{ env.AWS_REGION }}" || true
-
-      - name: Create GitHub Release
-        if: github.event_name == 'workflow_dispatch'
+  release:
+    name: Record release
+    needs: [plan, deploy]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "${{ steps.svc.outputs.name }}-${{ steps.svc.outputs.tag }}"
-          name: "${{ steps.svc.outputs.name }} — ${{ steps.svc.outputs.tag }}"
+          tag_name: production-${{ github.run_number }}
+          target_commitish: ${{ github.event.inputs.image_tag }}
+          name: Production ${{ github.run_number }}
           body: |
-            **Service**: `${{ steps.svc.outputs.name }}`
-            **Image tag**: `${{ steps.svc.outputs.tag }}`
+            **Commit / image tag**: `${{ github.event.inputs.image_tag }}`
+            **Services**: `${{ needs.plan.outputs.services }}`
             **Environment**: production
             **Promoted by**: @${{ github.actor }}
           draft: false
           prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  # ─────────────────────────────────────────────
-  # Rollback on failure
-  # ─────────────────────────────────────────────
-  rollback:
-    name: Rollback Production on Failure
-    runs-on: ubuntu-latest
-    needs: deploy-production
-    if: failure()
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Resolve service name
-        id: svc
-        run: echo "name=${{ github.event.inputs.service || 'hello-world-service' }}" >> "$GITHUB_OUTPUT"
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Update kubeconfig for EKS
-        run: |
-          aws eks update-kubeconfig \
-            --name "${{ env.EKS_CLUSTER_NAME }}" \
-            --region "${{ env.AWS_REGION }}"
-
-      - name: Install Helm
-        uses: azure/setup-helm@v4
-        with:
-          version: 'v3.14.0'
-
-      - name: Helm rollback
-        run: |
-          helm rollback \
-            "${{ env.HELM_RELEASE_PREFIX }}-${{ steps.svc.outputs.name }}" \
-            0 \
-            --namespace "${{ env.PRODUCTION_NAMESPACE }}" \
-            --wait \
-            --timeout 5m
-          echo "Rollback completed for ${{ steps.svc.outputs.name }}"

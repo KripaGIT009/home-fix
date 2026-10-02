@@ -6,9 +6,11 @@ import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
-import jakarta.persistence.Lob;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
+
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -21,7 +23,19 @@ import java.util.UUID;
  * Processor later polls {@link OutboxEventStatus#PENDING} rows, publishes them to Kafka,
  * and marks them {@link OutboxEventStatus#PUBLISHED}. This mirrors the design's
  * {@code OUTBOX_EVENT} schema:
- * {@code id, aggregate_type, aggregate_id, event_type, payload, status, created_at, published_at}.
+ * {@code id, aggregate_type, aggregate_id, event_type, payload, status, created_at, published_at},
+ * plus the relay's bookkeeping columns {@code retry_count}, {@code next_attempt_at},
+ * {@code last_error} and {@code version}.
+ *
+ * <p><b>Relay scheduling.</b> A PENDING row is <em>due</em> when {@code next_attempt_at} is null
+ * or in the past. The relay uses that one column for two things (Requirement 22.4):
+ * <ul>
+ *   <li>a <em>claim lease</em> — claiming a row pushes {@code next_attempt_at} a short lease into
+ *       the future, so no other relay instance picks it up while it is being published;</li>
+ *   <li>the <em>persisted backoff</em> — a failed publish sets it to the time of the next retry,
+ *       instead of the relay sleeping in-line.</li>
+ * </ul>
+ * Producers never touch it: a freshly written row has it null and is due immediately.
  */
 @Entity
 @Table(name = "outbox_event", schema = OutboxEventEntity.SCHEMA, indexes = {
@@ -64,10 +78,18 @@ public class OutboxEventEntity {
     private String eventType;
 
     /**
-     * Serialised event payload (typically JSON). Stored as a large text/JSON column.
+     * Serialised event payload (typically JSON). Stored as a plain {@code text} column.
+     *
+     * <p>Deliberately not {@code @Lob}. On PostgreSQL Hibernate maps {@code @Lob String} to
+     * {@code oid} -- a large-object reference, not inline text -- and the relay then reads the
+     * payload through the large-object API. Every poll cycle died with "Unable to access lob
+     * stream" because the stream is only valid inside the transaction that opened it, so no
+     * event was ever published and rows simply accumulated as PENDING with no error recorded
+     * against them. {@code text} holds a JSON document of any size we produce and reads back as
+     * an ordinary string.
      */
-    @Lob
-    @Column(name = "payload", nullable = false)
+    @JdbcTypeCode(SqlTypes.LONGVARCHAR)
+    @Column(name = "payload", nullable = false, columnDefinition = "text")
     private String payload;
 
     @Enumerated(EnumType.STRING)
@@ -87,8 +109,22 @@ public class OutboxEventEntity {
     private String lastError;
 
     /**
-     * Optimistic-lock guard so concurrent Outbox Processor instances cannot double-publish
-     * the same row.
+     * Earliest time the relay may (re)attempt this row; null means "due now". Holds either the
+     * claim lease of the relay currently publishing the row or the next retry time after a failed
+     * attempt (see the class comment).
+     *
+     * <p>Deliberately nullable. Compose runs producers with {@code ddl-auto: update}, which adds
+     * this column to an existing table with {@code ALTER TABLE ... ADD COLUMN}; a {@code NOT NULL}
+     * column without a default cannot be added to a table that already holds rows, and Hibernate
+     * only logs that failure. Null-as-due avoids needing a default or a backfill.
+     */
+    @Column(name = "next_attempt_at")
+    private Instant nextAttemptAt;
+
+    /**
+     * Optimistic-lock guard. Every relay write (claim, outcome) bumps it, so a relay whose claim
+     * lease expired and was taken over by another instance fails its stale outcome write instead
+     * of silently overwriting the new owner's state.
      */
     @Version
     @Column(name = "version", nullable = false)
@@ -130,10 +166,12 @@ public class OutboxEventEntity {
         this.status = OutboxEventStatus.PUBLISHED;
         this.publishedAt = when;
         this.lastError = null;
+        this.nextAttemptAt = null;
     }
 
     /**
      * Records a failed relay attempt, incrementing the retry counter and capturing the error.
+     * After this call {@link #getRetryCount()} is the number of publish attempts that have failed.
      */
     public void markFailedAttempt(String error) {
         this.retryCount++;
@@ -141,11 +179,30 @@ public class OutboxEventEntity {
     }
 
     /**
-     * Marks the row permanently failed after the retry budget is exhausted.
+     * Records a publish attempt that failed for a reason outside the event itself (the broker
+     * unreachable or slow), capturing the error <em>without</em> spending an attempt of the retry
+     * budget: an outage must not walk the oldest rows to FAILED.
+     */
+    public void recordTransientFailure(String error) {
+        this.lastError = truncate(error);
+    }
+
+    /**
+     * Sets the earliest time the relay may next attempt this row: a claim lease while it is being
+     * published, the backoff deadline after a failed attempt, or "now" to release a claim.
+     */
+    public void scheduleNextAttempt(Instant when) {
+        this.nextAttemptAt = when;
+    }
+
+    /**
+     * Marks the row permanently failed after the retry budget is exhausted. The row is no longer
+     * due; an operator re-queues it by setting it back to PENDING.
      */
     public void markFailed(String error) {
         this.status = OutboxEventStatus.FAILED;
         this.lastError = truncate(error);
+        this.nextAttemptAt = null;
     }
 
     private static String truncate(String error) {
@@ -197,6 +254,10 @@ public class OutboxEventEntity {
 
     public String getLastError() {
         return lastError;
+    }
+
+    public Instant getNextAttemptAt() {
+        return nextAttemptAt;
     }
 
     public long getVersion() {

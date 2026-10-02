@@ -56,6 +56,8 @@ import jakarta.annotation.PostConstruct;
  *             have a fixed literal last segment, and the callback's second segment is the
  *             transaction id rather than {@code retries}/{@code refunds}, so neither can match
  *             {@code /payments/callbacks/{transactionId}};</li>
+ *         <li>{@code POST /payments/*}{@code /refunds/*}{@code /reconcile} has five segments, the
+ *             callback only three;</li>
  *         <li>{@code POST /payments/settlements} is an exact literal path;</li>
  *         <li>{@code GET /payments/*} is scoped to GET and to a single path segment, whereas the
  *             callback is a two-segment POST.</li>
@@ -73,7 +75,10 @@ import jakarta.annotation.PostConstruct;
 @Configuration
 public class PaymentRbacConfig {
 
-    /** Roles permitted to move money: refunds and provider settlements (Requirement 14.3). */
+    /**
+     * Roles permitted to move money: refunds, refund reconciliation and provider settlements
+     * (Requirement 12.7, 14.3) — and to list every customer's payments in the Admin Portal.
+     */
     private static final List<String> FINANCE_TIER =
             List.of("ADMIN", "SUPER_ADMIN", "FINANCE_ADMIN");
 
@@ -105,12 +110,20 @@ public class PaymentRbacConfig {
         var rules = rbacProperties.getEndpointRoles();
         // Most specific money operations first.
         rules.put("POST /payments/settlements", FINANCE_TIER);
+        // Re-sends a PENDING refund to the gateway: moves money, so the same tier as refunds.
+        rules.put("POST /payments/*/refunds/*/reconcile", FINANCE_TIER);
         rules.put("POST /payments/*/refunds", FINANCE_TIER);
         rules.put("POST /payments/*/retries", RETRY_TIER);
         // Bare pattern: matches exactly /payments, never /payments/callbacks/{id}.
         rules.put("POST /payments", INITIATE_TIER);
         // Single-segment GET: matches /payments/{transactionId} only.
         rules.put("GET /payments/*", READ_TIER);
+        // Admin Portal payment list and refund (Requirement 19.2). The refund moves money exactly
+        // as POST /payments/*/refunds does, and the list exposes every customer's payments, so both
+        // take the finance tier. "/admin/payments/**" also matches "/admin/payments" itself, and
+        // lies outside /payments/**, so it cannot touch the public callback path.
+        rules.put("GET /admin/payments/**", FINANCE_TIER);
+        rules.put("POST /admin/payments/**", FINANCE_TIER);
         // Intentionally NO rule for POST /payments/callbacks/** (public, HMAC-verified) and none
         // for /health/**, /actuator/**, /metrics, /prometheus. See the class Javadoc.
     }

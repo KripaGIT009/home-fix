@@ -14,14 +14,20 @@ import com.homefix.complaint.alert.FinanceAlertPort;
 public class RecordingFinanceAlertPort implements FinanceAlertPort {
 
     private final List<UUID> alerts = new ArrayList<>();
+    private final List<String> reasons = new ArrayList<>();
 
     @Override
     public void refundRequiresManualProcessing(UUID complaintId, UUID bookingId, BigDecimal amount,
                                                 String reason) {
         alerts.add(complaintId);
+        reasons.add(reason);
     }
 
     public List<UUID> alerts() {
         return alerts;
+    }
+
+    public List<String> reasons() {
+        return reasons;
     }
 }

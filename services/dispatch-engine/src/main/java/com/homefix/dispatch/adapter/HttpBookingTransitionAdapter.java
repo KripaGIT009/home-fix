@@ -1,6 +1,7 @@
 package com.homefix.dispatch.adapter;
 
 import com.homefix.dispatch.config.DispatchClientProperties;
+import com.homefix.dispatch.domain.BookingNotSearchableException;
 import com.homefix.dispatch.port.BookingTransitionPort;
 import com.homefix.shared.resilience.ResilienceFactory;
 import com.homefix.shared.resilience.ResilientCall;
@@ -8,11 +9,13 @@ import com.homefix.shared.resilience.TimeoutProfile;
 import com.homefix.shared.resilience.TransientFailures;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 
 import java.time.Duration;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.Callable;
 
 /**
  * Default {@link BookingTransitionPort} adapter that asks the Booking Service to perform the
@@ -25,6 +28,10 @@ import java.util.UUID;
  * is open â€” or every retry fails â€” the fallback emits a WARN log naming the dependency (24.4) and
  * raises {@link BookingTransitionException} so the dispatch loop treats the transition as a
  * recoverable degraded outcome rather than silently succeeding.
+ *
+ * <p>A 409 (the booking has left SEARCHING_PROVIDER, typically because the customer cancelled) or a
+ * 404 (no such booking) is not a degraded dependency but a definitive answer, so it is raised as
+ * {@link BookingNotSearchableException} and the dispatch loop stops for that booking.
  *
  * <p>Active only when no other {@link BookingTransitionPort} bean is present (tests supply a fake).
  */
@@ -70,7 +77,7 @@ public class HttpBookingTransitionAdapter implements BookingTransitionPort {
 
     @Override
     public void markProviderAccepted(UUID bookingId, UUID providerId) {
-        resilientCall.execute(() -> {
+        transition(bookingId, () -> {
             restClient.post()
                     .uri("/internal/bookings/{id}/provider-accepted", bookingId)
                     .body(Map.of("providerId", providerId))
@@ -86,7 +93,7 @@ public class HttpBookingTransitionAdapter implements BookingTransitionPort {
 
     @Override
     public void markSearchingFailed(UUID bookingId) {
-        resilientCall.execute(() -> {
+        transition(bookingId, () -> {
             restClient.post()
                     .uri("/internal/bookings/{id}/searching-failed", bookingId)
                     .retrieve()
@@ -97,6 +104,21 @@ public class HttpBookingTransitionAdapter implements BookingTransitionPort {
                     .toBodilessEntity();
             return null;
         });
+    }
+
+    private void transition(UUID bookingId, Callable<Void> call) {
+        try {
+            resilientCall.execute(call);
+        } catch (BookingTransitionException e) {
+            if (e.getCause() instanceof HttpClientErrorException clientError
+                    && (clientError.getStatusCode().value() == 409
+                    || clientError.getStatusCode().value() == 404)) {
+                throw new BookingNotSearchableException(bookingId, "Booking Service refused the transition for"
+                        + " booking " + bookingId + " with " + clientError.getStatusCode().value()
+                        + "; it is no longer searching for a provider", clientError);
+            }
+            throw e;
+        }
     }
 
     /** Unchecked wrapper so the dispatch loop can treat a transition failure as recoverable. */

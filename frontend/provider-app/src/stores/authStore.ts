@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import {
+  refreshAccessToken as refreshViaBridge,
   registerSessionRefresher,
   registerTokenAccessor,
   registerUnauthorizedHandler,
@@ -45,6 +46,18 @@ interface AuthState {
   user: UserProfile | null;
   /** Convenience derived flag; kept in sync by the actions below. */
   isAuthenticated: boolean;
+  /**
+   * True until the persisted session has been rehydrated *and* the silent
+   * refresh it triggers has settled.
+   *
+   * The access token is deliberately memory-only, so immediately after a reload
+   * the store knows it is authenticated (it has a refresh token) but holds no
+   * access token yet. Without this flag the route guard renders the screen at
+   * once, every query fires unauthenticated, 401s, and is retried behind a
+   * second refresh -- so each page load burned a wasted request and rotated the
+   * single-use refresh token twice.
+   */
+  isHydrating: boolean;
 
   /** Persist tokens + profile after a successful login/OTP verification. */
   setSession: (tokens: AuthTokens, user: UserProfile) => void;
@@ -76,6 +89,9 @@ export const useAuthStore = create<AuthState>()(
       refreshToken: null,
       user: null,
       isAuthenticated: false,
+      // Flipped to false by hydrateSession() below, which always runs --
+      // including when there is nothing stored to rehydrate.
+      isHydrating: true,
 
       setSession: (tokens, user) =>
         set({
@@ -158,11 +174,16 @@ export const useAuthStore = create<AuthState>()(
       // an access token from it. Without that silent refresh the first API call
       // after a reload goes out with no Authorization header, 401s, and bounces
       // the user back to login despite a perfectly good session.
+      // Restoring a refresh token means the session is live even though the
+      // access token, being memory-only, is not. The silent refresh that mints
+      // one is kicked off by hydrateSession() below rather than here, because a
+      // refresh started here calls the store action directly and so bypasses
+      // the token bridge's in-flight dedupe. It therefore could not collapse
+      // with the 401-driven refresh the first unauthenticated query triggers,
+      // and a page load rotated the single-use refresh token twice.
       onRehydrateStorage: () => (state) => {
-        if (!state) return;
-        state.isAuthenticated = Boolean(state.refreshToken);
-        if (state.refreshToken && !state.accessToken) {
-          void state.refreshAccessToken();
+        if (state) {
+          state.isAuthenticated = Boolean(state.refreshToken);
         }
       },
     },
@@ -174,3 +195,37 @@ export const useAuthStore = create<AuthState>()(
 registerTokenAccessor(() => useAuthStore.getState().accessToken);
 registerUnauthorizedHandler(() => useAuthStore.getState().clearSession());
 registerSessionRefresher(() => useAuthStore.getState().refreshAccessToken());
+
+/**
+ * Exchange a rehydrated refresh token for an access token, then release the
+ * route guard.
+ *
+ * Runs after the bridge registrations above, which it depends on: the refresher
+ * must be registered before this call, since going through the bridge is what
+ * collapses this refresh with any 401-driven one onto a single request. Refresh
+ * tokens are single-use with replay detection, so two live refreshes presenting
+ * the same token would revoke the family.
+ *
+ * Every path must clear isHydrating, including the failure paths: a guard left
+ * hydrating renders a spinner forever.
+ */
+function hydrateSession(): void {
+  const finish = () => useAuthStore.setState({ isHydrating: false });
+  const { refreshToken, accessToken } = useAuthStore.getState();
+
+  if (refreshToken && !accessToken) {
+    void refreshViaBridge().finally(finish);
+    return;
+  }
+  finish();
+}
+
+// localStorage is synchronous, so hydration has normally already finished by
+// the time this module finishes evaluating. onFinishHydration covers the
+// asynchronous-storage case; hasHydrated() covers the common one. Guarding on
+// both means the refresh is kicked off exactly once either way.
+if (useAuthStore.persist.hasHydrated()) {
+  hydrateSession();
+} else {
+  useAuthStore.persist.onFinishHydration(() => hydrateSession());
+}

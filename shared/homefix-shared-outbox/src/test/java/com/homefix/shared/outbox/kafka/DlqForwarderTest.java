@@ -5,18 +5,27 @@ import org.apache.kafka.common.header.Header;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.kafka.KafkaException;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.support.SendResult;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeoutException;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /**
  * Unit tests for {@link DlqForwarder}: derives the {@code .DLT} topic and attaches the
- * tracing headers so a poison message can be traced (Task 6, Requirement 22.6).
+ * tracing headers so a poison message can be traced (Task 6, Requirement 22.6), and only returns
+ * once the broker has acknowledged the dead-letter record.
  */
 class DlqForwarderTest {
 
@@ -27,8 +36,11 @@ class DlqForwarderTest {
     private DlqForwarder forwarder;
 
     @BeforeEach
+    @SuppressWarnings("unchecked")
     void setUp() {
         forwarder = new DlqForwarder(kafkaTemplate);
+        when(kafkaTemplate.send(any(ProducerRecord.class)))
+                .thenReturn(CompletableFuture.completedFuture(mock(SendResult.class)));
     }
 
     @Test
@@ -64,6 +76,44 @@ class DlqForwarderTest {
         assertThat(sent.headers().lastHeader(DlqForwarder.HEADER_EVENT_ID)).isNull();
         // A missing reason falls back to a stable placeholder.
         assertThat(headerValue(sent, DlqForwarder.HEADER_DLQ_REASON)).isEqualTo("unknown");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void failedDeadLetterSendIsRethrownSoTheSourceRecordIsNotAcknowledged() {
+        RuntimeException brokerDown = new IllegalStateException("broker unavailable");
+        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.failedFuture(brokerDown));
+
+        assertThatThrownBy(() -> forwarder.forward(SOURCE_TOPIC, "booking-1", "e-1", "{}", "boom"))
+                .isInstanceOf(KafkaException.class)
+                .hasMessageContaining("booking.created.DLT")
+                .hasCause(brokerDown);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void unacknowledgedDeadLetterSendTimesOut() {
+        DlqForwarder shortWait = new DlqForwarder(kafkaTemplate, Duration.ofMillis(50));
+        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(new CompletableFuture<>());
+
+        assertThatThrownBy(() -> shortWait.forward(SOURCE_TOPIC, "booking-1", "e-1", "{}", "boom"))
+                .isInstanceOf(KafkaException.class)
+                .hasCauseInstanceOf(TimeoutException.class);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void interruptedWaitRestoresTheInterruptFlag() {
+        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(new CompletableFuture<>());
+        Thread.currentThread().interrupt();
+        try {
+            assertThatThrownBy(() -> forwarder.forward(SOURCE_TOPIC, "booking-1", "e-1", "{}", "boom"))
+                    .isInstanceOf(KafkaException.class)
+                    .hasCauseInstanceOf(InterruptedException.class);
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+        } finally {
+            Thread.interrupted();
+        }
     }
 
     @SuppressWarnings("unchecked")

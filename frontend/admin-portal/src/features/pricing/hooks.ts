@@ -1,7 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { UseMutationResult, UseQueryResult } from '@tanstack/react-query';
 import type { ApiError } from '@api/client';
-import { fetchPricingConfigs, updatePricingConfig, type PricingConfig } from './api';
+import {
+  fetchPricingConfigs,
+  updatePricingConfig,
+  type PricingConfig,
+  type PricingConfigUpdate,
+} from './api';
 
 export const pricingKeys = {
   configs: ['admin', 'pricing', 'configs'] as const,
@@ -19,11 +24,15 @@ export function usePricingConfigs(): UseQueryResult<PricingConfig[], ApiError> {
 export function useUpdatePricingConfig(): UseMutationResult<
   PricingConfig,
   ApiError,
-  PricingConfig
+  { subcategoryId: string; update: PricingConfigUpdate }
 > {
   const queryClient = useQueryClient();
-  return useMutation<PricingConfig, ApiError, PricingConfig>({
-    mutationFn: updatePricingConfig,
+  return useMutation<
+    PricingConfig,
+    ApiError,
+    { subcategoryId: string; update: PricingConfigUpdate }
+  >({
+    mutationFn: ({ subcategoryId, update }) => updatePricingConfig(subcategoryId, update),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: pricingKeys.configs });
     },

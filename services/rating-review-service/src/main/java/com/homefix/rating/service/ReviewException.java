@@ -47,6 +47,11 @@ public class ReviewException extends RuntimeException {
         return new ReviewException(HttpStatus.CONFLICT, "DUPLICATE_REVIEW", message);
     }
 
+    /** A removed review cannot be published again; removal is the final moderation outcome. */
+    public static ReviewException alreadyRemoved(String message) {
+        return new ReviewException(HttpStatus.CONFLICT, "REVIEW_REMOVED", message);
+    }
+
     public HttpStatus getStatus() {
         return status;
     }

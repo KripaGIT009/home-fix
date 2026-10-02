@@ -23,7 +23,11 @@ import com.homefix.notification.domain.DeliveryStatus;
 import com.homefix.notification.domain.NotificationChannel;
 import com.homefix.notification.preference.DefaultAllEnabledPreferenceAdapter;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.SimpleTransactionStatus;
 
 /**
  * Unit tests for the notification outbound adapters and delivery-log store. The logging channel
@@ -52,10 +56,15 @@ class NotificationAdaptersTest {
     void jpaDeliveryLogStore_alreadyDelivered_delegatesToRepository() {
         DeliveryLogRepository repo = mock(DeliveryLogRepository.class);
         UUID eventId = UUID.randomUUID();
-        when(repo.existsByKafkaEventIdAndChannel(eventId, NotificationChannel.SMS)).thenReturn(true);
+        UUID userId = UUID.randomUUID();
+        when(repo.existsByKafkaEventIdAndUserIdAndChannel(eventId, userId, NotificationChannel.SMS))
+                .thenReturn(true);
 
-        assertThat(new JpaDeliveryLogStore(repo).alreadyDelivered(eventId, NotificationChannel.SMS))
+        assertThat(new JpaDeliveryLogStore(repo).alreadyDelivered(eventId, userId, NotificationChannel.SMS))
                 .isTrue();
+        assertThat(new JpaDeliveryLogStore(repo).alreadyDelivered(eventId, UUID.randomUUID(), NotificationChannel.SMS))
+                .as("another recipient of the same event is not a duplicate")
+                .isFalse();
     }
 
     @Test
@@ -66,23 +75,48 @@ class NotificationAdaptersTest {
                 UUID.randomUUID(), Instant.now(), DeliveryStatus.DELIVERED, 0, null);
 
         store.record(entry);
-        verify(repo).save(entry);
+        verify(repo).saveAndFlush(entry);
 
         // A concurrent insert race must be swallowed (dedup guarantee still holds).
-        doThrow(new DataIntegrityViolationException("dup")).when(repo).save(any());
+        doThrow(new DataIntegrityViolationException("dup")).when(repo).saveAndFlush(any());
         assertThatCode(() -> store.record(entry)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void jpaDeliveryLogStore_record_commitsInItsOwnTransaction() {
+        DeliveryLogRepository repo = mock(DeliveryLogRepository.class);
+        PlatformTransactionManager txManager =
+                mock(PlatformTransactionManager.class);
+        when(txManager.getTransaction(any())).thenReturn(
+                new SimpleTransactionStatus(true));
+        JpaDeliveryLogStore store = new JpaDeliveryLogStore(repo, txManager);
+        DeliveryLogEntity entry = new DeliveryLogEntity(UUID.randomUUID(), NotificationChannel.SMS,
+                UUID.randomUUID(), Instant.now(), DeliveryStatus.DELIVERED, 0, null);
+
+        store.record(entry);
+
+        // REQUIRES_NEW: a sent SMS's log row must survive a later failure of the handler that sent it.
+        ArgumentCaptor<TransactionDefinition> definition =
+                ArgumentCaptor.forClass(TransactionDefinition.class);
+        verify(txManager).getTransaction(definition.capture());
+        assertThat(definition.getValue().getPropagationBehavior())
+                .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        verify(repo).saveAndFlush(entry);
+        verify(txManager).commit(any());
     }
 
     @Test
     void deliveryLogId_equalsAndHashCode() {
         UUID eventId = UUID.randomUUID();
-        DeliveryLogId a = new DeliveryLogId(eventId, NotificationChannel.PUSH);
-        DeliveryLogId b = new DeliveryLogId(eventId, NotificationChannel.PUSH);
-        DeliveryLogId c = new DeliveryLogId(UUID.randomUUID(), NotificationChannel.PUSH);
-        DeliveryLogId d = new DeliveryLogId(eventId, NotificationChannel.SMS);
+        UUID userId = UUID.randomUUID();
+        DeliveryLogId a = new DeliveryLogId(eventId, userId, NotificationChannel.PUSH);
+        DeliveryLogId b = new DeliveryLogId(eventId, userId, NotificationChannel.PUSH);
+        DeliveryLogId c = new DeliveryLogId(UUID.randomUUID(), userId, NotificationChannel.PUSH);
+        DeliveryLogId d = new DeliveryLogId(eventId, userId, NotificationChannel.SMS);
+        DeliveryLogId e = new DeliveryLogId(eventId, UUID.randomUUID(), NotificationChannel.PUSH);
 
         assertThat(a).isEqualTo(a).isEqualTo(b).hasSameHashCodeAs(b);
-        assertThat(a).isNotEqualTo(c).isNotEqualTo(d).isNotEqualTo(null).isNotEqualTo("x");
+        assertThat(a).isNotEqualTo(c).isNotEqualTo(d).isNotEqualTo(e).isNotEqualTo(null).isNotEqualTo("x");
     }
 
     @Test

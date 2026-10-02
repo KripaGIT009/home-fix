@@ -5,18 +5,24 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+
 import com.homefix.complaint.payment.RefundPort;
 import com.homefix.complaint.payment.RefundResult;
 
 /**
  * Configurable {@link RefundPort} test double. Returns a preset {@link RefundResult} (approved or
- * rejected) so both the happy-path (16.5) and the REFUND_FAILED flow (16.6) can be exercised, and
- * records each request for assertion.
+ * rejected), or throws a preset exception, so the happy path (16.5), the REFUND_FAILED flow (16.6)
+ * and the unknown-outcome path can be exercised. Records each request's amount and idempotency key,
+ * and whether a transaction was active when it was called.
  */
 public class StubRefundPort implements RefundPort {
 
     private RefundResult nextResult;
+    private RuntimeException nextFailure;
     private final List<BigDecimal> requests = new ArrayList<>();
+    private final List<String> idempotencyKeys = new ArrayList<>();
+    private final List<Boolean> calledInTransaction = new ArrayList<>();
 
     public StubRefundPort(RefundResult nextResult) {
         this.nextResult = nextResult;
@@ -34,13 +40,32 @@ public class StubRefundPort implements RefundPort {
         this.nextResult = nextResult;
     }
 
+    /** Makes subsequent calls throw {@code failure} instead of returning a result. */
+    public void failWith(RuntimeException failure) {
+        this.nextFailure = failure;
+    }
+
     @Override
-    public RefundResult requestRefund(UUID bookingId, UUID complaintId, BigDecimal amount) {
+    public RefundResult requestRefund(UUID bookingId, UUID complaintId, BigDecimal amount,
+                                      String idempotencyKey) {
         requests.add(amount);
+        idempotencyKeys.add(idempotencyKey);
+        calledInTransaction.add(TransactionSynchronizationManager.isActualTransactionActive());
+        if (nextFailure != null) {
+            throw nextFailure;
+        }
         return nextResult;
     }
 
     public List<BigDecimal> requests() {
         return requests;
+    }
+
+    public List<String> idempotencyKeys() {
+        return idempotencyKeys;
+    }
+
+    public List<Boolean> calledInTransaction() {
+        return calledInTransaction;
     }
 }

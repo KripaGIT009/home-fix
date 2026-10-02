@@ -74,3 +74,31 @@ export function formatTimeAgo(iso: string, now: number = Date.now()): string {
   const hours = Math.floor(minutes / 60);
   return `${hours}h ago`;
 }
+
+/**
+ * Format a headline price: whole rupees drop the paise ("₹299"), fractional
+ * amounts keep them ("₹299.50"). Used for "from ₹…" prices on cards; bills and
+ * breakdowns keep {@link formatCurrency}'s fixed two decimals.
+ */
+export function formatPrice(amount: number, currency = 'INR'): string {
+  const whole = Number.isInteger(amount);
+  try {
+    return new Intl.NumberFormat('en-IN', {
+      style: 'currency',
+      currency,
+      minimumFractionDigits: whole ? 0 : 2,
+      maximumFractionDigits: whole ? 0 : 2,
+    }).format(amount);
+  } catch {
+    return `${currency} ${whole ? amount : amount.toFixed(2)}`;
+  }
+}
+
+/** Format a duration in minutes, e.g. "45 min" or "1 hr 30 min". */
+export function formatDuration(minutes: number): string {
+  if (!Number.isFinite(minutes) || minutes <= 0) return '—';
+  if (minutes < 60) return `${Math.round(minutes)} min`;
+  const hours = Math.floor(minutes / 60);
+  const rest = Math.round(minutes % 60);
+  return rest ? `${hours} hr ${rest} min` : `${hours} hr`;
+}

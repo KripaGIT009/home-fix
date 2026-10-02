@@ -115,6 +115,43 @@ class PricingRbacConfigTest {
         assertThat(response.getStatus()).isEqualTo(HttpStatus.FORBIDDEN.value());
     }
 
+    @Test
+    void adminTierPassesThroughOnPortalPricingConfig() throws Exception {
+        for (String role : List.of("ADMIN", "SUPER_ADMIN")) {
+            for (String[] call : portalConfigCalls()) {
+                authenticateAs(role);
+                FilterChain chain = mock(FilterChain.class);
+
+                MockHttpServletResponse response = invoke(call[0], call[1], chain);
+
+                assertThat(response.getStatus()).as(role + " " + call[0] + " " + call[1])
+                        .isEqualTo(HttpStatus.OK.value());
+                verify(chain, times(1)).doFilter(any(), any());
+            }
+        }
+    }
+
+    @Test
+    void nonAdminRolesAreForbiddenOnPortalPricingConfig() throws Exception {
+        for (String role : List.of("CUSTOMER", "SERVICE_PROVIDER", "DISPATCHER", "FINANCE_ADMIN")) {
+            for (String[] call : portalConfigCalls()) {
+                authenticateAs(role);
+                FilterChain chain = mock(FilterChain.class);
+
+                MockHttpServletResponse response = invoke(call[0], call[1], chain);
+
+                assertThat(response.getStatus()).as(role + " " + call[0] + " " + call[1])
+                        .isEqualTo(HttpStatus.FORBIDDEN.value());
+                verify(chain, never()).doFilter(any(), any());
+            }
+        }
+    }
+
+    private static List<String[]> portalConfigCalls() {
+        return List.of(new String[] {"GET", "/admin/pricing/config"},
+                new String[] {"PUT", "/admin/pricing/config/" + UUID.randomUUID()});
+    }
+
     // ------------------------------------------------------------------ estimate (relayed token)
 
     @Test

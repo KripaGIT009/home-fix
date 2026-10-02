@@ -12,6 +12,8 @@ import com.homefix.booking.media.MediaFile;
  *
  * @param scheduledAt required for scheduled bookings (Requirement 7.1); null/ignored for
  *                    emergency bookings (Requirement 8.1)
+ * @param couponCode  optional coupon to price the booking with (Requirement 6.10); blank is
+ *                    treated as none
  * @param media       optional customer-uploaded media, max 10 (Requirement 7.2)
  */
 public record CreateBookingCommand(
@@ -22,9 +24,11 @@ public record CreateBookingCommand(
         boolean emergency,
         Instant scheduledAt,
         String description,
+        String couponCode,
         List<MediaFile> media) {
 
     public CreateBookingCommand {
+        couponCode = couponCode == null || couponCode.isBlank() ? null : couponCode.strip();
         media = media == null ? List.of() : List.copyOf(media);
     }
 }

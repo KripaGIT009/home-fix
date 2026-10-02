@@ -22,8 +22,10 @@ import com.homefix.complaint.api.dto.ChangeStatusRequest;
 import com.homefix.complaint.api.dto.RefundRequest;
 import com.homefix.complaint.domain.Complaint;
 import com.homefix.complaint.domain.ComplaintCategory;
+import com.homefix.complaint.domain.ComplaintRefund;
 import com.homefix.complaint.domain.ComplaintStatus;
 import com.homefix.complaint.domain.ServicePriority;
+import com.homefix.complaint.service.ApproveRefundCommand;
 import com.homefix.complaint.service.ComplaintException;
 import com.homefix.complaint.service.ComplaintService;
 import com.homefix.complaint.service.ComplaintStats;
@@ -132,11 +134,37 @@ class ComplaintControllerTest {
     }
 
     @Test
-    void approveRefund_delegatesAndReturns202() {
+    void approveRefund_passesTheAuthenticatedAgentAndReturns202WithTheRecordedRefund() {
+        UUID agent = UUID.randomUUID();
+        authenticate(agent.toString());
         UUID id = UUID.randomUUID();
-        var response = controller.approveRefund(id, new RefundRequest(new BigDecimal("50.00")));
+        ComplaintRefund recorded = ComplaintRefund.reserve(id, UUID.randomUUID(),
+                new BigDecimal("50.00"), "tap leaked", agent, "req-1", Instant.now());
+        recorded.markSucceeded("rf_123", Instant.now());
+        when(service.approveRefund(any(ApproveRefundCommand.class))).thenReturn(recorded);
+
+        var response = controller.approveRefund(id,
+                new RefundRequest(new BigDecimal("50.00"), "tap leaked", "req-1"));
+
         assertThat(response.getStatusCode().value()).isEqualTo(202);
-        verify(service).approveRefund(id, new BigDecimal("50.00"));
+        assertThat(response.getBody().status()).isEqualTo("SUCCEEDED");
+        assertThat(response.getBody().externalReference()).isEqualTo("rf_123");
+        assertThat(response.getBody().approvedBy()).isEqualTo(agent);
+        verify(service).approveRefund(new ApproveRefundCommand(
+                id, new BigDecimal("50.00"), "tap leaked", agent, "req-1"));
+    }
+
+    @Test
+    void approveRefund_overHttp_mapsARefusalToTheErrorEnvelope() throws Exception {
+        authenticate(UUID.randomUUID().toString());
+        when(service.approveRefund(any(ApproveRefundCommand.class))).thenThrow(
+                ComplaintException.refundAlreadyRequested("complaint already has a refund"));
+
+        mvc.perform(post("/complaints/" + UUID.randomUUID() + "/refund")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"amount\":50.00}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errorCode").value("REFUND_ALREADY_REQUESTED"));
     }
 
     @Test

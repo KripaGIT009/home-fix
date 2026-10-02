@@ -194,6 +194,18 @@ public class Coupon {
         this.updatedAt = Instant.now();
     }
 
+    /**
+     * The Admin Portal status on {@code today} (Requirement 19.2). Expiry is inclusive of the
+     * expiry date itself, matching {@link #checkApplicability}: the coupon is EXPIRED only once
+     * {@code today} is after it.
+     */
+    public CouponStatus statusOn(LocalDate today) {
+        if (today.isAfter(expiryDate)) {
+            return CouponStatus.EXPIRED;
+        }
+        return active ? CouponStatus.ACTIVE : CouponStatus.INACTIVE;
+    }
+
     public UUID getId() {
         return id;
     }

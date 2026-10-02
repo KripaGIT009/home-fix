@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -17,11 +17,13 @@ import BoltRoundedIcon from '@mui/icons-material/BoltRounded';
 import PlaceRoundedIcon from '@mui/icons-material/PlaceRounded';
 import EventRoundedIcon from '@mui/icons-material/EventRounded';
 import NotesRoundedIcon from '@mui/icons-material/NotesRounded';
+import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded';
 import { AppShell } from '@components/AppShell';
 import { QueryStateView } from '@components/QueryStateView';
+import { IconTile } from '@components/StateViews';
 import { useSubcategory } from '@features/catalog/hooks';
-import { formatCurrency } from '@lib/format';
-import { brand } from '@lib/theme';
+import { formatDuration, formatPrice } from '@lib/format';
+import { brand, radius, shadows } from '@lib/theme';
 import { MAX_DESCRIPTION_LENGTH } from './constants';
 import { maxScheduleValue, minScheduleValue, toIsoString } from './datetime';
 import { AddressFields } from './AddressFields';
@@ -36,8 +38,9 @@ import { serviceRequestSchema, type ServiceRequestFormValues } from './schemas';
  * is stored and the flow proceeds to the Price Estimate screen (Requirement
  * 7.3 — an itemized estimate is shown before confirmation).
  *
- * The form is grouped into one card per question — where, when, what — so a
- * long mobile form reads as a short sequence of decisions.
+ * The form is three numbered questions — where, when, what. On desktop the
+ * service summary and the submit button sit in a sticky aside; on mobile the
+ * button lives in a sticky bar at the bottom of the screen.
  */
 export function ServiceRequestScreen() {
   const { subcategoryId = '' } = useParams();
@@ -78,7 +81,14 @@ export function ServiceRequestScreen() {
       // (Requirement 8.1). Scheduled bookings send the ISO time (Requirement 7.1).
       const scheduledAt = values.isEmergency ? undefined : toIsoString(values.scheduledAt);
 
+      // The catalog entry is what knows the parent category, and the Booking
+      // Service rejects a creation without it. The form only renders once the
+      // subcategory query has resolved, so this is defensive rather than a
+      // state the user can reach.
+      if (!subcategory) return;
+
       setDraft({
+        categoryId: subcategory.categoryId,
         subcategoryId,
         isEmergency: values.isEmergency,
         ...(scheduledAt ? { scheduledAt } : {}),
@@ -89,148 +99,254 @@ export function ServiceRequestScreen() {
 
       navigate(`/book/${subcategoryId}/estimate`);
     },
-    [media, navigate, setDraft, subcategoryId],
+    [media, navigate, setDraft, subcategory, subcategoryId],
   );
 
   return (
-    <AppShell title="Service request">
+    <AppShell title="Book a service" width="full">
       <QueryStateView
         isLoading={subcategoryQuery.isLoading}
         isError={subcategoryQuery.isError}
         error={subcategoryQuery.error}
         onRetry={() => void subcategoryQuery.refetch()}
+        skeletonHeight={160}
       >
-        <Stack
+        <Box
           component="form"
-          spacing={2}
           onSubmit={(event) => void handleSubmit(onSubmit)(event)}
           noValidate
+          sx={{
+            display: 'grid',
+            gridTemplateColumns: { xs: '1fr', md: 'minmax(0, 1fr) 340px' },
+            gap: { xs: 2, md: 3 },
+            alignItems: 'start',
+          }}
         >
-          <Card sx={{ borderColor: 'transparent', bgcolor: brand.accentSoft }}>
-            <CardContent>
-              <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
-                <Box>
-                  <Typography variant="h6" component="h1">
-                    {subcategory?.name}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Tell us where and when, and add photos to help the pro prepare.
-                  </Typography>
-                </Box>
-                {subcategory ? (
-                  <Stack alignItems="flex-end" sx={{ flexShrink: 0, pl: 1 }}>
-                    <Typography variant="caption" color="text.secondary">
-                      From
-                    </Typography>
-                    <Typography variant="subtitle1" fontWeight={700}>
-                      {formatCurrency(subcategory.basePrice)}
-                    </Typography>
-                  </Stack>
-                ) : null}
-              </Stack>
-            </CardContent>
-          </Card>
-
-          <FormSection icon={<PlaceRoundedIcon />} title="Service location">
-            <AddressFields register={register} errors={errors} setValue={setValue} />
-          </FormSection>
-
-          <FormSection icon={<EventRoundedIcon />} title="When do you need it?">
-            <Stack spacing={1.5}>
-              {emergencyAvailable ? (
-                <Box
-                  sx={{
-                    px: 1.5,
-                    py: 0.5,
-                    borderRadius: 2,
-                    border: 1,
-                    borderColor: isEmergency ? 'error.main' : 'divider',
-                    bgcolor: isEmergency ? brand.redSoft : 'transparent',
-                    transition: 'background-color .2s, border-color .2s',
-                  }}
-                >
-                  <FormControlLabel
-                    control={
-                      <Switch color="error" checked={isEmergency} {...register('isEmergency')} />
-                    }
-                    label={
-                      <Stack direction="row" spacing={0.75} alignItems="center">
-                        <BoltRoundedIcon fontSize="small" color="error" />
-                        <Typography variant="body2" fontWeight={600}>
-                          Emergency — dispatch a pro now
-                        </Typography>
-                      </Stack>
-                    }
-                  />
-                </Box>
-              ) : null}
-
-              {isEmergency ? (
-                <Typography variant="body2" color="text.secondary">
-                  We&apos;ll find the nearest verified professional right away.
-                </Typography>
-              ) : (
-                <TextField
-                  label="Preferred date &amp; time"
-                  type="datetime-local"
-                  fullWidth
-                  InputLabelProps={{ shrink: true }}
-                  inputProps={{ min: scheduleBounds.min, max: scheduleBounds.max }}
-                  error={Boolean(errors.scheduledAt)}
-                  helperText={
-                    errors.scheduledAt?.message ?? 'At least 2 hours from now, up to 90 days ahead.'
-                  }
-                  {...register('scheduledAt')}
-                />
-              )}
-            </Stack>
-          </FormSection>
-
-          <FormSection icon={<NotesRoundedIcon />} title="What's the problem?">
-            <Stack spacing={2}>
-              <TextField
-                label="Describe the job (optional)"
-                multiline
-                minRows={3}
-                fullWidth
-                error={Boolean(errors.description)}
-                helperText={
-                  errors.description?.message ?? `Up to ${MAX_DESCRIPTION_LENGTH} characters.`
-                }
-                inputProps={{ maxLength: MAX_DESCRIPTION_LENGTH }}
-                {...register('description')}
+          <Stack spacing={2} sx={{ minWidth: 0 }}>
+            {/* On mobile the summary leads the form; on desktop it is the aside. */}
+            <Box sx={{ display: { xs: 'block', md: 'none' } }}>
+              <ServiceSummary
+                name={subcategory?.name}
+                price={subcategory?.basePrice}
+                duration={subcategory?.estimatedDurationMin}
               />
-              <MediaUpload files={media} onChange={setMedia} />
-            </Stack>
-          </FormSection>
+            </Box>
 
-          <Button type="submit" variant="contained" size="large" fullWidth>
-            See price estimate
-          </Button>
-        </Stack>
+            <FormSection step={1} icon={<PlaceRoundedIcon />} title="Where should we come?">
+              <AddressFields register={register} errors={errors} setValue={setValue} />
+            </FormSection>
+
+            <FormSection step={2} icon={<EventRoundedIcon />} title="When do you need it?">
+              <Stack spacing={2}>
+                {emergencyAvailable ? (
+                  <Box
+                    sx={{
+                      px: 2,
+                      py: 1,
+                      borderRadius: `${radius.md}px`,
+                      border: 1,
+                      borderColor: isEmergency ? 'error.main' : 'divider',
+                      bgcolor: isEmergency ? brand.redSoft : 'transparent',
+                      transition: 'background-color .2s, border-color .2s',
+                    }}
+                  >
+                    <FormControlLabel
+                      sx={{ m: 0, width: '100%' }}
+                      control={
+                        <Switch color="error" checked={isEmergency} {...register('isEmergency')} />
+                      }
+                      label={
+                        <Box>
+                          <Stack direction="row" spacing={0.75} alignItems="center">
+                            <BoltRoundedIcon fontSize="small" color="error" />
+                            <Typography variant="subtitle2" fontWeight={700}>
+                              Emergency — send a pro now
+                            </Typography>
+                          </Stack>
+                          <Typography variant="caption" color="text.secondary">
+                            Available 24×7. An emergency charge applies.
+                          </Typography>
+                        </Box>
+                      }
+                    />
+                  </Box>
+                ) : null}
+
+                {isEmergency ? (
+                  <Typography variant="body2" color="text.secondary">
+                    We&apos;ll find the nearest verified professional as soon as you confirm.
+                  </Typography>
+                ) : (
+                  <TextField
+                    label="Preferred date & time"
+                    type="datetime-local"
+                    fullWidth
+                    InputLabelProps={{ shrink: true }}
+                    inputProps={{ min: scheduleBounds.min, max: scheduleBounds.max }}
+                    error={Boolean(errors.scheduledAt)}
+                    helperText={
+                      errors.scheduledAt?.message ??
+                      'At least 2 hours from now, up to 90 days ahead.'
+                    }
+                    {...register('scheduledAt')}
+                  />
+                )}
+              </Stack>
+            </FormSection>
+
+            <FormSection step={3} icon={<NotesRoundedIcon />} title="What's the problem?">
+              <Stack spacing={2.5}>
+                <TextField
+                  label="Describe the job (optional)"
+                  placeholder="e.g. Kitchen tap is leaking from the base"
+                  multiline
+                  minRows={3}
+                  fullWidth
+                  error={Boolean(errors.description)}
+                  helperText={
+                    errors.description?.message ?? `Up to ${MAX_DESCRIPTION_LENGTH} characters.`
+                  }
+                  inputProps={{ maxLength: MAX_DESCRIPTION_LENGTH }}
+                  {...register('description')}
+                />
+                <MediaUpload files={media} onChange={setMedia} />
+              </Stack>
+            </FormSection>
+          </Stack>
+
+          <Box
+            sx={{
+              position: 'sticky',
+              bottom: { xs: 0, md: 'auto' },
+              top: { md: 96 },
+              zIndex: 2,
+              mx: { xs: -2, sm: -3, md: 0 },
+            }}
+          >
+            <Box sx={{ display: { xs: 'none', md: 'block' }, mb: 2 }}>
+              <ServiceSummary
+                name={subcategory?.name}
+                price={subcategory?.basePrice}
+                duration={subcategory?.estimatedDurationMin}
+                detailed
+              />
+            </Box>
+            <Box
+              sx={{
+                p: { xs: 2, md: 0 },
+                pb: { xs: 'calc(16px + env(safe-area-inset-bottom))', md: 0 },
+                bgcolor: { xs: 'background.paper', md: 'transparent' },
+                borderTop: { xs: `1px solid ${brand.line}`, md: 'none' },
+                boxShadow: { xs: shadows.bar, md: 'none' },
+              }}
+            >
+              <Button type="submit" variant="contained" size="large" fullWidth>
+                See price estimate
+              </Button>
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                display="block"
+                textAlign="center"
+                sx={{ mt: 1 }}
+              >
+                You won&apos;t be charged yet.
+              </Typography>
+            </Box>
+          </Box>
+        </Box>
       </QueryStateView>
     </AppShell>
   );
 }
 
-/** One titled block of the request form, rendered as a card with a lead icon. */
+/** The service being booked, with its "from" price and typical duration. */
+function ServiceSummary({
+  name,
+  price,
+  duration,
+  detailed = false,
+}: {
+  name: string | undefined;
+  price: number | undefined;
+  duration: number | undefined;
+  detailed?: boolean;
+}) {
+  return (
+    <Card sx={{ bgcolor: brand.accentSoft, borderColor: brand.accentLine }}>
+      <CardContent>
+        <Typography variant="overline" color="primary.dark">
+          You&apos;re booking
+        </Typography>
+        <Typography variant="h5" component="p">
+          {name}
+        </Typography>
+        <Stack direction="row" spacing={3} sx={{ mt: 1.5 }}>
+          {price !== undefined ? (
+            <Box>
+              <Typography variant="caption" color="text.secondary">
+                Starts at
+              </Typography>
+              <Typography variant="h5" component="p" fontWeight={800}>
+                {formatPrice(price)}
+              </Typography>
+            </Box>
+          ) : null}
+          {duration ? (
+            <Box>
+              <Typography variant="caption" color="text.secondary">
+                Typical visit
+              </Typography>
+              <Typography variant="h5" component="p" fontWeight={800}>
+                {formatDuration(duration)}
+              </Typography>
+            </Box>
+          ) : null}
+        </Stack>
+        {detailed ? (
+          <Stack spacing={1} sx={{ mt: 2.5, pt: 2, borderTop: `1px solid ${brand.accentLine}` }}>
+            {[
+              'An itemised estimate before you confirm',
+              'A verified, background-checked pro',
+              'Live tracking and in-app chat',
+            ].map((point) => (
+              <Stack key={point} direction="row" spacing={1} alignItems="center">
+                <CheckCircleRoundedIcon sx={{ fontSize: 18, color: 'success.main' }} aria-hidden />
+                <Typography variant="body2">{point}</Typography>
+              </Stack>
+            ))}
+          </Stack>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+/** One numbered block of the request form. */
 function FormSection({
+  step,
   icon,
   title,
   children,
 }: {
-  icon: React.ReactNode;
+  step: number;
+  icon: ReactNode;
   title: string;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
-    <Card>
+    <Card component="section" aria-label={title}>
       <CardContent>
-        <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 2 }}>
-          <Box sx={{ color: 'primary.main', display: 'flex' }}>{icon}</Box>
-          <Typography variant="subtitle1" fontWeight={700}>
-            {title}
-          </Typography>
+        <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mb: 2.5 }}>
+          <IconTile size={36}>{icon}</IconTile>
+          <Box>
+            <Typography variant="caption" color="text.secondary" fontWeight={600}>
+              Step {step} of 3
+            </Typography>
+            <Typography variant="h6" component="h2" sx={{ lineHeight: 1.2 }}>
+              {title}
+            </Typography>
+          </Box>
         </Stack>
         {children}
       </CardContent>

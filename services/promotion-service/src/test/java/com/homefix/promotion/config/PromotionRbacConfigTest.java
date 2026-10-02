@@ -70,6 +70,65 @@ class PromotionRbacConfigTest {
         return response;
     }
 
+    // ------------------------------------------------------------------ Admin Portal surface
+
+    private static String[][] adminPortalCalls() {
+        return new String[][] {
+                {"GET", "/admin/coupons"},
+                {"POST", "/admin/coupons"},
+                {"PATCH", "/admin/coupons/" + UUID.randomUUID() + "/deactivate"}};
+    }
+
+    @Test
+    void adminTierPassesThroughOnTheAdminPortalCouponSurface() throws Exception {
+        for (String role : List.of("ADMIN", "SUPER_ADMIN")) {
+            authenticateAs(role);
+            for (String[] call : adminPortalCalls()) {
+                FilterChain chain = mock(FilterChain.class);
+
+                MockHttpServletResponse response = invoke(call[0], call[1], chain);
+
+                assertThat(response.getStatus()).as(role + " " + call[0] + " " + call[1])
+                        .isEqualTo(HttpStatus.OK.value());
+                verify(chain, times(1)).doFilter(any(), any());
+            }
+        }
+    }
+
+    @Test
+    void otherRolesAreForbiddenOnTheAdminPortalCouponSurface() throws Exception {
+        for (String role : List.of("CUSTOMER", "SERVICE_PROVIDER", "SUPPORT_AGENT", "FINANCE_ADMIN")) {
+            authenticateAs(role);
+            for (String[] call : adminPortalCalls()) {
+                FilterChain chain = mock(FilterChain.class);
+
+                assertThat(invoke(call[0], call[1], chain).getStatus())
+                        .as(role + " " + call[0] + " " + call[1])
+                        .isEqualTo(HttpStatus.FORBIDDEN.value());
+                verify(chain, never()).doFilter(any(), any());
+            }
+        }
+    }
+
+    @Test
+    void unauthenticatedAdminPortalCouponListIsUnauthorized() throws Exception {
+        assertThat(invoke("GET", "/admin/coupons", mock(FilterChain.class)).getStatus())
+                .isEqualTo(HttpStatus.UNAUTHORIZED.value());
+    }
+
+    /** The new /admin rules must not loosen the existing customer-facing coupon admin rules. */
+    @Test
+    void existingCouponCreateAndDeactivateStayAdminOnly() throws Exception {
+        for (String role : List.of("CUSTOMER", "SUPPORT_AGENT")) {
+            authenticateAs(role);
+            assertThat(invoke("POST", "/coupons", mock(FilterChain.class)).getStatus())
+                    .as(role).isEqualTo(HttpStatus.FORBIDDEN.value());
+            assertThat(invoke("POST", "/coupons/" + UUID.randomUUID() + "/deactivate",
+                    mock(FilterChain.class)).getStatus())
+                    .as(role).isEqualTo(HttpStatus.FORBIDDEN.value());
+        }
+    }
+
     // ------------------------------------------------------------------ admin surface
 
     @Test
@@ -211,6 +270,26 @@ class PromotionRbacConfigTest {
 
         assertThat(response.getStatus()).isEqualTo(HttpStatus.UNAUTHORIZED.value());
         verify(chain, never()).doFilter(any(), any());
+    }
+
+    // ------------------------------------------------------------------ internal surface
+
+    /**
+     * {@code /internal/**} is authorised by the shared service credential, not by roles. The
+     * caller {@code InternalApiKeyFilter} authenticates holds only {@code ROLE_INTERNAL}, so any
+     * role rule covering the path would lock the Pricing Engine out of coupon quotes.
+     */
+    @Test
+    void internalCouponQuoteHasNoRoleRuleSoTheServiceCallerPassesThrough() throws Exception {
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken("internal-service", null,
+                        List.of(new SimpleGrantedAuthority(InternalApiKeyFilter.INTERNAL_AUTHORITY))));
+        FilterChain chain = mock(FilterChain.class);
+
+        MockHttpServletResponse response = invoke("GET", "/internal/coupons/SAVE50/quote", chain);
+
+        assertThat(response.getStatus()).isEqualTo(HttpStatus.OK.value());
+        verify(chain, times(1)).doFilter(any(), any());
     }
 
     // ------------------------------------------------------------------ public surfaces

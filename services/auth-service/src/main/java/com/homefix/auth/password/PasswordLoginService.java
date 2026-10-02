@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.homefix.auth.config.PasswordLoginProperties;
+import com.homefix.auth.domain.AccountDisabledException;
 import com.homefix.auth.domain.UserAccount;
 import com.homefix.auth.domain.UserAccountRepository;
 import com.homefix.auth.token.TokenPair;
@@ -73,6 +74,8 @@ public class PasswordLoginService {
      * and a fresh token pair.
      *
      * @throws PasswordLoginException 401 on any credential failure, 429 while locked
+     * @throws AccountDisabledException 403 if the credentials are correct but an administrator
+     *                                  has suspended or deactivated the account
      */
     @Transactional(readOnly = true)
     public LoginResult authenticate(String rawUsername, String rawPassword) {
@@ -97,6 +100,10 @@ public class PasswordLoginService {
 
         UserAccount account = maybeAccount.get();
         attemptStore.clearFailures(username);
+
+        // Checked only once the password has matched: a wrong password on a suspended account
+        // is the same 401 as on any other, so the status is never an enumeration oracle.
+        AccountDisabledException.requireActive(account);
 
         List<String> roles = account.getRoles().stream().map(Enum::name).sorted().toList();
         TokenPair tokens = tokenService.issueTokens(account.getId().toString(), roles);

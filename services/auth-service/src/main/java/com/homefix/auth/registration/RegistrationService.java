@@ -9,6 +9,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 import com.homefix.auth.config.OtpProperties;
+import com.homefix.auth.domain.AccountDisabledException;
 import com.homefix.auth.domain.Role;
 import com.homefix.auth.domain.UserAccount;
 import com.homefix.auth.domain.UserAccountRepository;
@@ -145,9 +146,20 @@ public class RegistrationService {
                 "Incorrect OTP. " + remaining + " attempt(s) remaining.");
     }
 
+    /**
+     * Creates the account, or adds the requested role to the existing one, and issues tokens.
+     *
+     * <p>An existing account that an administrator has suspended or deactivated is refused here,
+     * after the OTP has been verified and before any role is added, so a correct code proves
+     * control of the number but grants nothing (Requirement 19.2). Only the person holding the
+     * phone learns the account is disabled.
+     *
+     * @throws AccountDisabledException 403 if the existing account is not ACTIVE
+     */
     private VerificationResult completeRegistration(String mobileNumber, Role role) {
         UserAccount account = userRepository.findByMobileNumber(mobileNumber)
                 .map(existing -> {
+                    AccountDisabledException.requireActive(existing);
                     existing.addRole(role);
                     return userRepository.save(existing);
                 })

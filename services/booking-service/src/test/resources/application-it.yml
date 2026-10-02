@@ -9,8 +9,10 @@
 # the Outbox Processor would relay to Kafka in staging.
 spring:
   datasource:
-    # H2 in PostgreSQL-compatibility mode; DB created fresh per test context.
-    url: jdbc:h2:mem:booking_it;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    # H2 in PostgreSQL-compatibility mode; DB created fresh per test context. The shared outbox
+    # entities pin their table to the "outbox" schema, which must exist before Hibernate creates
+    # them (in the real stack the database init script creates it).
+    url: jdbc:h2:mem:booking_it;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;INIT=CREATE SCHEMA IF NOT EXISTS outbox
     username: sa
     password: ""
     driver-class-name: org.h2.Driver

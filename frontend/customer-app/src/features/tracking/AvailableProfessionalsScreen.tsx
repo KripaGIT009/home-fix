@@ -1,11 +1,9 @@
-import { useCallback, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useMemo, useState } from 'react';
+import { useParams } from 'react-router-dom';
 import {
-  Alert,
   Avatar,
   Badge,
   Box,
-  Button,
   Card,
   CardContent,
   Chip,
@@ -20,11 +18,10 @@ import WorkHistoryRoundedIcon from '@mui/icons-material/WorkHistoryRounded';
 import StarRounded from '@mui/icons-material/StarRounded';
 import { AppShell } from '@components/AppShell';
 import { QueryStateView } from '@components/QueryStateView';
-import { isApiError } from '@api/client';
 import { formatCurrency, formatDistanceKm, formatEtaMinutes } from '@lib/format';
-import { brand } from '@lib/theme';
+import { brand, radius } from '@lib/theme';
 import type { AvailableProfessional } from './api';
-import { useAvailableProfessionals, useSelectProfessional } from './hooks';
+import { useAvailableProfessionals } from './hooks';
 
 /** How the customer can order the candidate list. */
 type SortKey = 'nearby' | 'rating' | 'eta';
@@ -47,17 +44,18 @@ const COMPARATORS: Record<SortKey, (a: AvailableProfessional, b: AvailableProfes
  * Available Professionals list (Requirements 28.6, 28.7). Renders each eligible
  * Provider as a card showing the VERIFIED badge, display name, aggregate
  * rating, jobs completed, distance (km), ETA (min), and starting price.
- * Selecting a Provider assigns them and moves the customer to live tracking.
+ *
+ * The list is informational. The Dispatch Engine offers the job to providers
+ * itself and no service accepts a customer's choice of provider, so there is
+ * nothing to select; the booking flow goes straight to live tracking.
  *
  * The list arrives ranked by dispatch fit; the sort chips let the customer
  * re-rank by the one attribute they care about without another round trip.
  */
 export function AvailableProfessionalsScreen() {
   const { bookingId = '' } = useParams();
-  const navigate = useNavigate();
 
   const query = useAvailableProfessionals(bookingId);
-  const select = useSelectProfessional(bookingId);
   const [sortKey, setSortKey] = useState<SortKey>('nearby');
 
   const professionals = useMemo(() => {
@@ -65,23 +63,11 @@ export function AvailableProfessionalsScreen() {
     return [...query.data].sort(COMPARATORS[sortKey]);
   }, [query.data, sortKey]);
 
-  const selectMutate = select.mutate;
-  const handleSelect = useCallback(
-    (providerId: string) => {
-      selectMutate(providerId, {
-        onSuccess: () => navigate(`/bookings/${bookingId}/track`),
-      });
-    },
-    [bookingId, navigate, selectMutate],
-  );
-
-  const selectError = select.isError && isApiError(select.error) ? select.error.message : null;
-
   return (
-    <AppShell title="Professionals near you">
+    <AppShell title="Professionals near you" width="full">
       <Stack spacing={2}>
-        <Typography variant="body2" color="text.secondary">
-          Verified pros near you, ranked by fit. Pick one to get started.
+        <Typography variant="body1" color="text.secondary">
+          Verified pros near you, ranked by fit. We offer your job to them in turn.
         </Typography>
 
         <Stack direction="row" spacing={1}>
@@ -97,8 +83,6 @@ export function AvailableProfessionalsScreen() {
           ))}
         </Stack>
 
-        {selectError ? <Alert severity="error">{selectError}</Alert> : null}
-
         <QueryStateView
           isLoading={query.isLoading}
           isError={query.isError}
@@ -107,31 +91,24 @@ export function AvailableProfessionalsScreen() {
           isEmpty={!professionals || professionals.length === 0}
           emptyMessage="No professionals are available right now. We'll keep searching."
         >
-          <Stack spacing={1.5}>
+          <Box
+            sx={{
+              display: 'grid',
+              gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' },
+              gap: { xs: 1.5, md: 2.5 },
+            }}
+          >
             {professionals?.map((professional) => (
-              <ProfessionalCard
-                key={professional.providerId}
-                professional={professional}
-                onSelect={() => handleSelect(professional.providerId)}
-                disabled={select.isPending}
-              />
+              <ProfessionalCard key={professional.providerId} professional={professional} />
             ))}
-          </Stack>
+          </Box>
         </QueryStateView>
       </Stack>
     </AppShell>
   );
 }
 
-function ProfessionalCard({
-  professional,
-  onSelect,
-  disabled,
-}: {
-  professional: AvailableProfessional;
-  onSelect: () => void;
-  disabled: boolean;
-}) {
+function ProfessionalCard({ professional }: { professional: AvailableProfessional }) {
   const initials = professional.displayName
     .split(' ')
     .map((part) => part.charAt(0))
@@ -155,7 +132,10 @@ function ProfessionalCard({
               ) : null
             }
           >
-            <Avatar aria-hidden sx={{ width: 52, height: 52, bgcolor: 'primary.main' }}>
+            <Avatar
+              aria-hidden
+              sx={{ width: 52, height: 52, bgcolor: brand.accentSoft, color: 'primary.main' }}
+            >
               {initials}
             </Avatar>
           </Badge>
@@ -179,7 +159,7 @@ function ProfessionalCard({
 
             <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 0.25 }}>
               <Stack direction="row" spacing={0.25} alignItems="center">
-                <StarRounded sx={{ fontSize: 17, color: 'warning.main' }} aria-hidden />
+                <StarRounded sx={{ fontSize: 17, color: brand.warm }} aria-hidden />
                 <Typography variant="body2" fontWeight={700}>
                   {professional.rating.toFixed(1)}
                 </Typography>
@@ -210,24 +190,14 @@ function ProfessionalCard({
 
         <Divider sx={{ my: 1.5 }} />
 
-        <Stack direction="row" justifyContent="space-between" alignItems="center">
-          <Box>
-            <Typography variant="caption" color="text.secondary" display="block">
-              Starting price
-            </Typography>
-            <Typography variant="subtitle1" fontWeight={700}>
-              {formatCurrency(professional.startingPrice, professional.currency)}
-            </Typography>
-          </Box>
-          <Button
-            variant="contained"
-            onClick={onSelect}
-            disabled={disabled}
-            aria-label={`Choose ${professional.displayName}`}
-          >
-            Book now
-          </Button>
-        </Stack>
+        <Box>
+          <Typography variant="caption" color="text.secondary" display="block">
+            Starting price
+          </Typography>
+          <Typography variant="h6" component="p" fontWeight={800}>
+            {formatCurrency(professional.startingPrice, professional.currency)}
+          </Typography>
+        </Box>
       </CardContent>
     </Card>
   );
@@ -240,7 +210,13 @@ function MetaItem({ icon, label }: { icon: React.ReactNode; label: string }) {
       direction="row"
       spacing={0.5}
       alignItems="center"
-      sx={{ color: 'text.secondary', bgcolor: brand.canvas, px: 1, py: 0.25, borderRadius: 1.5 }}
+      sx={{
+        color: 'text.secondary',
+        bgcolor: brand.slateSoft,
+        px: 1,
+        py: 0.25,
+        borderRadius: `${radius.sm}px`,
+      }}
     >
       {icon}
       <Typography variant="caption" fontWeight={600}>

@@ -4,6 +4,8 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+
 import com.homefix.complaint.domain.Complaint;
 import com.homefix.complaint.domain.ComplaintStatus;
 import com.homefix.complaint.event.ComplaintEventPublisher;
@@ -17,6 +19,7 @@ public class RecordingComplaintEventPublisher extends ComplaintEventPublisher {
 
     private final List<Complaint> created = new ArrayList<>();
     private final List<StatusChange> statusChanges = new ArrayList<>();
+    private final List<Boolean> statusChangesInTransaction = new ArrayList<>();
 
     public RecordingComplaintEventPublisher() {
         // No outbox publisher needed: publish methods are fully overridden below.
@@ -32,6 +35,8 @@ public class RecordingComplaintEventPublisher extends ComplaintEventPublisher {
     public void publishStatusChanged(Complaint complaint, ComplaintStatus previousStatus,
                                      Instant changedAt) {
         statusChanges.add(new StatusChange(complaint, previousStatus, complaint.getStatus()));
+        statusChangesInTransaction.add(
+                TransactionSynchronizationManager.isActualTransactionActive());
     }
 
     public List<Complaint> created() {
@@ -40,6 +45,11 @@ public class RecordingComplaintEventPublisher extends ComplaintEventPublisher {
 
     public List<StatusChange> statusChanges() {
         return statusChanges;
+    }
+
+    /** Whether a transaction was active for each status change (the real publisher is MANDATORY). */
+    public List<Boolean> statusChangesInTransaction() {
+        return statusChangesInTransaction;
     }
 
     /** A single recorded status transition. */

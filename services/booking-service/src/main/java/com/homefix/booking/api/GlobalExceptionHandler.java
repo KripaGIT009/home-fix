@@ -6,6 +6,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import com.homefix.booking.service.BookingException;
 import com.homefix.booking.service.InvalidTransitionException;
@@ -55,5 +56,23 @@ public class GlobalExceptionHandler {
         ex.getBindingResult().getFieldErrors()
                 .forEach(fe -> builder.addDetail(fe.getField() + ": " + fe.getDefaultMessage()));
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(builder.build());
+    }
+
+    /**
+     * A query or path parameter that does not convert to its declared type (e.g.
+     * {@code ?page=abc}). Spring's default answer is a bare 400 without this service's envelope,
+     * so the client could not read an {@code errorCode}; it is the same client mistake as a
+     * failed bean validation and gets the same code.
+     */
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ErrorResponseDto> handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
+        String expected = ex.getRequiredType() == null ? "a valid value" : ex.getRequiredType().getSimpleName();
+        ErrorResponseDto body = ErrorResponseDto.builder()
+                .errorCode("VALIDATION_ERROR")
+                .message("Request validation failed")
+                .correlationId(MDC.get(CORRELATION_MDC_KEY))
+                .addDetail(ex.getName() + ": must be " + expected)
+                .build();
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
     }
 }

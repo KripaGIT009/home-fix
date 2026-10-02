@@ -1,5 +1,6 @@
 # Production overrides for the shared homefix-service chart.
-# Applied by the CD workflow: --values helm/homefix-service/values-production.yaml
+# Applied by .github/workflows/deploy-services.yml for environment=production,
+# before helm/services/<service>.yaml.
 
 environment: production
 
@@ -21,11 +22,9 @@ autoscaling:
   targetMemoryUtilizationPercentage: 80
 
 config:
+  # No application-<profile>.yml exists yet; set so profile-specific config can be
+  # added without touching the chart.
   SPRING_PROFILES_ACTIVE: production
-  JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=75.0"
-  OTEL_TRACES_EXPORTER: otlp
-  OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector.monitoring:4317"
-  LOG_LEVEL: INFO
 
 podDisruptionBudget:
   enabled: true

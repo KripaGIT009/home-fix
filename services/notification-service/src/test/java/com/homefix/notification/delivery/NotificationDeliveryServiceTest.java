@@ -17,11 +17,13 @@ import com.homefix.notification.channel.PushPort;
 import com.homefix.notification.channel.SmsPort;
 import com.homefix.notification.domain.DeliveryStatus;
 import com.homefix.notification.domain.EventTemplateResolver;
+import com.homefix.notification.domain.NotificationAudience;
 import com.homefix.notification.domain.NotificationChannel;
 import com.homefix.notification.domain.NotificationContact;
 import com.homefix.notification.domain.NotificationEvent;
 import com.homefix.notification.domain.NotificationEventType;
 import com.homefix.notification.domain.NotificationPreferences;
+import com.homefix.notification.domain.RecipientPolicy;
 import com.homefix.notification.domain.RetrySchedule;
 import com.homefix.notification.support.TestDoubles.AlwaysFailingSmsPort;
 import com.homefix.notification.support.TestDoubles.FixedPreferencePort;
@@ -36,18 +38,28 @@ import org.junit.jupiter.params.provider.EnumSource;
 
 /**
  * Behavioural tests for the multi-channel dispatch orchestrator: deduplication, preference
- * enforcement, retry schedule, and delivery for all 11 events (Requirement 17, Property 22).
+ * enforcement, retry schedule, per-recipient dedup, skipping channels the recipient has no address
+ * on, and delivery for every event (Requirement 17, Property 22).
  */
 class NotificationDeliveryServiceTest {
 
     private static final Clock FIXED_CLOCK = Clock.fixed(Instant.parse("2024-01-01T00:00:00Z"), ZoneOffset.UTC);
 
+    /** One recipient for the single-recipient tests, so a redelivery addresses the same user. */
+    private static final UUID RECIPIENT = UUID.randomUUID();
+
     private final EventTemplateResolver resolver = new EventTemplateResolver();
 
     private NotificationEvent event(NotificationEventType type, UUID eventId) {
-        return new NotificationEvent(
-                type, eventId, UUID.randomUUID(),
-                new NotificationContact("+919876543210", "user@example.com", "device-token"),
+        return event(type, eventId, RECIPIENT,
+                new NotificationContact("+919876543210", "user@example.com", "device-token"));
+    }
+
+    private NotificationEvent event(NotificationEventType type, UUID eventId, UUID recipient,
+                                    NotificationContact contact) {
+        // Address the event to an audience the recipient policy actually produces for the type.
+        NotificationAudience audience = new RecipientPolicy().audiencesFor(type).iterator().next();
+        return new NotificationEvent(type, eventId, recipient, audience, contact,
                 Map.of("bookingReference", "BR-42"));
     }
 
@@ -190,6 +202,81 @@ class NotificationDeliveryServiceTest {
                     assertThat(r.getRetryCount()).isEqualTo(3);
                     assertThat(r.getErrorDescription()).isNotBlank();
                 });
+    }
+
+    @Test
+    void sameEventToTwoRecipients_deliversToEachAndDedupsEachIndependently() {
+        // A cancellation reaches the customer and the provider on the same channels under one
+        // Kafka event id; the first recipient's log rows must not suppress the second's delivery.
+        UUID eventId = UUID.randomUUID();
+        InMemoryDeliveryLogStore store = new InMemoryDeliveryLogStore();
+        RecordingSmsPort sms = new RecordingSmsPort();
+        RecordingInAppPort inApp = new RecordingInAppPort();
+        NotificationDeliveryService svc = service(store, FixedPreferencePort.unavailable(),
+                sms, new RecordingEmailPort(), new RecordingPushPort(), inApp,
+                new RetrySchedule(3, Duration.ofSeconds(1)), new ArrayList<>());
+        NotificationContact phoneOnly = new NotificationContact("+919000000001", null, null);
+        NotificationEvent toCustomer = new NotificationEvent(NotificationEventType.BOOKING_CANCELLED, eventId,
+                UUID.randomUUID(), NotificationAudience.CUSTOMER, phoneOnly, Map.of());
+        NotificationEvent toProvider = new NotificationEvent(NotificationEventType.BOOKING_CANCELLED, eventId,
+                UUID.randomUUID(), NotificationAudience.PROVIDER, phoneOnly, Map.of());
+
+        svc.dispatch(toCustomer);
+        svc.dispatch(toProvider);
+        assertThat(sms.attempts.get()).isEqualTo(2);
+        assertThat(inApp.attempts.get()).isEqualTo(2);
+
+        // Redelivery of the whole event: nothing is re-sent to either recipient.
+        svc.dispatch(toCustomer);
+        svc.dispatch(toProvider);
+        assertThat(sms.attempts.get()).isEqualTo(2);
+        assertThat(inApp.attempts.get()).isEqualTo(2);
+    }
+
+    @Test
+    void channelWithoutAddress_isSkippedAndRecordedWithoutRetries() {
+        InMemoryDeliveryLogStore store = new InMemoryDeliveryLogStore();
+        RecordingSmsPort sms = new RecordingSmsPort();
+        RecordingEmailPort email = new RecordingEmailPort();
+        RecordingPushPort push = new RecordingPushPort();
+        RecordingInAppPort inApp = new RecordingInAppPort();
+        List<Long> sleeps = new ArrayList<>();
+        NotificationDeliveryService svc = service(store, FixedPreferencePort.unavailable(),
+                sms, email, push, inApp, new RetrySchedule(3, Duration.ofSeconds(1)), sleeps);
+
+        // What the Auth Service can supply today: a phone number, no email, no push token.
+        svc.dispatch(event(NotificationEventType.PAYMENT_COMPLETED, UUID.randomUUID(), UUID.randomUUID(),
+                new NotificationContact("+919000000001", null, null)));
+
+        assertThat(sms.attempts.get()).isEqualTo(1);
+        assertThat(inApp.attempts.get()).isEqualTo(1);
+        assertThat(email.attempts.get()).isZero();
+        assertThat(push.attempts.get()).isZero();
+        assertThat(sleeps).as("no retry backoff for an address that does not exist").isEmpty();
+        assertThat(store.records)
+                .filteredOn(r -> r.getDeliveryStatus() == DeliveryStatus.SKIPPED_NO_CONTACT)
+                .extracting(DeliveryLogEntity::getChannel)
+                .containsExactlyInAnyOrder(NotificationChannel.EMAIL, NotificationChannel.PUSH);
+    }
+
+    @Test
+    void recipientWithNoContactAtAll_stillGetsInAppNotification() {
+        InMemoryDeliveryLogStore store = new InMemoryDeliveryLogStore();
+        RecordingInAppPort inApp = new RecordingInAppPort();
+        RecordingSmsPort sms = new RecordingSmsPort();
+        NotificationDeliveryService svc = service(store, FixedPreferencePort.unavailable(),
+                sms, new RecordingEmailPort(), new RecordingPushPort(), inApp,
+                new RetrySchedule(3, Duration.ofSeconds(1)), new ArrayList<>());
+
+        svc.dispatch(event(NotificationEventType.BOOKING_CREATED, UUID.randomUUID(), UUID.randomUUID(),
+                NotificationContact.empty()));
+
+        assertThat(inApp.attempts.get()).isEqualTo(1);
+        assertThat(sms.attempts.get()).isZero();
+        assertThat(store.records)
+                .filteredOn(r -> r.getDeliveryStatus() == DeliveryStatus.DELIVERED)
+                .extracting(DeliveryLogEntity::getChannel)
+                .containsExactly(NotificationChannel.IN_APP);
     }
 
     @ParameterizedTest

@@ -18,6 +18,12 @@ public class DispatchClientProperties {
     /** Base URL of the Notification Service (customer/dispatcher alerts). */
     private String notificationServiceBaseUrl = "http://notification-service";
 
+    /** Base URL of the Customer Service (booking address to coordinates, Requirement 8.2). */
+    private String customerServiceBaseUrl = "http://customer-service";
+
+    /** Base URL of the Service Catalog (subcategory skill tags, Requirement 8.2). */
+    private String catalogServiceBaseUrl = "http://catalog-service";
+
     public String getProviderServiceBaseUrl() {
         return providerServiceBaseUrl;
     }
@@ -40,5 +46,21 @@ public class DispatchClientProperties {
 
     public void setNotificationServiceBaseUrl(String notificationServiceBaseUrl) {
         this.notificationServiceBaseUrl = notificationServiceBaseUrl;
+    }
+
+    public String getCustomerServiceBaseUrl() {
+        return customerServiceBaseUrl;
+    }
+
+    public void setCustomerServiceBaseUrl(String customerServiceBaseUrl) {
+        this.customerServiceBaseUrl = customerServiceBaseUrl;
+    }
+
+    public String getCatalogServiceBaseUrl() {
+        return catalogServiceBaseUrl;
+    }
+
+    public void setCatalogServiceBaseUrl(String catalogServiceBaseUrl) {
+        this.catalogServiceBaseUrl = catalogServiceBaseUrl;
     }
 }

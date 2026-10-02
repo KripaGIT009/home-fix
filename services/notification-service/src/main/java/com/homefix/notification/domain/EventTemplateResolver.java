@@ -1,92 +1,81 @@
 package com.homefix.notification.domain;
 
-import java.util.EnumSet;
+import java.util.EnumMap;
 import java.util.Map;
-import java.util.Set;
+import java.util.Optional;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 /**
- * Maps each of the 11 lifecycle events to its default delivery channels and renders channel-safe
- * message content (Requirement 17.5).
+ * Maps each event and recipient audience to its default delivery channels and renders
+ * channel-safe message content (Requirements 16.2, 16.3, 17.5).
  *
- * <p>This is a pure function of the event type and its non-PII attributes — no I/O, no framework
- * state — so it is directly unit- and property-testable. Preference filtering happens later; this
- * resolver returns the <em>candidate</em> channels for the event.
+ * <p>The template is picked by {@link BuiltInTemplates#select}; its text on each channel comes
+ * from the {@link TemplateTextSource} (the admin-editable {@code notification_template} table,
+ * Requirement 19.2) and falls back to the built-in text when no row exists or the store cannot be
+ * read, so a notification is never lost to a template lookup. The channel set is always the
+ * built-in one. Placeholders are filled by {@link TemplatePlaceholders} from the non-PII
+ * attributes only.
  *
- * <p>The resolver guarantees every {@link NotificationEventType} produces a non-empty channel set
- * and rendered content, so no configured event is silently dropped.
+ * <p>Apart from the text lookup this is a pure function of the event type, the audience and the
+ * attributes, so it is directly unit- and property-testable. Preference filtering happens later;
+ * this resolver returns the <em>candidate</em> channels for the recipient.
  */
 @Component
 public class EventTemplateResolver {
 
+    private static final Logger log = LoggerFactory.getLogger(EventTemplateResolver.class);
+
+    private final TemplateTextSource textSource;
+
+    /** A resolver that always renders the built-in text. */
+    public EventTemplateResolver() {
+        this(TemplateTextSource.builtInOnly());
+    }
+
+    // Two constructors: without @Autowired Spring would pick the no-arg one and ignore admin edits.
+    @Autowired
+    public EventTemplateResolver(TemplateTextSource textSource) {
+        this.textSource = textSource;
+    }
+
     /**
-     * Resolves the candidate channels and rendered content for an event.
+     * Resolves the candidate channels and rendered content for an event and its recipient.
      *
-     * @throws IllegalStateException if an event type has no mapping (guards against a new event
-     *                               type being added without a template)
+     * @throws IllegalStateException if the event type has no template for the recipient's
+     *                               audience (guards against a policy change without a template)
      */
     public RenderedMessage resolve(NotificationEvent event) {
-        Map<String, String> attrs = event.attributes();
-        String ref = attrs.getOrDefault("bookingReference", "your booking");
-        return switch (event.eventType()) {
-            case BOOKING_CREATED -> new RenderedMessage(
-                    allChannels(),
-                    "Booking confirmed",
-                    "We received " + ref + " and are finding a professional for you.");
-            case PROVIDER_ASSIGNED -> new RenderedMessage(
-                    channels(NotificationChannel.PUSH, NotificationChannel.IN_APP),
-                    "Professional assigned",
-                    "A professional has been assigned to " + ref + ".");
-            case PROVIDER_ACCEPTED -> new RenderedMessage(
-                    // Requirement 8.10 mandates push + SMS on acceptance.
-                    channels(NotificationChannel.PUSH, NotificationChannel.SMS, NotificationChannel.IN_APP),
-                    "Professional on the way",
-                    "Your professional accepted " + ref + " and is on the way.");
-            case PROVIDER_REJECTED -> new RenderedMessage(
-                    channels(NotificationChannel.PUSH, NotificationChannel.IN_APP),
-                    "Finding another professional",
-                    "We are matching " + ref + " with another professional.");
-            case PROVIDER_ARRIVING -> new RenderedMessage(
-                    channels(NotificationChannel.PUSH, NotificationChannel.IN_APP),
-                    "Professional arriving soon",
-                    "Your professional for " + ref + " is arriving soon.");
-            case PROVIDER_ARRIVED -> new RenderedMessage(
-                    channels(NotificationChannel.PUSH, NotificationChannel.SMS, NotificationChannel.IN_APP),
-                    "Professional arrived",
-                    "Your professional for " + ref + " has arrived.");
-            case JOB_STARTED -> new RenderedMessage(
-                    channels(NotificationChannel.PUSH, NotificationChannel.IN_APP),
-                    "Job started",
-                    "Work on " + ref + " has started.");
-            case JOB_COMPLETED -> new RenderedMessage(
-                    allChannels(),
-                    "Job completed",
-                    "Work on " + ref + " is complete.");
-            case PAYMENT_COMPLETED -> new RenderedMessage(
-                    allChannels(),
-                    "Payment received",
-                    "Payment for " + ref + " was successful. Your invoice is ready.");
-            case BOOKING_CANCELLED -> new RenderedMessage(
-                    allChannels(),
-                    "Booking cancelled",
-                    ref + " has been cancelled.");
-            case REVIEW_SUBMITTED -> new RenderedMessage(
-                    channels(NotificationChannel.PUSH, NotificationChannel.IN_APP),
-                    "Review submitted",
-                    "Thanks — your review for " + ref + " was submitted.");
-        };
-    }
+        TemplateDefinition template = BuiltInTemplates.select(event);
+        Map<String, String> values = TemplatePlaceholders.values(event.eventType(), event.attributes());
+        String builtInTitle = TemplatePlaceholders.render(template.title(), values);
+        String builtInBody = TemplatePlaceholders.render(template.body(), values);
 
-    private static Set<NotificationChannel> allChannels() {
-        return EnumSet.allOf(NotificationChannel.class);
-    }
-
-    private static Set<NotificationChannel> channels(NotificationChannel... channels) {
-        Set<NotificationChannel> set = EnumSet.noneOf(NotificationChannel.class);
-        for (NotificationChannel channel : channels) {
-            set.add(channel);
+        Map<NotificationChannel, RenderedMessage.ChannelContent> content = new EnumMap<>(NotificationChannel.class);
+        for (NotificationChannel channel : template.channels()) {
+            Optional<TemplateText> stored = storedText(template.idFor(channel));
+            String title = stored.map(TemplateText::subject)
+                    .map(subject -> TemplatePlaceholders.render(subject, values))
+                    .orElse(builtInTitle);
+            String body = stored.map(text -> TemplatePlaceholders.render(text.body(), values))
+                    .orElse(builtInBody);
+            content.put(channel, new RenderedMessage.ChannelContent(title, body));
         }
-        return set;
+        return new RenderedMessage(template.channels(), builtInTitle, builtInBody, content);
+    }
+
+    private Optional<TemplateText> storedText(String templateId) {
+        try {
+            return textSource.find(templateId);
+        } catch (RuntimeException lookupFailed) {
+            // The built-in text is always a correct message; a template-store outage must not
+            // dead-letter notifications.
+            log.warn("Template lookup for {} failed; using the built-in text: {}",
+                    templateId, lookupFailed.getMessage());
+            return Optional.empty();
+        }
     }
 }

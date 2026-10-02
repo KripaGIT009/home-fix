@@ -12,6 +12,7 @@ import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,6 +22,7 @@ import com.homefix.rating.audit.AuditLogEntry;
 import com.homefix.rating.audit.AuditLogRepository;
 import com.homefix.rating.config.RatingProperties;
 import com.homefix.rating.domain.AggregateCalculator;
+import com.homefix.rating.domain.ModerationStatus;
 import com.homefix.rating.domain.Review;
 import com.homefix.rating.domain.ReviewPrompt;
 import com.homefix.rating.domain.ReviewPromptRepository;
@@ -50,6 +52,12 @@ import com.homefix.rating.provider.ProviderRatingPort;
 public class ReviewService {
 
     private static final Logger log = LoggerFactory.getLogger(ReviewService.class);
+
+    /**
+     * Upper bound on the Admin Portal review list (Requirement 19.2). The portal's table takes a
+     * bare array with no paging, so the newest {@value} matches are returned.
+     */
+    static final int ADMIN_LIST_LIMIT = 200;
 
     private final ReviewRepository reviewRepository;
     private final ReviewPromptRepository promptRepository;
@@ -237,6 +245,62 @@ public class ReviewService {
             recalculateProviderAggregate(review.getRevieweeId(), now);
         }
         log.info("Admin {} removed review {} (reason recorded in audit log)", adminId, reviewId);
+    }
+
+    // ---- Admin Portal (Requirement 19.2) -------------------------------------------------------
+
+    /**
+     * The Admin Portal moderation list: reviews newest first, optionally narrowed to one derived
+     * {@link ModerationStatus}, bounded by {@link #ADMIN_LIST_LIMIT}. Each status is its own query
+     * on the {@code is_active}/{@code is_flagged} columns, so the bound applies after the filter.
+     * PENDING never matches (see {@link ModerationStatus#PENDING}).
+     */
+    @Transactional(readOnly = true)
+    public List<Review> listForAdmin(ModerationStatus status) {
+        PageRequest page = PageRequest.of(0, ADMIN_LIST_LIMIT);
+        if (status == null) {
+            return reviewRepository.findAllByOrderBySubmittedAtDesc(page);
+        }
+        return switch (status) {
+            case FLAGGED -> reviewRepository.findByActiveTrueAndFlaggedTrueOrderBySubmittedAtDesc(page);
+            case PUBLISHED -> reviewRepository.findByActiveTrueAndFlaggedFalseOrderBySubmittedAtDesc(page);
+            case REMOVED -> reviewRepository.findByActiveFalseOrderBySubmittedAtDesc(page);
+            case PENDING -> List.of();
+        };
+    }
+
+    /**
+     * Applies an Admin Portal moderation decision through the existing paths, so the aggregate
+     * recalculation, {@code ReviewSubmitted} event and Audit_Log entry are exactly those of the
+     * approval and removal endpoints: PUBLISH is {@link #approveReview} (15.5) and REMOVE is
+     * {@link #removeReview}, which requires a reason (15.9).
+     *
+     * <p>Removal is final. Publishing a removed review is 409 {@code REVIEW_REMOVED}: approval only
+     * clears the flag and would leave the review deactivated while reporting success. Removing an
+     * already-removed review is a no-op returning it unchanged, so a retried request does not write
+     * a second audit entry or recalculate again.
+     *
+     * @return the review after the decision
+     */
+    @Transactional
+    public Review moderate(UUID reviewId, ModerationAction action, UUID adminId, String reason) {
+        if (action == null) {
+            throw ReviewException.validation("action is required");
+        }
+        Review review = reviewRepository.findById(reviewId)
+                .orElseThrow(() -> ReviewException.notFound("review not found: " + reviewId));
+        if (action == ModerationAction.PUBLISH) {
+            if (!review.isActive()) {
+                throw ReviewException.alreadyRemoved(
+                        "review " + reviewId + " was removed and cannot be published");
+            }
+            return approveReview(reviewId);
+        }
+        if (!review.isActive()) {
+            return review;
+        }
+        removeReview(reviewId, adminId, reason);
+        return review;
     }
 
     // ---- Aggregate recalculation (Requirement 15.4, 15.7, 15.8, Property 16, 17) ---------------

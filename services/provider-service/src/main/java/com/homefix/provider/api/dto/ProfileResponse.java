@@ -11,13 +11,16 @@ import com.homefix.provider.domain.ProviderProfile;
 
 /**
  * Read model for a provider profile. Never exposes the encrypted bank account ciphertext;
- * only whether a verified account is on file.
+ * only whether a verified account is on file. {@code baseLatitude}/{@code baseLongitude} are
+ * {@code null} until the provider sets a base service location.
  */
 public record ProfileResponse(
         UUID id,
         String displayName,
         int yearsExperience,
         int serviceRadiusKm,
+        Double baseLatitude,
+        Double baseLongitude,
         BigDecimal aggregateRating,
         BigDecimal walletBalance,
         boolean emergencyAvailable,
@@ -45,6 +48,8 @@ public record ProfileResponse(
                 p.getDisplayName(),
                 p.getYearsExperience(),
                 p.getServiceRadiusKm(),
+                p.getBaseLatitude(),
+                p.getBaseLongitude(),
                 p.getAggregateRating(),
                 p.getWalletBalance(),
                 p.isEmergencyAvailable(),

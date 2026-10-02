@@ -4,7 +4,9 @@ import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.header.internals.RecordHeader;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.kafka.support.KafkaHeaders;
 
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.HashSet;
 import java.util.Set;
@@ -12,6 +14,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -22,7 +25,9 @@ import static org.mockito.Mockito.verify;
 
 /**
  * Unit tests for {@link IdempotentKafkaConsumer}: duplicate-event skipping (Requirement 22.5)
- * and dead-letter forwarding after 3 failed retries (Requirement 22.6).
+ * and dead-letter forwarding after 3 failed attempts (Requirement 22.6), both when called directly
+ * (attempts back to back) and when the listener container drives the attempts through the
+ * delivery-attempt header (non-final failures rethrown, final failure dead-lettered).
  */
 class IdempotentKafkaConsumerTest {
 
@@ -76,7 +81,7 @@ class IdempotentKafkaConsumerTest {
     }
 
     @Test
-    void forwardsToDlqAfterThreeFailedRetries() {
+    void forwardsToDlqAfterThreeFailedRetriesWithoutSleeping() {
         UUID eventId = UUID.randomUUID();
         AtomicInteger attempts = new AtomicInteger();
         TestConsumer consumer = TestConsumer.create(processedEvents, dlqForwarder, rec -> {
@@ -84,16 +89,18 @@ class IdempotentKafkaConsumerTest {
             throw new RuntimeException("processing boom");
         });
 
+        long started = System.nanoTime();
         consumer.consume(recordWithEventId(eventId));
+        long elapsedMillis = (System.nanoTime() - started) / 1_000_000;
 
         // Exactly 3 attempts (Requirement 22.6), then dead-letter.
         assertThat(attempts.get()).isEqualTo(IdempotentKafkaConsumer.MAX_RETRIES);
-        assertThat(consumer.sleepCount.get()).isEqualTo(IdempotentKafkaConsumer.MAX_RETRIES - 1);
-        assertThat(consumer.lastSleepMillis.get()).isEqualTo(IdempotentKafkaConsumer.RETRY_DELAY_MS);
         verify(dlqForwarder, times(1)).forward(eq(TOPIC), eq("booking-1"), eq(eventId.toString()),
-                anyString(), anyString());
+                anyString(), eq("java.lang.RuntimeException: processing boom"));
         // A failed event is never marked processed, so a later retry could still succeed.
         assertThat(processedEvents.existsByConsumerGroupAndEventId(GROUP, eventId)).isFalse();
+        // The consumer itself never sleeps: the retry delay belongs to the listener container.
+        assertThat(elapsedMillis).isLessThan(IdempotentKafkaConsumer.RETRY_DELAY_MS);
     }
 
     @Test
@@ -124,44 +131,101 @@ class IdempotentKafkaConsumerTest {
         verify(dlqForwarder, times(1)).forward(eq(TOPIC), eq("booking-1"), eq(null), anyString(), anyString());
     }
 
-    /** Test consumer with a supplied handler and a fake, fast sleeper that records its calls. */
+    // ----- container-managed attempts (delivery-attempt header present) -----
+
+    @Test
+    void containerManagedNonFinalFailureIsRethrownForRedelivery() {
+        UUID eventId = UUID.randomUUID();
+        AtomicInteger attempts = new AtomicInteger();
+        RuntimeException boom = new RuntimeException("downstream unavailable");
+        TestConsumer consumer = TestConsumer.create(processedEvents, dlqForwarder, rec -> {
+            attempts.incrementAndGet();
+            throw boom;
+        });
+
+        for (int attempt = 1; attempt < IdempotentKafkaConsumer.MAX_RETRIES; attempt++) {
+            ConsumerRecord<String, String> delivery = withDeliveryAttempt(recordWithEventId(eventId), attempt);
+            assertThatThrownBy(() -> consumer.consume(delivery)).isSameAs(boom);
+        }
+
+        // One handle() call per delivery: the container, not the consumer, drives the retries.
+        assertThat(attempts.get()).isEqualTo(IdempotentKafkaConsumer.MAX_RETRIES - 1);
+        verify(dlqForwarder, never()).forward(anyString(), anyString(), anyString(), anyString(), anyString());
+        assertThat(processedEvents.existsByConsumerGroupAndEventId(GROUP, eventId)).isFalse();
+    }
+
+    @Test
+    void containerManagedFinalFailureIsDeadLetteredNotRethrown() {
+        UUID eventId = UUID.randomUUID();
+        AtomicInteger attempts = new AtomicInteger();
+        TestConsumer consumer = TestConsumer.create(processedEvents, dlqForwarder, rec -> {
+            attempts.incrementAndGet();
+            throw new IllegalStateException("still broken");
+        });
+
+        consumer.consume(withDeliveryAttempt(recordWithEventId(eventId), IdempotentKafkaConsumer.MAX_RETRIES));
+
+        assertThat(attempts.get()).isEqualTo(1);
+        verify(dlqForwarder, times(1)).forward(eq(TOPIC), eq("booking-1"), eq(eventId.toString()),
+                eq("{\"payload\":true}"), eq("java.lang.IllegalStateException: still broken"));
+        assertThat(processedEvents.existsByConsumerGroupAndEventId(GROUP, eventId)).isFalse();
+    }
+
+    @Test
+    void containerManagedRetrySucceedsAndRecordsTheEvent() {
+        UUID eventId = UUID.randomUUID();
+        AtomicInteger attempts = new AtomicInteger();
+        TestConsumer consumer = TestConsumer.create(processedEvents, dlqForwarder,
+                rec -> attempts.incrementAndGet());
+
+        consumer.consume(withDeliveryAttempt(recordWithEventId(eventId), 2));
+        // A later redelivery of the same event is a duplicate whatever its attempt number.
+        consumer.consume(withDeliveryAttempt(recordWithEventId(eventId), 1));
+
+        assertThat(attempts.get()).isEqualTo(1);
+        assertThat(processedEvents.existsByConsumerGroupAndEventId(GROUP, eventId)).isTrue();
+        verify(dlqForwarder, never()).forward(anyString(), anyString(), anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void deliveryAttemptHeaderIsDecodedAsBigEndianInt() {
+        assertThat(IdempotentKafkaConsumer.extractDeliveryAttempt(recordWithEventId(UUID.randomUUID()))).isNull();
+
+        assertThat(IdempotentKafkaConsumer.extractDeliveryAttempt(
+                withDeliveryAttempt(recordWithEventId(UUID.randomUUID()), 7))).isEqualTo(7);
+
+        ConsumerRecord<String, String> malformed = recordWithEventId(UUID.randomUUID());
+        malformed.headers().add(new RecordHeader(KafkaHeaders.DELIVERY_ATTEMPT, new byte[] {1, 2}));
+        assertThat(IdempotentKafkaConsumer.extractDeliveryAttempt(malformed)).isNull();
+    }
+
+    private static ConsumerRecord<String, String> withDeliveryAttempt(ConsumerRecord<String, String> record,
+                                                                      int attempt) {
+        record.headers().add(new RecordHeader(KafkaHeaders.DELIVERY_ATTEMPT,
+                ByteBuffer.allocate(Integer.BYTES).putInt(attempt).array()));
+        return record;
+    }
+
+    /** Test consumer with a supplied handler. */
     private static final class TestConsumer extends IdempotentKafkaConsumer {
         private final java.util.function.Consumer<ConsumerRecord<String, String>> handler;
-        final AtomicInteger sleepCount;
-        final java.util.concurrent.atomic.AtomicLong lastSleepMillis;
 
         private TestConsumer(ProcessedEventRepository repo,
                              DlqForwarder dlq,
-                             java.util.function.Consumer<ConsumerRecord<String, String>> handler,
-                             CapturingSleeper sleeper) {
-            // Inject a fast, non-blocking sleeper so retry tests do not incur the real 5 s delay.
-            super(GROUP, repo, dlq, sleeper);
+                             java.util.function.Consumer<ConsumerRecord<String, String>> handler) {
+            super(GROUP, repo, dlq);
             this.handler = handler;
-            this.sleepCount = sleeper.count;
-            this.lastSleepMillis = sleeper.lastMillis;
         }
 
         static TestConsumer create(ProcessedEventRepository repo,
                                    DlqForwarder dlq,
                                    java.util.function.Consumer<ConsumerRecord<String, String>> handler) {
-            return new TestConsumer(repo, dlq, handler, new CapturingSleeper());
+            return new TestConsumer(repo, dlq, handler);
         }
 
         @Override
         protected void handle(ConsumerRecord<String, String> record) {
             handler.accept(record);
-        }
-    }
-
-    /** Records how many times and with what delay the consumer paused, without actually sleeping. */
-    private static final class CapturingSleeper implements IdempotentKafkaConsumer.Sleeper {
-        final AtomicInteger count = new AtomicInteger();
-        final java.util.concurrent.atomic.AtomicLong lastMillis = new java.util.concurrent.atomic.AtomicLong();
-
-        @Override
-        public void sleep(long millis) {
-            count.incrementAndGet();
-            lastMillis.set(millis);
         }
     }
 

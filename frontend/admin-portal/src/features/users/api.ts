@@ -13,9 +13,10 @@ export type UserStatus = 'ACTIVE' | 'SUSPENDED' | 'DEACTIVATED';
 
 export interface AdminUser {
   id: string;
-  displayName: string;
+  /** Null/absent until the account has a profile name; the screen shows a dash. */
+  displayName?: string | null;
   mobileNumber: string;
-  email?: string;
+  email?: string | null;
   roles: UserRole[];
   status: UserStatus;
   createdAt: string;

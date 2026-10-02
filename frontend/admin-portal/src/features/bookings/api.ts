@@ -33,18 +33,23 @@ export type BookingStatus =
   | 'REFUNDED'
   | 'CANCELLED';
 
+/**
+ * A booking row. The Booking Service owns the booking; the customer's and
+ * provider's names live in other services and may come back null or absent,
+ * as may the service name when the catalog entry cannot be resolved.
+ */
 export interface AdminBooking {
   id: string;
   reference: string;
-  customerName: string;
-  providerName?: string;
-  serviceName: string;
+  customerName?: string | null;
+  providerName?: string | null;
+  serviceName?: string | null;
   status: BookingStatus;
   isEmergency: boolean;
   totalAmount: number;
   currency: string;
   createdAt: string;
-  scheduledAt?: string;
+  scheduledAt?: string | null;
 }
 
 /** GET /admin/bookings — bookings, optionally filtered by search + status. */

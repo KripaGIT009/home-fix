@@ -23,6 +23,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 
 import com.homefix.auth.config.OtpProperties;
+import com.homefix.auth.domain.AccountDisabledException;
+import com.homefix.auth.domain.AccountStatus;
 import com.homefix.auth.domain.Role;
 import com.homefix.auth.domain.UserAccount;
 import com.homefix.auth.domain.UserAccountRepository;
@@ -308,5 +310,30 @@ class RegistrationServiceTest {
         assertThat(Role.FINANCE_ADMIN.isSelfAssignable()).isFalse();
         assertThat(Role.DISPATCHER.isSelfAssignable()).isFalse();
         assertThat(Role.SUPPORT_AGENT.isSelfAssignable()).isFalse();
+    }
+
+    // ----- Disabled accounts (Requirement 19.2) -----
+
+    @ParameterizedTest
+    @ValueSource(strings = {"SUSPENDED", "DEACTIVATED"})
+    void disabledAccount_correctOtpIsRefusedWithoutTokensOrNewRole(String status) {
+        UserAccount existing = UserAccount.createVerified(PHONE, Role.CUSTOMER);
+        existing.changeStatus(AccountStatus.valueOf(status));
+        when(userRepository.findByMobileNumber(PHONE)).thenReturn(Optional.of(existing));
+
+        service.requestOtp(PHONE, "SERVICE_PROVIDER");
+        String code = smsGateway.lastOtpCode();
+
+        assertThatThrownBy(() -> service.verifyOtp(PHONE, code))
+                .isInstanceOf(AccountDisabledException.class)
+                .satisfies(ex -> {
+                    AccountDisabledException ade = (AccountDisabledException) ex;
+                    assertThat(ade.getErrorCode()).isEqualTo("ACCOUNT_DISABLED");
+                    assertThat(ade.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+                });
+
+        assertThat(existing.getRoles()).containsExactly(Role.CUSTOMER);
+        verify(userRepository, never()).save(any(UserAccount.class));
+        verify(tokenService, never()).issueTokens(anyString(), anyList());
     }
 }

@@ -38,6 +38,12 @@ spring:
           uri: ${PRICING_ENGINE_URI:http://pricing-engine:8086}
           predicates:
             - Path=/pricing/**
+        # Only the provider-facing job-offer API; the rest of the Dispatch Engine is internal.
+        # "/dispatch/offers/**" also matches the bare "/dispatch/offers" list.
+        - id: dispatch-engine
+          uri: ${DISPATCH_ENGINE_URI:http://dispatch-engine:8087}
+          predicates:
+            - Path=/dispatch/offers/**
         - id: location-service
           uri: ${LOCATION_SERVICE_URI:http://location-service:8092}
           predicates:
@@ -90,7 +96,51 @@ spring:
         - id: admin-verifications
           uri: ${VERIFICATION_SERVICE_URI:http://verification-service:8094}
           predicates:
-            - Path=/admin/verifications/**
+            - Path=/admin/verifications/**,/admin/verification/**
+        # Each Admin Portal module is served by the service that owns its data, under the
+        # exact path the portal calls. Routes match in declaration order, so these must stay
+        # above the admin-service catch-all; admin-service keeps only what it owns
+        # (dashboard, system configuration, audit log).
+        - id: admin-users
+          uri: ${AUTH_SERVICE_URI:http://auth-service:8081}
+          predicates:
+            - Path=/admin/users/**,/admin/users
+        - id: admin-providers
+          uri: ${PROVIDER_SERVICE_URI:http://provider-service:8083}
+          predicates:
+            - Path=/admin/providers/**,/admin/providers
+        - id: admin-bookings
+          uri: ${BOOKING_SERVICE_URI:http://booking-service:8084}
+          predicates:
+            - Path=/admin/bookings/**,/admin/bookings
+        - id: admin-payments
+          uri: ${PAYMENT_SERVICE_URI:http://payment-service:8088}
+          predicates:
+            - Path=/admin/payments/**,/admin/payments
+        - id: admin-complaints
+          uri: ${COMPLAINT_SERVICE_URI:http://complaint-service:8091}
+          predicates:
+            - Path=/admin/complaints/**,/admin/complaints
+        - id: admin-coupons
+          uri: ${PROMOTION_SERVICE_URI:http://promotion-service:8098}
+          predicates:
+            - Path=/admin/coupons/**,/admin/coupons
+        - id: admin-reviews
+          uri: ${RATING_SERVICE_URI:http://rating-review-service:8097}
+          predicates:
+            - Path=/admin/reviews/**,/admin/reviews
+        - id: admin-reports
+          uri: ${REPORTING_SERVICE_URI:http://reporting-service:8096}
+          predicates:
+            - Path=/admin/reports/**,/admin/reports
+        - id: admin-notification-templates
+          uri: ${NOTIFICATION_SERVICE_URI:http://notification-service:8090}
+          predicates:
+            - Path=/admin/notification-templates/**,/admin/notification-templates
+        - id: admin-dispatch
+          uri: ${DISPATCH_ENGINE_URI:http://dispatch-engine:8087}
+          predicates:
+            - Path=/admin/dispatch/**
         - id: admin-service
           uri: ${ADMIN_SERVICE_URI:http://admin-service:8095}
           predicates:
@@ -107,6 +157,13 @@ homefix:
     auth:
       # Auth Service JWT introspection endpoint (Requirement 23.1).
       introspect-uri: ${AUTH_INTROSPECT_URI:http://auth-service:8081/auth/introspect}
+      # Reuse of positive introspection results, keyed by a hash of the token. An active result
+      # lives for at most this long and never past the token's exp; failures and inactive results
+      # are never cached. Revocation (if ever added for access tokens) takes effect within the
+      # ttl. 0 disables the cache.
+      introspection-cache:
+        ttl: ${INTROSPECTION_CACHE_TTL:30s}
+        max-entries: ${INTROSPECTION_CACHE_MAX_ENTRIES:10000}
     rate-limit:
       # Per-user request limits (Requirement 23.3).
       customer-per-minute: 100

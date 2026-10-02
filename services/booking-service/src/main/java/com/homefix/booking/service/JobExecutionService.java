@@ -95,12 +95,13 @@ public class JobExecutionService {
      */
     @Transactional
     public Booking markOnTheWay(String reference, Actor actor) {
-        Booking booking = require(reference);
+        Booking booking = BookingAccess.requireForProvider(bookingRepository, reference, actor);
         transitionService.transition(booking, BookingStatus.PROVIDER_ON_THE_WAY, actor,
                 "Provider on the way");
         publish(JobExecutionEvents.ProviderArriving.EVENT_TYPE, booking,
                 new JobExecutionEvents.ProviderArriving(
-                        booking.getId(), booking.getReference(), booking.getProviderId(), now()));
+                        booking.getId(), booking.getReference(), booking.getCustomerId(),
+                        booking.getProviderId(), now()));
         return booking;
     }
 
@@ -110,12 +111,13 @@ public class JobExecutionService {
      */
     @Transactional
     public Booking markArrived(String reference, Actor actor) {
-        Booking booking = require(reference);
+        Booking booking = BookingAccess.requireForProvider(bookingRepository, reference, actor);
         transitionService.transition(booking, BookingStatus.PROVIDER_ARRIVED, actor,
                 "Provider arrived");
         publish(JobExecutionEvents.ProviderArrived.EVENT_TYPE, booking,
                 new JobExecutionEvents.ProviderArrived(
-                        booking.getId(), booking.getReference(), booking.getProviderId(), now()));
+                        booking.getId(), booking.getReference(), booking.getCustomerId(),
+                        booking.getProviderId(), now()));
         return booking;
     }
 
@@ -128,7 +130,7 @@ public class JobExecutionService {
      */
     @Transactional
     public Booking startJob(String reference, Actor actor) {
-        Booking booking = require(reference);
+        Booking booking = BookingAccess.requireForProvider(bookingRepository, reference, actor);
         requirePhoto(booking, BEFORE_PHOTO,
                 "A before-photo must be attached before starting the job");
 
@@ -140,8 +142,8 @@ public class JobExecutionService {
         intervalRepository.save(JobInterval.work(booking.getId(), startAt));
         publish(JobExecutionEvents.JobStarted.EVENT_TYPE, booking,
                 new JobExecutionEvents.JobStarted(
-                        booking.getId(), booking.getReference(), booking.getProviderId(),
-                        booking.getStartedAt(), now()));
+                        booking.getId(), booking.getReference(), booking.getCustomerId(),
+                        booking.getProviderId(), booking.getStartedAt(), now()));
         return booking;
     }
 
@@ -160,7 +162,7 @@ public class JobExecutionService {
         if (trimmed.length() > 500) {
             throw BookingException.validation("Pause reason must be at most 500 characters");
         }
-        Booking booking = require(reference);
+        Booking booking = BookingAccess.requireForProvider(bookingRepository, reference, actor);
         Instant at = now();
         transitionService.transition(booking, BookingStatus.JOB_PAUSED, actor, trimmed);
         closeOpenInterval(booking.getId(), at);
@@ -175,7 +177,7 @@ public class JobExecutionService {
      */
     @Transactional
     public Booking resumeJob(String reference, Actor actor) {
-        Booking booking = require(reference);
+        Booking booking = BookingAccess.requireForProvider(bookingRepository, reference, actor);
         Instant at = now();
         transitionService.transition(booking, BookingStatus.JOB_STARTED, actor, "Job resumed");
         closeOpenInterval(booking.getId(), at);
@@ -195,7 +197,7 @@ public class JobExecutionService {
     @Transactional
     public Booking addParts(String reference, Actor actor, AddPartsCommand item) {
         validatePart(item);
-        Booking booking = require(reference);
+        Booking booking = BookingAccess.requireForProvider(bookingRepository, reference, actor);
 
         PartsLineItem line = PartsLineItem.of(
                 booking.getId(), item.itemName().strip(), item.quantity(), item.unitCost(), now());
@@ -226,7 +228,7 @@ public class JobExecutionService {
      */
     @Transactional
     public Booking approveAdditionalQuote(String reference, Actor actor) {
-        Booking booking = require(reference);
+        Booking booking = BookingAccess.requireForCustomer(bookingRepository, reference, actor);
         transitionService.transition(booking, BookingStatus.JOB_STARTED, actor,
                 "Customer approved additional quote");
         intervalRepository.save(JobInterval.work(booking.getId(), now()));
@@ -240,7 +242,7 @@ public class JobExecutionService {
      */
     @Transactional
     public Booking rejectAdditionalQuote(String reference, Actor actor) {
-        Booking booking = require(reference);
+        Booking booking = BookingAccess.requireForCustomer(bookingRepository, reference, actor);
         booking.setFinalTotal(booking.getEstimatedTotal());
         completeInternal(booking, actor, "Customer rejected additional quote; completed at original price");
         return booking;
@@ -282,7 +284,7 @@ public class JobExecutionService {
      */
     @Transactional
     public Booking completeJob(String reference, Actor actor) {
-        Booking booking = require(reference);
+        Booking booking = BookingAccess.requireForProvider(bookingRepository, reference, actor);
         requirePhoto(booking, AFTER_PHOTO,
                 "An after-photo must be attached before completing the job");
         completeInternal(booking, actor, "Job completed");
@@ -309,8 +311,8 @@ public class JobExecutionService {
 
         publish(JobExecutionEvents.JobCompleted.EVENT_TYPE, booking,
                 new JobExecutionEvents.JobCompleted(
-                        booking.getId(), booking.getReference(), booking.getProviderId(),
-                        completedAt, net, booking.getFinalTotal(), now()));
+                        booking.getId(), booking.getReference(), booking.getCustomerId(),
+                        booking.getProviderId(), completedAt, net, booking.getFinalTotal(), now()));
     }
 
     private void closeOpenInterval(java.util.UUID bookingId, Instant at) {
@@ -366,9 +368,17 @@ public class JobExecutionService {
         outboxPublisher.publish(JobExecutionEvents.AGGREGATE_TYPE, booking.getId(), eventType, payload);
     }
 
-    private Booking require(String reference) {
-        return bookingRepository.findByReference(reference)
-                .orElseThrow(() -> BookingException.notFound(reference));
+    /**
+     * The booking for a provider-side call that is not itself a transition, such as attaching a
+     * photo: same lookup and ownership rule as the milestones.
+     */
+    public Booking requireForProvider(String key, Actor actor) {
+        return BookingAccess.requireForProvider(bookingRepository, key, actor);
+    }
+
+    private Booking require(String key) {
+        return bookingRepository.findByKey(key)
+                .orElseThrow(() -> BookingException.notFound(key));
     }
 
     private Instant now() {

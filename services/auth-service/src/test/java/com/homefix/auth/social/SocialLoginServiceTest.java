@@ -17,6 +17,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import com.homefix.auth.config.AuthTokenProperties;
+import com.homefix.auth.domain.AccountDisabledException;
+import com.homefix.auth.domain.AccountStatus;
 import com.homefix.auth.domain.SocialIdentityLink;
 import com.homefix.auth.domain.SocialIdentityLinkRepository;
 import com.homefix.auth.domain.UserAccount;
@@ -140,6 +142,21 @@ class SocialLoginServiceTest {
                 .isInstanceOf(SocialIdentityException.class)
                 .satisfies(ex -> assertThat(((SocialIdentityException) ex).getErrorCode())
                         .isEqualTo("SOCIAL_PROVIDER_UNSUPPORTED"));
+    }
+
+    // ----- Disabled account (Requirement 19.2) -----
+
+    @Test
+    void validToken_linkedAccountSuspended_isRefusedWithoutTokens() {
+        String userId = service.login(SocialProvider.GOOGLE, VALID_TOKEN).userId();
+        users.get(UUID.fromString(userId)).changeStatus(AccountStatus.SUSPENDED);
+
+        assertThatThrownBy(() -> service.login(SocialProvider.GOOGLE, VALID_TOKEN))
+                .isInstanceOf(AccountDisabledException.class)
+                .satisfies(ex -> assertThat(((AccountDisabledException) ex).getErrorCode())
+                        .isEqualTo("ACCOUNT_DISABLED"));
+        // Refused, not replaced: no second account is created for the same identity.
+        assertThat(users).hasSize(1);
     }
 
     // ===== Fakes =====

@@ -22,7 +22,7 @@ import com.homefix.auth.registration.RegistrationException;
 import com.homefix.auth.registration.RegistrationService;
 import com.homefix.auth.registration.RegistrationService.VerificationResult;
 import com.homefix.auth.token.TokenPair;
-import com.homefix.auth.token.TokenService;
+import com.homefix.auth.token.IntrospectionService;
 
 /**
  * Web-layer tests for the auth controllers using standalone MockMvc (no Redis/DB/context).
@@ -31,17 +31,17 @@ import com.homefix.auth.token.TokenService;
 class AuthControllerTest {
 
     private RegistrationService registrationService;
-    private TokenService tokenService;
+    private IntrospectionService introspectionService;
     private MockMvc mockMvc;
 
     @BeforeEach
     void setUp() {
         registrationService = mock(RegistrationService.class);
-        tokenService = mock(TokenService.class);
+        introspectionService = mock(IntrospectionService.class);
         mockMvc = MockMvcBuilders
                 .standaloneSetup(
                         new AuthController(registrationService),
-                        new IntrospectController(tokenService))
+                        new IntrospectController(introspectionService))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }
@@ -98,7 +98,7 @@ class AuthControllerTest {
 
     @Test
     void introspect_validToken_returnsActive() throws Exception {
-        when(tokenService.introspect("good-token"))
+        when(introspectionService.introspect("good-token"))
                 .thenReturn(Map.of("active", true, "sub", "user-1", "roles", List.of("CUSTOMER")));
 
         mockMvc.perform(get("/auth/introspect").header("Authorization", "Bearer good-token"))
@@ -109,7 +109,7 @@ class AuthControllerTest {
 
     @Test
     void introspect_invalidToken_returnsInactive() throws Exception {
-        when(tokenService.introspect("bad-token")).thenReturn(Map.of("active", false));
+        when(introspectionService.introspect("bad-token")).thenReturn(Map.of("active", false));
 
         mockMvc.perform(get("/auth/introspect").param("token", "bad-token"))
                 .andExpect(status().isOk())

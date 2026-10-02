@@ -4,10 +4,14 @@ import org.slf4j.MDC;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
+import com.homefix.auth.admin.AdminUserException;
+import com.homefix.auth.domain.AccountDisabledException;
 import com.homefix.auth.password.PasswordLoginException;
 import com.homefix.auth.registration.RegistrationException;
 import com.homefix.auth.social.SocialIdentityException;
@@ -72,6 +76,67 @@ public class GlobalExceptionHandler {
                 .correlationId(MDC.get(CORRELATION_MDC_KEY))
                 .build();
         return ResponseEntity.status(ex.getStatus()).body(body);
+    }
+
+    @ExceptionHandler(UserNotFoundException.class)
+    public ResponseEntity<ErrorResponseDto> handleUserNotFound(UserNotFoundException ex) {
+        ErrorResponseDto body = ErrorResponseDto.builder()
+                .errorCode(UserNotFoundException.ERROR_CODE)
+                .message(ex.getMessage())
+                .correlationId(MDC.get(CORRELATION_MDC_KEY))
+                .build();
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(body);
+    }
+
+    /**
+     * A sign-in or refresh by an account an administrator has suspended or deactivated
+     * (Requirement 19.2): 403 {@code ACCOUNT_DISABLED}.
+     */
+    @ExceptionHandler(AccountDisabledException.class)
+    public ResponseEntity<ErrorResponseDto> handleAccountDisabled(AccountDisabledException ex) {
+        ErrorResponseDto body = ErrorResponseDto.builder()
+                .errorCode(ex.getErrorCode())
+                .message(ex.getMessage())
+                .correlationId(MDC.get(CORRELATION_MDC_KEY))
+                .build();
+        return ResponseEntity.status(ex.getStatus()).body(body);
+    }
+
+    /** A refused Admin Portal user-management action (self-change, ADMIN acting on an admin). */
+    @ExceptionHandler(AdminUserException.class)
+    public ResponseEntity<ErrorResponseDto> handleAdminUser(AdminUserException ex) {
+        ErrorResponseDto body = ErrorResponseDto.builder()
+                .errorCode(ex.getErrorCode())
+                .message(ex.getMessage())
+                .correlationId(MDC.get(CORRELATION_MDC_KEY))
+                .build();
+        return ResponseEntity.status(ex.getStatus()).body(body);
+    }
+
+    /**
+     * An unreadable body (malformed JSON, or an enum value such as an unknown account status)
+     * is a 400 in the shared envelope rather than the framework's default error body.
+     */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ErrorResponseDto> handleUnreadable(HttpMessageNotReadableException ex) {
+        ErrorResponseDto body = ErrorResponseDto.builder()
+                .errorCode("VALIDATION_ERROR")
+                .message("Request body is missing or malformed")
+                .correlationId(MDC.get(CORRELATION_MDC_KEY))
+                .build();
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
+    }
+
+    /** A malformed path variable (e.g. a non-UUID user id) is a client error, not a 500. */
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ErrorResponseDto> handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
+        ErrorResponseDto body = ErrorResponseDto.builder()
+                .errorCode("VALIDATION_ERROR")
+                .message("Request validation failed")
+                .correlationId(MDC.get(CORRELATION_MDC_KEY))
+                .addDetail(ex.getName() + ": invalid value")
+                .build();
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

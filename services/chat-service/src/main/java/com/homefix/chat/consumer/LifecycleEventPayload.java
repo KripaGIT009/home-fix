@@ -15,8 +15,10 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
  * in this body.
  *
  * @param bookingId        the booking the event relates to (required)
- * @param customerId       the customer on the booking (required for activation)
- * @param providerId       the provider on the booking (required for activation)
+ * @param customerId       the customer on the booking (required for activation; on deactivation,
+ *                         recorded in the tombstone if no channel exists yet)
+ * @param providerId       the provider on the booking (required for activation; may be null on
+ *                         {@code BookingCancelled} for a booking cancelled before assignment)
  * @param bookingCreatedAt the booking's creation timestamp, anchoring the 90-day retention window
  *                         (Requirement 18.4); falls back to now when absent
  */

@@ -8,6 +8,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.homefix.notification.consumer.LifecycleEventPayload;
+import com.homefix.notification.domain.NotificationEventType;
+import com.homefix.notification.domain.RecipientPolicy;
 
 import au.com.dius.pact.provider.PactVerifyProvider;
 import au.com.dius.pact.provider.junit5.MessageTestTarget;
@@ -23,7 +25,9 @@ import au.com.dius.pact.provider.junitsupport.loader.PactFolder;
  * <em>message</em> verification: the {@link PactVerifyProvider} method produces a representative
  * message and Pact checks it against the schema/matching rules in the consumer contract, and we
  * additionally assert the Notification Service's own {@link LifecycleEventPayload} deserialises
- * it and can resolve a recipient — proving real consumability, not just shape.
+ * it and that the {@link RecipientPolicy} can address it — proving real consumability, not just
+ * shape. The contract carries user ids only; contact details are resolved from the Auth Service,
+ * so no phone number or email appears in the message.
  *
  * <p>The pact is loaded from {@code src/test/resources/pacts}, mirroring what CI pulls from the
  * Pact Broker.
@@ -62,17 +66,17 @@ class NotificationServiceProviderPactTest {
         LifecycleEventPayload payload = new LifecycleEventPayload(
                 UUID.randomUUID(),
                 "HF-2024-000123",
-                null,
                 UUID.randomUUID(),
                 null,
-                "+919812345678",
-                "customer@example.com",
+                null,
+                null,
+                null,
+                null,
                 null);
 
-        // Sanity: the payload the Notification Service builds resolves a recipient (Requirement 17.5).
-        if (payload.resolveRecipient() == null) {
-            throw new IllegalStateException("Notification recipient could not be resolved");
-        }
+        // Sanity: the Notification Service can address this event (Requirement 17.4) — the
+        // policy throws if the customer it must notify is missing.
+        new RecipientPolicy().recipientsFor(NotificationEventType.BOOKING_CREATED, payload.participants());
         return objectMapper.writeValueAsString(payload);
     }
 }

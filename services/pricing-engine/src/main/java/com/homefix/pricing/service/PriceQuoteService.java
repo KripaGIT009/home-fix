@@ -5,14 +5,17 @@ import java.math.BigDecimal;
 import org.springframework.stereotype.Service;
 
 import com.homefix.pricing.config.PricingProperties;
-import com.homefix.pricing.coupon.CouponLookupPort;
-import com.homefix.pricing.domain.Coupon;
+import com.homefix.pricing.coupon.CouponDiscountPort;
 import com.homefix.pricing.domain.PriceBreakdown;
 import com.homefix.pricing.domain.PricingParameters;
 
 /**
  * Orchestrates a full price quote: resolves Admin-configured parameters (read-through cache),
- * runs the itemised formula, then validates and applies any coupon (Requirement 6.1–6.10).
+ * runs the itemised formula, then applies any coupon (Requirement 6.1–6.10).
+ *
+ * <p>The coupon's discount is quoted by the Promotion Service through {@link CouponDiscountPort};
+ * this service only decides what order value it applies to (the pre-coupon total) and folds the
+ * result into the breakdown. Quoting records no redemption.
  *
  * <p>The returned {@link PriceBreakdown} has all components non-null, its components sum to the
  * total (Property 6), and the total is never below the configured floor (Property 1) even after
@@ -23,19 +26,16 @@ public class PriceQuoteService {
 
     private final PricingService pricingService;
     private final PricingConfigService configService;
-    private final CouponService couponService;
-    private final CouponLookupPort couponLookup;
+    private final CouponDiscountPort couponDiscounts;
     private final PricingProperties properties;
 
     public PriceQuoteService(PricingService pricingService,
                              PricingConfigService configService,
-                             CouponService couponService,
-                             CouponLookupPort couponLookup,
+                             CouponDiscountPort couponDiscounts,
                              PricingProperties properties) {
         this.pricingService = pricingService;
         this.configService = configService;
-        this.couponService = couponService;
-        this.couponLookup = couponLookup;
+        this.couponDiscounts = couponDiscounts;
         this.properties = properties;
     }
 
@@ -47,13 +47,12 @@ public class PriceQuoteService {
             return pre;
         }
 
-        Coupon coupon = couponLookup.findByCode(request.couponCode())
-                .orElseThrow(() -> PricingException.coupon("COUPON_NOT_FOUND",
-                        "Coupon '" + request.couponCode() + "' does not exist"));
-
-        // Minimum-order check is against the pre-coupon total.
-        BigDecimal couponAmount = couponService.validateAndComputeDiscount(
-                coupon, pre.total(), request.userId());
+        // Minimum-order check is against the pre-coupon total. The port never returns more
+        // than that total; clamp anyway so a misbehaving dependency cannot produce a negative
+        // pre-floor total that the floor logic would then hide in the discount line.
+        BigDecimal couponAmount = couponDiscounts
+                .discountFor(request.couponCode().strip(), request.userId(), pre.total())
+                .min(pre.total());
 
         return PriceBreakdown.builder()
                 .basePrice(pre.basePrice())

@@ -42,6 +42,14 @@ public class PricingException extends RuntimeException {
         return new PricingException(HttpStatus.UNPROCESSABLE_ENTITY, errorCode, message);
     }
 
+    /**
+     * The Promotion Service, which quotes coupon discounts, could not be consulted (Requirement
+     * 6.10). A 503 so callers treat it as transient and retry, rather than as a bad coupon.
+     */
+    public static PricingException couponServiceUnavailable(String message) {
+        return new PricingException(HttpStatus.SERVICE_UNAVAILABLE, "COUPON_SERVICE_UNAVAILABLE", message);
+    }
+
     /** A provider-specific override outside the permitted floor/ceiling (Requirement 6.12). */
     public static PricingException overrideOutOfRange(String message, List<String> details) {
         return new PricingException(HttpStatus.UNPROCESSABLE_ENTITY, "OVERRIDE_OUT_OF_RANGE", message, details);

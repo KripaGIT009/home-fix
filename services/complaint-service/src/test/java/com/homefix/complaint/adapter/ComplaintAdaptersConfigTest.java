@@ -72,10 +72,14 @@ class ComplaintAdaptersConfigTest {
         new LoggingFinanceAlertAdapter().refundRequiresManualProcessing(
                 id, UUID.randomUUID(), new BigDecimal("10.00"), "rejected");
 
-        RefundResult result = new LoggingRefundAdapter()
-                .requestRefund(UUID.randomUUID(), id, new BigDecimal("25.00"));
+        LoggingRefundAdapter refundAdapter = new LoggingRefundAdapter();
+        RefundResult result = refundAdapter
+                .requestRefund(UUID.randomUUID(), id, new BigDecimal("25.00"), "complaint-refund:k1");
         assertThat(result.approved()).isTrue();
         assertThat(result.transactionRef()).startsWith("stub_rf_");
+        // Same key, same reference: the stub mirrors the Payment Service's idempotency.
+        assertThat(refundAdapter.requestRefund(UUID.randomUUID(), id, new BigDecimal("25.00"),
+                "complaint-refund:k1").transactionRef()).isEqualTo(result.transactionRef());
     }
 
     @Test

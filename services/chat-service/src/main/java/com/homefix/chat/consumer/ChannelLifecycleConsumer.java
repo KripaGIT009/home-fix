@@ -99,7 +99,10 @@ public class ChannelLifecycleConsumer extends IdempotentKafkaConsumer {
                 chatService.activateChannel(payload.bookingId(), payload.customerId(),
                         payload.providerId(), createdAt);
             }
-            case DEACTIVATE -> chatService.deactivateChannel(payload.bookingId());
+            // The participant ids and creation time only matter if no channel exists yet, when
+            // they go into the tombstone; either event may omit them.
+            case DEACTIVATE -> chatService.deactivateChannel(payload.bookingId(),
+                    payload.customerId(), payload.providerId(), payload.bookingCreatedAt());
         }
         log.debug("Applied {} for booking {} from topic {}",
                 action, payload.bookingId(), record.topic());

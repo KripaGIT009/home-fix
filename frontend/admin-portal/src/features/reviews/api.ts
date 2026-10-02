@@ -14,16 +14,21 @@ import { apiClient } from '@api/client';
 
 export type ModerationStatus = 'PENDING' | 'FLAGGED' | 'PUBLISHED' | 'REMOVED';
 
+/**
+ * A review row. The Rating & Review Service owns the review; the booking
+ * reference and the reviewer's and provider's names live in other services and
+ * may come back null or absent, as may the flag reason and an empty comment.
+ */
 export interface AdminReview {
   id: string;
-  bookingReference: string;
-  reviewerName: string;
-  providerName: string;
+  bookingReference?: string | null;
+  reviewerName?: string | null;
+  providerName?: string | null;
   rating: number;
-  comment: string;
+  comment?: string | null;
   status: ModerationStatus;
   /** Reason the review was auto-flagged, when applicable. */
-  flagReason?: string;
+  flagReason?: string | null;
   createdAt: string;
 }
 

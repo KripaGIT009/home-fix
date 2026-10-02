@@ -23,6 +23,9 @@ import jakarta.persistence.Table;
 @Table(name = "complaint")
 public class Complaint {
 
+    /** Column length of {@link #resolutionNote}. */
+    public static final int RESOLUTION_NOTE_MAX_LENGTH = 2000;
+
     @Id
     @Column(name = "id", nullable = false, updatable = false)
     private UUID id;
@@ -76,6 +79,13 @@ public class Complaint {
 
     @Column(name = "resolved_at")
     private Instant resolvedAt;
+
+    /**
+     * The latest resolution note recorded by staff from the Admin Portal (Requirement 19.2). Each
+     * update replaces the previous note; it is required when a complaint is resolved there.
+     */
+    @Column(name = "resolution_note", length = RESOLUTION_NOTE_MAX_LENGTH)
+    private String resolutionNote;
 
     protected Complaint() {
         // JPA
@@ -159,6 +169,11 @@ public class Complaint {
         this.resolvedAt = closedAt;
     }
 
+    /** Records the staff resolution note, replacing any earlier one (Requirement 19.2). */
+    public void recordResolutionNote(String note) {
+        this.resolutionNote = note;
+    }
+
     /** Whether the resolution SLA has been breached at {@code now} for a still-open complaint. */
     public boolean isSlaBreachedAt(Instant now) {
         return !status.isTerminal() && !escalated && now.isAfter(slaDeadline);
@@ -222,5 +237,9 @@ public class Complaint {
 
     public Instant getResolvedAt() {
         return resolvedAt;
+    }
+
+    public String getResolutionNote() {
+        return resolutionNote;
     }
 }

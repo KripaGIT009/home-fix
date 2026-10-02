@@ -1,7 +1,5 @@
-import { Button, Divider, Stack, Tooltip, Typography } from '@mui/material';
+import { Button, Divider, Stack, Typography } from '@mui/material';
 import GoogleIcon from '@mui/icons-material/Google';
-import AppleIcon from '@mui/icons-material/Apple';
-import FacebookIcon from '@mui/icons-material/Facebook';
 import { isGoogleSignInConfigured } from './googleSignIn';
 import type { SocialProvider } from './api';
 
@@ -15,88 +13,43 @@ interface SocialLoginButtonsProps {
  *
  * A provider is only offered when this build can actually obtain an identity
  * token for it: the Auth Service verifies a real provider-issued OIDC token, so
- * a button with no SDK behind it can only ever fail. Unconfigured providers stay
- * visibly disabled and say what is missing rather than erroring on tap.
+ * a button with no SDK behind it could only ever fail. Today that means Google,
+ * when VITE_GOOGLE_CLIENT_ID is set; with no provider configured the whole
+ * block is omitted rather than shown disabled.
  */
 export function SocialLoginButtons({ onSelect, disabled = false }: SocialLoginButtonsProps) {
-  const googleReady = isGoogleSignInConfigured();
-
   const providers = [
     {
       id: 'GOOGLE' as const,
       label: 'Google',
-      icon: <GoogleIcon />,
-      color: '#DB4437',
-      ready: googleReady,
-      unavailableReason: 'Set VITE_GOOGLE_CLIENT_ID to enable Google sign-in',
+      icon: <GoogleIcon sx={{ color: '#DB4437' }} />,
+      ready: isGoogleSignInConfigured(),
     },
-    {
-      id: 'APPLE' as const,
-      label: 'Apple',
-      icon: <AppleIcon />,
-      color: '#111827',
-      ready: false,
-      unavailableReason: 'Apple sign-in is not configured in this build',
-    },
-    {
-      id: null,
-      label: 'Facebook',
-      icon: <FacebookIcon />,
-      color: '#1877F2',
-      ready: false,
-      unavailableReason: 'Facebook sign-in is not supported',
-    },
-  ];
+  ].filter((provider) => provider.ready);
+
+  if (providers.length === 0) return null;
 
   return (
     <Stack spacing={2}>
       <Divider>
         <Typography variant="caption" color="text.secondary">
-          or continue with
+          or
         </Typography>
       </Divider>
-
-      <Stack direction="row" spacing={1.5}>
-        {providers.map((provider) => {
-          const isDisabled = disabled || !provider.ready || provider.id === null;
-          const button = (
-            <Button
-              variant="outlined"
-              color="inherit"
-              size="large"
-              fullWidth
-              disabled={isDisabled}
-              onClick={() => provider.id && onSelect(provider.id)}
-              aria-label={
-                provider.ready
-                  ? `Continue with ${provider.label}`
-                  : `${provider.label} — ${provider.unavailableReason}`
-              }
-              sx={{ py: 1.25, color: provider.color, borderColor: 'divider' }}
-            >
-              {provider.icon}
-            </Button>
-          );
-
-          return (
-            <Tooltip
-              key={provider.label}
-              title={
-                provider.ready ? `Continue with ${provider.label}` : provider.unavailableReason
-              }
-            >
-              {/* A disabled button fires no events, so the tooltip needs a live wrapper. */}
-              <span style={{ flex: 1, display: 'flex' }}>{button}</span>
-            </Tooltip>
-          );
-        })}
-      </Stack>
-
-      {googleReady ? null : (
-        <Typography variant="caption" color="text.secondary" textAlign="center">
-          Social sign-in needs a provider client id. Use your mobile number to continue.
-        </Typography>
-      )}
+      {providers.map((provider) => (
+        <Button
+          key={provider.id}
+          variant="outlined"
+          color="inherit"
+          size="large"
+          fullWidth
+          disabled={disabled}
+          startIcon={provider.icon}
+          onClick={() => onSelect(provider.id)}
+        >
+          Continue with {provider.label}
+        </Button>
+      ))}
     </Stack>
   );
 }

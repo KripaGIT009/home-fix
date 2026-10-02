@@ -10,10 +10,12 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 /**
  * Entry point for the HomeFix Notification Service.
  *
- * <p>Consumes the 11 booking-lifecycle Kafka events idempotently and fans each out to the user's
- * enabled channels (push, SMS, email, in-app) within 10 s (Requirement 17). SMS and email
- * delivery sit behind vendor-neutral ports so a vendor swap needs only a new adapter. Delivery is
- * deduplicated on {@code (kafkaEventId, channel)} via a persisted delivery log and retried up to
+ * <p>Consumes the 11 booking-lifecycle Kafka events and the two complaint events idempotently,
+ * decides who each one concerns, resolves those users' contact details from the Auth Service by
+ * user id, and fans each out to the recipient's enabled channels (push, SMS, email, in-app) within
+ * 10 s (Requirements 16.2, 16.3, 17). SMS and email delivery sit behind vendor-neutral ports so a
+ * vendor swap needs only a new adapter. Delivery is deduplicated on
+ * {@code (kafkaEventId, recipient, channel)} via a persisted delivery log and retried up to
  * three times with 1 s -> 2 s -> 4 s backoff before being marked permanently failed
  * (Property 22).
  *

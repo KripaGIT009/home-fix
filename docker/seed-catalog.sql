@@ -25,3 +25,22 @@ BEGIN
     (gen_random_uuid(), c_appl,  'AC Service',               599.00,  90, false, true, now(), now(), 0),
     (gen_random_uuid(), c_appl,  'Refrigerator Repair',      499.00,  75, false, true, now(), now(), 0);
 END $$;
+
+-- Skill tags per subcategory. Dispatch matches a booking's subcategory tags against
+-- provider.provider_skill_tag (see seed-provider-profiles.sql), and dead-letters a booking whose
+-- subcategory has none, so without these no seeded booking can ever be matched.
+-- Keyed by category name rather than id, and idempotent, so it can be re-run on its own against a
+-- database that was seeded before this block existed.
+INSERT INTO service_subcategory_skill_tag (subcategory_id, tag)
+SELECT s.id, t.tag
+FROM service_subcategory s
+JOIN service_category c ON c.id = s.category_id
+JOIN (VALUES
+        ('Cleaning',         'cleaning'),
+        ('Plumbing',         'plumbing'),
+        ('Electrical',       'electrical'),
+        ('Appliance Repair', 'appliance-repair')
+     ) AS t(category, tag) ON t.category = c.name
+WHERE NOT EXISTS (
+    SELECT 1 FROM service_subcategory_skill_tag existing
+    WHERE existing.subcategory_id = s.id AND existing.tag = t.tag);

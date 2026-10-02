@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { Box } from '@mui/material';
 import NavigationRoundedIcon from '@mui/icons-material/NavigationRounded';
 import HomeRoundedIcon from '@mui/icons-material/HomeRounded';
+import { brand } from '@lib/theme';
 import type { Coordinates } from './api';
 
 /**
@@ -51,12 +52,9 @@ export function TrackingMap({
       sx={{
         position: 'relative',
         width: '100%',
-        aspectRatio: '16 / 10',
-        borderRadius: 2,
+        aspectRatio: { xs: '4 / 3', sm: '16 / 9' },
         overflow: 'hidden',
-        bgcolor: 'grey.100',
-        border: '1px solid',
-        borderColor: 'divider',
+        bgcolor: '#EEF2F7',
       }}
     >
       <Box
@@ -67,10 +65,10 @@ export function TrackingMap({
       >
         {/* Subtle grid to read the plane as a map. */}
         {[20, 40, 60, 80].map((n) => (
-          <line key={`h${n}`} x1={0} y1={n} x2={100} y2={n} stroke="#e0e0e0" strokeWidth={0.3} />
+          <line key={`h${n}`} x1={0} y1={n} x2={100} y2={n} stroke="#FFFFFF" strokeWidth={1.4} />
         ))}
         {[20, 40, 60, 80].map((n) => (
-          <line key={`v${n}`} x1={n} y1={0} x2={n} y2={100} stroke="#e0e0e0" strokeWidth={0.3} />
+          <line key={`v${n}`} x1={n} y1={0} x2={n} y2={100} stroke="#FFFFFF" strokeWidth={1.4} />
         ))}
         {destPos ? (
           <line
@@ -78,8 +76,8 @@ export function TrackingMap({
             y1={providerPos.y}
             x2={destPos.x}
             y2={destPos.y}
-            stroke="#1976d2"
-            strokeWidth={0.6}
+            stroke={brand.accent}
+            strokeWidth={0.8}
             strokeDasharray="2 1.5"
           />
         ) : null}
@@ -87,17 +85,39 @@ export function TrackingMap({
 
       {destPos ? (
         <MapMarker x={destPos.x} y={destPos.y} label="Your location">
-          <HomeRoundedIcon sx={{ color: 'text.secondary' }} />
+          <Box
+            sx={{
+              width: 36,
+              height: 36,
+              borderRadius: '50%',
+              display: 'grid',
+              placeItems: 'center',
+              bgcolor: '#FFFFFF',
+              color: brand.ink,
+              boxShadow: '0 4px 12px rgba(16,24,40,0.18)',
+            }}
+          >
+            <HomeRoundedIcon sx={{ fontSize: 20 }} />
+          </Box>
         </MapMarker>
       ) : null}
 
       <MapMarker x={providerPos.x} y={providerPos.y} label="Provider location">
-        <NavigationRoundedIcon
+        <Box
           sx={{
-            color: stale ? 'text.disabled' : 'primary.main',
-            filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.3))',
+            width: 40,
+            height: 40,
+            borderRadius: '50%',
+            display: 'grid',
+            placeItems: 'center',
+            bgcolor: stale ? brand.subtle : brand.accent,
+            color: '#FFFFFF',
+            border: '3px solid #FFFFFF',
+            boxShadow: stale ? 'none' : `0 0 0 8px ${brand.accentLine}`,
           }}
-        />
+        >
+          <NavigationRoundedIcon sx={{ fontSize: 20 }} />
+        </Box>
       </MapMarker>
     </Box>
   );
@@ -116,6 +136,7 @@ function MapMarker({
 }) {
   return (
     <Box
+      role="img"
       aria-label={label}
       sx={{
         position: 'absolute',

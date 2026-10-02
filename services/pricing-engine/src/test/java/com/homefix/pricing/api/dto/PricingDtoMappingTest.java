@@ -106,4 +106,53 @@ class PricingDtoMappingTest {
         assertThat(dto.subcategoryId()).isEqualTo(SUB);
         assertThat(dto.proposedPrice()).isEqualByComparingTo("120.00");
     }
+
+    @Test
+    void pricingConfigDtoShowsThePlatformFeeAsAPercentAndLeavesCatalogNamesNull() {
+        PricingParameters p = new PricingParameters(SUB, new BigDecimal("100.00"),
+                new BigDecimal("2.00"), new BigDecimal("50.00"), new BigDecimal("20.00"),
+                new BigDecimal("30.00"), new BigDecimal("0.150000"), new BigDecimal("0.18"),
+                new BigDecimal("2.0"), new BigDecimal("1.5"), new BigDecimal("10.00"),
+                new BigDecimal("500.00"));
+
+        PricingConfigDto dto = PricingConfigDto.from(p);
+
+        assertThat(dto.platformFeePercent().toPlainString()).isEqualTo("15");
+        assertThat(dto.emergencyMultiplierCap()).isEqualByComparingTo("2.0");
+        assertThat(dto.surgeMultiplierCap()).isEqualByComparingTo("1.5");
+        assertThat(dto.currency()).isEqualTo("INR");
+        assertThat(dto.subcategoryName()).isNull();
+        assertThat(dto.categoryName()).isNull();
+    }
+
+    @Test
+    void pricingConfigDtoPercentConversionKeepsAPlainScale() {
+        assertThat(PricingConfigDto.fractionToPercent(new BigDecimal("1.000000")).toPlainString())
+                .isEqualTo("100");
+        assertThat(PricingConfigDto.fractionToPercent(new BigDecimal("0.125")).toPlainString())
+                .isEqualTo("12.5");
+        assertThat(PricingConfigDto.fractionToPercent(null)).isNull();
+        assertThat(PricingConfigDto.percentToFraction(new BigDecimal("15"))).isEqualByComparingTo("0.15");
+    }
+
+    @Test
+    void pricingConfigDtoChangesCarryAFractionAndLeaveUnmanagedFieldsNull() {
+        PricingConfigDto dto = new PricingConfigDto(SUB, "Tap repair", "Plumbing",
+                new BigDecimal("120.00"), new BigDecimal("3.00"), null, new BigDecimal("12.5"),
+                new BigDecimal("10.00"), new BigDecimal("15.00"), new BigDecimal("1.8"),
+                new BigDecimal("1.4"), "INR");
+
+        PricingParameters changes = dto.toChanges(SUB);
+
+        assertThat(changes.subcategoryId()).isEqualTo(SUB);
+        assertThat(changes.basePrice()).isEqualByComparingTo("120.00");
+        assertThat(changes.platformFeeRate()).isEqualByComparingTo("0.125");
+        assertThat(changes.emergencyMultiplier()).isEqualByComparingTo("1.8");
+        assertThat(changes.surgeMultiplier()).isEqualByComparingTo("1.4");
+        assertThat(changes.maxTravelCharge()).isNull();
+        // Not managed by the portal: null means "keep the stored value" in the merge.
+        assertThat(changes.taxRate()).isNull();
+        assertThat(changes.overrideFloor()).isNull();
+        assertThat(changes.overrideCeiling()).isNull();
+    }
 }

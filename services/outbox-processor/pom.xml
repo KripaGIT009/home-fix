@@ -12,14 +12,16 @@
 
     <name>HomeFix Outbox Processor</name>
     <description>
-        Standalone transactional-outbox relay. Polls the shared outbox_event table for PENDING
-        rows in configurable batches, publishes each event to its Kafka topic via the shared
-        idempotent producer (acks=all, enable.idempotence=true), and marks the row PUBLISHED
-        within the same DB transaction once the broker ACKs. On publish failure it retries with
+        Standalone transactional-outbox relay. Claims due PENDING rows of the shared outbox_event
+        table in configurable batches (SELECT ... FOR UPDATE SKIP LOCKED plus a claim lease, so
+        instances never work the same row), publishes each event to its Kafka topic via the shared
+        idempotent producer (acks=all, enable.idempotence=true), and marks the row PUBLISHED once
+        the broker ACKs. A failed publish is rescheduled on the row (next_attempt_at) with
         exponential backoff starting at 1 s, doubling up to a 60 s cap, for a configurable
         maximum (default 10) attempts; on exhaustion it emits an alert carrying the event ID,
-        Kafka topic, and total attempt count and marks the row FAILED (Requirement 22.4). Built
-        on the shared outbox and observability libraries (Tasks 5-6).
+        Kafka topic, and total attempt count and marks the row FAILED (Requirement 22.4).
+        Delivery is at-least-once. Built on the shared outbox and observability libraries
+        (Tasks 5-6).
     </description>
 
     <properties>
@@ -72,6 +74,11 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+        <dependency>
+            <!-- Applies the shared outbox tables migration shipped in homefix-shared-outbox. -->
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -145,6 +152,12 @@
                 <version>3.13.0</version>
                 <configuration>
                     <release>21</release>
+                    <!-- Retain parameter names in the bytecode. Spring resolves an unnamed
+                         @PathVariable/@RequestParam by reflecting on the parameter name, which
+                         javac drops without this; these services import the Spring Boot BOM but
+                         do not inherit spring-boot-starter-parent, which is what would otherwise
+                         set it. Without it such a handler fails at request time with a 500. -->
+                    <parameters>true</parameters>
                 </configuration>
             </plugin>
 

@@ -1,5 +1,8 @@
-import { Box, Container, Stack, Typography } from '@mui/material';
-import ConstructionRoundedIcon from '@mui/icons-material/ConstructionRounded';
+import { Link as RouterLink } from 'react-router-dom';
+import { Box, Button, Stack, Typography } from '@mui/material';
+import ExploreOffRoundedIcon from '@mui/icons-material/ExploreOffRounded';
+import { brand, radius } from '@lib/theme';
+import { BrandLogo } from './BrandLogo';
 
 interface PlaceholderScreenProps {
   title: string;
@@ -8,40 +11,54 @@ interface PlaceholderScreenProps {
 
 /**
  * Fallback screen for routes with no destination — chiefly the wildcard
- * "not found" route. Kept deliberately plain so a wrong URL reads as a dead end
- * rather than as a broken screen.
+ * "not found" route. A clear dead end with one way out.
  */
 export function PlaceholderScreen({ title, description }: PlaceholderScreenProps) {
   return (
-    <Container maxWidth="sm">
+    <Box
+      sx={{
+        minHeight: '100dvh',
+        display: 'flex',
+        flexDirection: 'column',
+        bgcolor: 'background.default',
+      }}
+    >
+      <Box sx={{ px: { xs: 2, md: 4 }, py: 2.5 }}>
+        <BrandLogo size={32} />
+      </Box>
       <Stack
-        spacing={1.5}
+        component="main"
+        spacing={2}
         alignItems="center"
         textAlign="center"
-        sx={{ minHeight: '60dvh', justifyContent: 'center', py: 6 }}
+        sx={{ flexGrow: 1, justifyContent: 'center', px: 2, pb: 10 }}
       >
         <Box
+          aria-hidden
           sx={{
-            width: 60,
-            height: 60,
-            borderRadius: '50%',
+            width: 72,
+            height: 72,
+            borderRadius: `${radius.xl}px`,
             display: 'grid',
             placeItems: 'center',
-            bgcolor: 'action.hover',
-            color: 'text.secondary',
+            bgcolor: brand.accentSoft,
+            color: 'primary.main',
           }}
         >
-          <ConstructionRoundedIcon aria-hidden />
+          <ExploreOffRoundedIcon sx={{ fontSize: 34 }} />
         </Box>
-        <Typography variant="h5" component="h1">
+        <Typography variant="h2" component="h1">
           {title}
         </Typography>
         {description ? (
-          <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 320 }}>
+          <Typography variant="body1" color="text.secondary" sx={{ maxWidth: 400 }}>
             {description}
           </Typography>
         ) : null}
+        <Button component={RouterLink} to="/home" variant="contained" size="large">
+          Go to home
+        </Button>
       </Stack>
-    </Container>
+    </Box>
   );
 }

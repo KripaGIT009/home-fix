@@ -1,3 +1,5 @@
+{{- $port := include "homefix-service.port" . -}}
+{{- $secretName := include "homefix-service.secretName" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -16,6 +18,11 @@ spec:
       annotations:
         # Roll pods when the ConfigMap changes.
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- if .Values.metrics.prometheusAnnotations }}
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ $port | quote }}
+        prometheus.io/path: {{ .Values.metrics.path | quote }}
+        {{- end }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -30,22 +37,25 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       serviceAccountName: {{ include "homefix-service.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountToken }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
         - name: {{ include "homefix-service.name" . }}
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: "{{ required "image.repository is required" .Values.image.repository }}:{{ required "image.tag is required" .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
           ports:
             - name: http
-              containerPort: {{ .Values.containerPort }}
+              containerPort: {{ $port }}
               protocol: TCP
           envFrom:
             - configMapRef:
                 name: {{ include "homefix-service.fullname" . }}-config
           env:
+            - name: SERVER_PORT
+              value: {{ $port | quote }}
             - name: POD_NAME
               valueFrom:
                 fieldRef:
@@ -54,11 +64,46 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
-            - name: OTEL_SERVICE_NAME
-              value: {{ include "homefix-service.name" . }}
+            {{- if .Values.dependencies.postgres }}
+            {{- range $env, $key := dict "DB_HOST" "db_host" "DB_PORT" "db_port" "DB_NAME" "db_name" "DB_USERNAME" "db_username" "DB_PASSWORD" "db_password" }}
+            - name: {{ $env }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: {{ $key }}
+            {{- end }}
+            # Must follow DB_HOST/DB_PORT/DB_NAME: $(VAR) only expands earlier entries.
+            - name: DB_URL
+              value: "jdbc:postgresql://$(DB_HOST):$(DB_PORT)/$(DB_NAME)"
+            {{- end }}
+            {{- if .Values.dependencies.redis }}
+            - name: REDIS_HOST
+              value: {{ required "platform.redis.host is required for a service with dependencies.redis" .Values.platform.redis.host | quote }}
+            - name: REDIS_PORT
+              value: {{ required "platform.redis.port is required for a service with dependencies.redis" .Values.platform.redis.port | quote }}
+            {{- end }}
+            {{- if .Values.dependencies.kafka }}
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: {{ required "platform.kafka.bootstrapServers is required for a service with dependencies.kafka" .Values.platform.kafka.bootstrapServers | quote }}
+            {{- end }}
+            {{- range $env, $key := .Values.secrets.env }}
+            - name: {{ $env }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: {{ $key }}
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
+          startupProbe:
+            httpGet:
+              path: {{ .Values.probes.startup.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.probes.startup.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.startup.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.startup.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.startup.failureThreshold }}
           livenessProbe:
             httpGet:
               path: {{ .Values.probes.liveness.path }}
@@ -75,28 +120,16 @@ spec:
             periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
             timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds }}
             failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
-          startupProbe:
-            httpGet:
-              path: {{ .Values.probes.startup.path }}
-              port: http
-            initialDelaySeconds: {{ .Values.probes.startup.initialDelaySeconds }}
-            periodSeconds: {{ .Values.probes.startup.periodSeconds }}
-            timeoutSeconds: {{ .Values.probes.startup.timeoutSeconds }}
-            failureThreshold: {{ .Values.probes.startup.failureThreshold }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           {{- if .Values.tmpVolumes.enabled }}
           volumeMounts:
             - name: tmp
               mountPath: /tmp
-            - name: spring-work
-              mountPath: /workspace/tmp
           {{- end }}
       {{- if .Values.tmpVolumes.enabled }}
       volumes:
         - name: tmp
-          emptyDir: {}
-        - name: spring-work
           emptyDir: {}
       {{- end }}
       {{- with .Values.nodeSelector }}

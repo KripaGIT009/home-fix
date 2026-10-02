@@ -2,10 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { Alert, Box, IconButton, Stack, TextField, Typography } from '@mui/material';
 import SendRoundedIcon from '@mui/icons-material/SendRounded';
+import ChatBubbleOutlineRoundedIcon from '@mui/icons-material/ChatBubbleOutlineRounded';
 import { AppShell } from '@components/AppShell';
 import { QueryStateView } from '@components/QueryStateView';
 import { formatDateTime } from '@lib/format';
-import { brand } from '@lib/theme';
+import { brand, radius } from '@lib/theme';
 import { useChatChannel, useChatHistory } from './hooks';
 import { useChatSocket } from './useChatSocket';
 import type { ChatMessage } from './api';
@@ -46,17 +47,23 @@ export function ChatScreen() {
   };
 
   return (
-    <AppShell title="Message provider" hideBottomNav>
+    <AppShell title="Chat with your pro" hideBottomNav>
       <Box
         sx={{
           display: 'flex',
           flexDirection: 'column',
-          // Fill the space the shell leaves below its app bar and padding.
-          height: 'calc(100dvh - 60px - 40px)',
+          // Fill the space the shell leaves below its app bar, padding and (on
+          // desktop) the in-page title row.
+          height: { xs: 'calc(100dvh - 60px - 40px)', md: 'calc(100dvh - 68px - 80px - 92px)' },
+          bgcolor: { md: 'background.paper' },
+          border: { md: `1px solid ${brand.line}` },
+          borderRadius: { md: `${radius.lg}px` },
+          px: { md: 2.5 },
+          pb: { md: 2 },
         }}
       >
         {channelQuery.data && !channelActive ? (
-          <Alert severity="info" sx={{ mb: 1.5 }}>
+          <Alert severity="info" sx={{ mb: 1.5, mt: { md: 2 } }}>
             This chat is no longer active.
           </Alert>
         ) : null}
@@ -71,7 +78,9 @@ export function ChatScreen() {
               void historyQuery.refetch();
             }}
             isEmpty={!messages || messages.length === 0}
-            emptyMessage="No messages yet. Say hello to coordinate your visit."
+            emptyTitle="No messages yet"
+            emptyMessage="Say hello to coordinate your visit. Your number stays private."
+            emptyIcon={<ChatBubbleOutlineRoundedIcon />}
           >
             <Stack spacing={1.25}>
               {messages?.map((message) => (
@@ -92,7 +101,6 @@ export function ChatScreen() {
             fullWidth
             multiline
             maxRows={4}
-            size="small"
             placeholder={channelActive ? 'Type a message…' : 'Chat is closed'}
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
@@ -112,8 +120,8 @@ export function ChatScreen() {
             sx={{
               bgcolor: 'primary.main',
               color: 'primary.contrastText',
-              width: 40,
-              height: 40,
+              width: 48,
+              height: 48,
               '&:hover': { bgcolor: 'primary.dark' },
               '&.Mui-disabled': { bgcolor: 'action.disabledBackground' },
             }}
@@ -134,13 +142,12 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         sx={{
           px: 1.75,
           py: 1.25,
-          bgcolor: fromCustomer ? 'primary.main' : '#FFFFFF',
+          bgcolor: fromCustomer ? 'primary.main' : brand.slateSoft,
           color: fromCustomer ? 'primary.contrastText' : 'text.primary',
-          border: fromCustomer ? 'none' : `1px solid ${brand.line}`,
           // Square off the corner nearest the sender, the way native chat does.
-          borderRadius: 2.5,
-          borderBottomRightRadius: fromCustomer ? 4 : 20,
-          borderBottomLeftRadius: fromCustomer ? 20 : 4,
+          borderRadius: '18px',
+          borderBottomRightRadius: fromCustomer ? '4px' : '18px',
+          borderBottomLeftRadius: fromCustomer ? '18px' : '4px',
         }}
       >
         <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>

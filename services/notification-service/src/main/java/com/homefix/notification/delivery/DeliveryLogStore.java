@@ -14,15 +14,16 @@ import com.homefix.notification.domain.NotificationChannel;
 public interface DeliveryLogStore {
 
     /**
-     * Whether a delivery has already been recorded for the {@code (kafkaEventId, channel)} pair.
-     * A {@code true} result means the event was already processed for that channel and the
-     * redelivery must be silently discarded.
+     * Whether a delivery has already been recorded for {@code (kafkaEventId, userId, channel)}.
+     * A {@code true} result means the event was already processed for that recipient on that
+     * channel and the redelivery must be silently discarded.
      */
-    boolean alreadyDelivered(UUID kafkaEventId, NotificationChannel channel);
+    boolean alreadyDelivered(UUID kafkaEventId, UUID userId, NotificationChannel channel);
 
     /**
-     * Persists a delivery-log row. Implementations must treat {@code (kafkaEventId, channel)} as
-     * the primary key so a concurrent duplicate insert is rejected by the store.
+     * Persists a delivery-log row. Implementations must treat
+     * {@code (kafkaEventId, userId, channel)} as the primary key so a concurrent duplicate insert
+     * is rejected by the store.
      */
     void record(DeliveryLogEntity entry);
 }

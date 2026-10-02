@@ -2,12 +2,14 @@ package com.homefix.rating.support;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
+import java.util.function.Predicate;
 
 import com.homefix.rating.domain.Review;
 import com.homefix.rating.domain.ReviewRepository;
@@ -47,6 +49,34 @@ public class InMemoryReviewRepository implements ReviewRepository {
     public boolean existsByBookingIdAndReviewerId(UUID bookingId, UUID reviewerId) {
         return byId.values().stream()
                 .anyMatch(r -> r.getBookingId().equals(bookingId) && r.getReviewerId().equals(reviewerId));
+    }
+
+    @Override
+    public List<Review> findAllByOrderBySubmittedAtDesc(Pageable page) {
+        return newestFirst(r -> true, page);
+    }
+
+    @Override
+    public List<Review> findByActiveTrueAndFlaggedTrueOrderBySubmittedAtDesc(Pageable page) {
+        return newestFirst(r -> r.isActive() && r.isFlagged(), page);
+    }
+
+    @Override
+    public List<Review> findByActiveTrueAndFlaggedFalseOrderBySubmittedAtDesc(Pageable page) {
+        return newestFirst(r -> r.isActive() && !r.isFlagged(), page);
+    }
+
+    @Override
+    public List<Review> findByActiveFalseOrderBySubmittedAtDesc(Pageable page) {
+        return newestFirst(r -> !r.isActive(), page);
+    }
+
+    private List<Review> newestFirst(Predicate<Review> filter, Pageable page) {
+        return byId.values().stream()
+                .filter(filter)
+                .sorted(Comparator.comparing(Review::getSubmittedAt).reversed())
+                .limit(page.getPageSize())
+                .toList();
     }
 
     @Override

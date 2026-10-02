@@ -2,11 +2,9 @@ package com.homefix.outbox.it;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.time.Clock;
 import java.time.Duration;
-import java.util.ArrayList;
+import java.time.Instant;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -15,9 +13,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 import com.homefix.outbox.alert.OutboxAlertPort;
 import com.homefix.outbox.config.OutboxProcessorProperties;
 import com.homefix.outbox.relay.EventTopicResolver;
+import com.homefix.outbox.relay.OutboxClaimer;
+import com.homefix.outbox.relay.OutboxPoller;
 import com.homefix.outbox.relay.OutboxRelayService;
-import com.homefix.outbox.relay.Sleeper;
 import com.homefix.outbox.support.InMemoryOutboxEventRepository;
+import com.homefix.outbox.support.TestSupport.MutableClock;
 import com.homefix.shared.outbox.OutboxEventEntity;
 import com.homefix.shared.outbox.OutboxEventStatus;
 import com.homefix.shared.outbox.kafka.KafkaProducerTemplate;
@@ -41,15 +41,17 @@ import org.springframework.kafka.test.EmbeddedKafkaBroker;
 import org.springframework.kafka.test.context.EmbeddedKafka;
 import org.springframework.kafka.test.utils.KafkaTestUtils;
 import org.springframework.test.context.junit.jupiter.SpringExtension;
+import org.springframework.transaction.support.TransactionOperations;
 
 /**
  * Integration test for the transactional-outbox relay against a <em>real</em> embedded Kafka
  * broker (Task 45; Requirements 22.3, 22.4).
  *
  * <p><b>Scenario.</b> An outbox row is PENDING (its DB commit already happened). We then simulate
- * a Kafka broker outage for the first few publish attempts, verify the relay retries on the
- * exponential-backoff schedule (1&nbsp;s, 2&nbsp;s, 4&nbsp;s, … capped at 60&nbsp;s), let the
- * broker "recover", and assert that:
+ * a Kafka broker outage for the first few publish attempts, verify the relay reschedules each
+ * failed attempt on the row per the exponential-backoff schedule (1&nbsp;s, 2&nbsp;s, 4&nbsp;s, …
+ * capped at 60&nbsp;s) and makes no attempt before it is due, let the broker "recover", and
+ * assert that:
  * <ul>
  *   <li>the event is durably published to its Kafka topic (we consume it back off the embedded
  *       broker, carrying the stable {@code eventId} header the consumers deduplicate on), and</li>
@@ -61,13 +63,13 @@ import org.springframework.test.context.junit.jupiter.SpringExtension;
  * while a broker is genuinely down) we wrap the embedded-broker-backed {@code KafkaTemplate} in a
  * {@link FlakyKafkaTemplate} that fails the first {@code failuresBeforeRecovery} sends and then
  * delegates to the real template — so every recovered send genuinely goes to the embedded broker.
- * The backoff schedule itself is asserted through a recording {@link Sleeper} seam so the test is
- * fast and does not actually wait minutes.
+ * The backoff schedule is asserted on the row's persisted next-attempt time, with a clock the test
+ * moves forward, so the test is fast and does not actually wait.
  *
  * <p>This uses {@code @EmbeddedKafka} without a full Spring Boot application context: the relay
  * and its collaborators are the same production classes, wired by hand, and the repository is the
- * in-memory fake also used by the unit tests (JPA persistence of the outbox row is covered by the
- * shared-outbox module's own tests). What is genuinely exercised end-to-end here is the Kafka
+ * in-memory fake also used by the unit tests (claiming and persistence against a database are
+ * covered by {@code OutboxClaimJpaTest}). What is genuinely exercised end-to-end here is the Kafka
  * publish path against a live broker.
  */
 @ExtendWith(SpringExtension.class)
@@ -79,8 +81,10 @@ class OutboxRelayKafkaIT {
     @Autowired
     private EmbeddedKafkaBroker broker;
 
+    private static final Instant T0 = Instant.parse("2024-07-15T10:00:00Z");
+
     private final InMemoryOutboxEventRepository repository = new InMemoryOutboxEventRepository();
-    private final RecordingSleeper sleeper = new RecordingSleeper();
+    private final MutableClock clock = new MutableClock(T0);
     private final RecordingAlertPort alertPort = new RecordingAlertPort();
 
     private Consumer<String, String> consumer;
@@ -106,26 +110,42 @@ class OutboxRelayKafkaIT {
 
     @Test
     void brokerOutageThenRecovery_publishesToKafkaAndMarksRowPublished() {
-        // Two simulated broker failures, then the broker "recovers" on the 3rd attempt.
-        KafkaProducerTemplate producer = producerFailingFirst(2);
-        OutboxRelayService relay = relayWith(producer, 10);
+        // Three retriable broker failures (Kafka's TimeoutException), then the broker "recovers".
+        // The budget is two attempts: an outage longer than the budget must not mark the row
+        // FAILED, because none of those failures was the event's fault.
+        KafkaProducerTemplate producer = producerFailingFirst(3);
+        OutboxPoller poller = pollerWith(producer, 2);
 
         String payload = "{\"bookingId\":\"" + UUID.randomUUID() + "\",\"amount\":\"redacted\"}";
         OutboxEventEntity event = new OutboxEventEntity(
                 UUID.randomUUID(), "Booking", UUID.randomUUID(), "PaymentCompleted", payload);
         repository.add(event);
 
-        boolean published = relay.relay(event);
+        // Each failure is rescheduled at the 60 s backoff cap, costs no attempt, and the row is
+        // not attempted again before then.
+        Instant due = T0;
+        for (int failure = 1; failure <= 3; failure++) {
+            clock.set(due);
+            assertThat(poller.pollOnce()).isZero();
+            due = due.plusSeconds(60);
+            assertThat(event.getNextAttemptAt()).isEqualTo(due);
+            assertThat(event.getRetryCount()).isZero();
+            assertThat(event.getStatus()).isEqualTo(OutboxEventStatus.PENDING);
+            assertThat(event.getLastError()).isEqualTo("simulated Kafka broker unavailable");
+            clock.set(due.minusSeconds(1));
+            assertThat(poller.pollOnce()).isZero();
+        }
 
-        // The relay reports success and the row is PUBLISHED (Requirement 22.3).
-        assertThat(published).isTrue();
+        // The broker has recovered by the next attempt.
+        clock.set(due);
+        assertThat(poller.pollOnce()).isEqualTo(1);
+
+        // The row is PUBLISHED (Requirement 22.3).
         OutboxEventEntity stored = repository.findById(event.getId()).orElseThrow();
         assertThat(stored.getStatus()).isEqualTo(OutboxEventStatus.PUBLISHED);
-        assertThat(stored.getPublishedAt()).isNotNull();
+        assertThat(stored.getPublishedAt()).isEqualTo(due);
+        assertThat(stored.getRetryCount()).isZero();
         assertThat(alertPort.alerts).isZero();
-
-        // Backoff waited before attempts 2 and 3: exactly 1 s then 2 s (Requirement 22.4).
-        assertThat(sleeper.sleeps).containsExactly(1000L, 2000L);
 
         // The event is genuinely on the topic in the embedded broker, keyed by the aggregate id
         // and carrying the stable eventId header used for downstream dedup.
@@ -158,7 +178,7 @@ class OutboxRelayKafkaIT {
         return new KafkaProducerTemplate(new FlakyKafkaTemplate(pf, realTemplate, failures));
     }
 
-    private OutboxRelayService relayWith(KafkaProducerTemplate producer, int maxAttempts) {
+    private OutboxPoller pollerWith(KafkaProducerTemplate producer, int maxAttempts) {
         OutboxProcessorProperties props = new OutboxProcessorProperties();
         props.getRetry().setInitialInterval(Duration.ofSeconds(1));
         props.getRetry().setMaxInterval(Duration.ofSeconds(60));
@@ -166,8 +186,10 @@ class OutboxRelayKafkaIT {
         props.getTopics().setDefaultTopic("domain-events");
         props.getTopics().setMapping(Map.of("PaymentCompleted", TOPIC));
         EventTopicResolver resolver = new EventTopicResolver(props.getTopics());
-        return new OutboxRelayService(repository, producer, resolver, alertPort, props,
-                Clock.systemUTC(), sleeper);
+        OutboxRelayService relay = new OutboxRelayService(repository, producer, resolver, alertPort, props, clock);
+        OutboxClaimer claimer = new OutboxClaimer(repository, TransactionOperations.withoutTransaction(), clock,
+                props.getBatchSize(), props.getClaimLease());
+        return new OutboxPoller(claimer, relay);
     }
 
     /**
@@ -197,16 +219,6 @@ class OutboxRelayKafkaIT {
                                 "simulated Kafka broker unavailable"));
             }
             return delegate.send(record);
-        }
-    }
-
-    /** No-op sleeper recording each backoff delay so the retry schedule can be asserted. */
-    static final class RecordingSleeper implements Sleeper {
-        final List<Long> sleeps = new ArrayList<>();
-
-        @Override
-        public void sleep(long millis) {
-            sleeps.add(millis);
         }
     }
 

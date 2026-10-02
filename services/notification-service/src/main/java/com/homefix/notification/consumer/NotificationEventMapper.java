@@ -6,8 +6,6 @@ import java.util.Map;
 import java.util.UUID;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.homefix.notification.domain.NotificationContact;
-import com.homefix.notification.domain.NotificationEvent;
 import com.homefix.notification.domain.NotificationEventType;
 import com.homefix.shared.outbox.kafka.KafkaProducerTemplate;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -15,9 +13,10 @@ import org.apache.kafka.common.header.Header;
 import org.springframework.stereotype.Component;
 
 /**
- * Parses a raw Kafka record into a domain {@link NotificationEvent}: reads the stable
- * {@code eventId} header (the first half of the dedup key), deserialises the payload, and
- * resolves the recipient and non-PII rendering attributes.
+ * Parses a raw Kafka record into an {@link InboundEvent}: reads the stable {@code eventId} header
+ * (the first part of the dedup key), deserialises the payload, and extracts the user ids the event
+ * names and its non-PII rendering attributes. Deciding who is notified and resolving their contact
+ * details happen afterwards, in the {@code RecipientResolver}; this class does no I/O.
  *
  * <p>A record lacking a usable {@code eventId} header or with an unparseable body is a poison
  * message; mapping throws so the shared consumer routes it to the dead-letter topic after
@@ -32,23 +31,22 @@ public class NotificationEventMapper {
         this.objectMapper = objectMapper;
     }
 
-    public NotificationEvent map(NotificationEventType eventType, ConsumerRecord<String, String> record) {
+    public InboundEvent map(NotificationEventType eventType, ConsumerRecord<String, String> record) {
         UUID eventId = extractEventId(record);
         LifecycleEventPayload payload = parse(record.value());
-        UUID recipient = payload.resolveRecipient();
-        if (recipient == null) {
-            throw new IllegalStateException("Lifecycle event has no resolvable recipient");
-        }
-
-        NotificationContact contact = new NotificationContact(
-                payload.mobileNumber(), payload.emailAddress(), payload.deviceToken());
 
         Map<String, String> attributes = new HashMap<>();
-        if (payload.bookingReference() != null) {
-            attributes.put("bookingReference", payload.bookingReference());
+        if (payload.reference() != null) {
+            attributes.put("bookingReference", payload.reference());
+        }
+        if (payload.newStatus() != null) {
+            attributes.put("complaintStatus", payload.newStatus());
+        }
+        if (payload.status() != null) {
+            attributes.put("bookingStatus", payload.status());
         }
 
-        return new NotificationEvent(eventType, eventId, recipient, contact, attributes);
+        return new InboundEvent(eventType, eventId, payload.participants(), attributes);
     }
 
     private LifecycleEventPayload parse(String json) {

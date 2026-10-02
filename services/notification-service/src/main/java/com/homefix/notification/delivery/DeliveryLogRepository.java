@@ -11,5 +11,6 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface DeliveryLogRepository
         extends JpaRepository<DeliveryLogEntity, DeliveryLogEntity.DeliveryLogId> {
 
-    boolean existsByKafkaEventIdAndChannel(UUID kafkaEventId, NotificationChannel channel);
+    boolean existsByKafkaEventIdAndUserIdAndChannel(UUID kafkaEventId, UUID userId,
+                                                    NotificationChannel channel);
 }

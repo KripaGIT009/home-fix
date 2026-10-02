@@ -15,11 +15,16 @@ import jakarta.persistence.IdClass;
 import jakarta.persistence.Table;
 
 /**
- * Persisted delivery-log row for one {@code (kafkaEventId, channel)} delivery (Requirement 17.7).
+ * Persisted delivery-log row for one {@code (kafkaEventId, userId, channel)} delivery
+ * (Requirement 17.7).
  *
- * <p>The composite primary key {@code (kafkaEventId, channel)} is the deduplication key: the
- * presence of a row means that event has already been processed for that channel, so any
- * redelivery is silently discarded and no duplicate notification is dispatched (Property 22).
+ * <p>The composite primary key {@code (kafkaEventId, userId, channel)} is the deduplication key:
+ * the presence of a row means that event has already been processed for that recipient on that
+ * channel, so any redelivery is silently discarded and no duplicate notification is dispatched
+ * (Property 22). The recipient is part of the key because one event can notify several people —
+ * a cancellation reaches both the customer and the assigned provider on the same channels — and
+ * keying on {@code (kafkaEventId, channel)} alone would let the first recipient's row suppress
+ * the second recipient's delivery.
  *
  * <p>Records the mandated fields: kafka event id, channel, user id, timestamp, delivery status,
  * retry count, and error description. The error description must never contain PII
@@ -35,12 +40,13 @@ public class DeliveryLogEntity {
     private UUID kafkaEventId;
 
     @Id
+    @Column(name = "user_id", nullable = false)
+    private UUID userId;
+
+    @Id
     @Enumerated(EnumType.STRING)
     @Column(name = "channel", nullable = false, length = 20)
     private NotificationChannel channel;
-
-    @Column(name = "user_id", nullable = false)
-    private UUID userId;
 
     @Column(name = "delivered_at", nullable = false)
     private Instant timestamp;
@@ -99,16 +105,18 @@ public class DeliveryLogEntity {
         return errorDescription;
     }
 
-    /** Composite key {@code (kafkaEventId, channel)} — the deduplication identity. */
+    /** Composite key {@code (kafkaEventId, userId, channel)} — the deduplication identity. */
     public static class DeliveryLogId implements java.io.Serializable {
         private UUID kafkaEventId;
+        private UUID userId;
         private NotificationChannel channel;
 
         public DeliveryLogId() {
         }
 
-        public DeliveryLogId(UUID kafkaEventId, NotificationChannel channel) {
+        public DeliveryLogId(UUID kafkaEventId, UUID userId, NotificationChannel channel) {
             this.kafkaEventId = kafkaEventId;
+            this.userId = userId;
             this.channel = channel;
         }
 
@@ -121,12 +129,13 @@ public class DeliveryLogEntity {
                 return false;
             }
             return java.util.Objects.equals(kafkaEventId, that.kafkaEventId)
+                    && java.util.Objects.equals(userId, that.userId)
                     && channel == that.channel;
         }
 
         @Override
         public int hashCode() {
-            return java.util.Objects.hash(kafkaEventId, channel);
+            return java.util.Objects.hash(kafkaEventId, userId, channel);
         }
     }
 }

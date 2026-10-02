@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { UseMutationResult, UseQueryResult } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import type { UseQueryResult } from '@tanstack/react-query';
 import type { ApiError } from '@api/client';
 import { useAuthStore } from '@stores/authStore';
 import { buildSseUrl } from '@lib/realtime';
@@ -9,7 +9,7 @@ import {
   fetchChatChannel,
   fetchChatHistory,
   fetchLocationSnapshot,
-  selectProfessional,
+  toLocationSnapshot,
   type AvailableProfessional,
   type ChatChannel,
   type ChatMessage,
@@ -20,6 +20,12 @@ import {
  * TanStack Query hooks for the tracking flow, plus the live-location bridge
  * that folds Server-Sent Events into the query cache (Requirements 8, 10, 18).
  */
+
+/**
+ * How often the location snapshot is re-read while the stream is not
+ * connected, including before the provider's first fix (a 404).
+ */
+const NO_FIX_POLL_MS = 5_000;
 
 export const trackingKeys = {
   professionals: (bookingId: string) => ['tracking', 'professionals', bookingId] as const,
@@ -42,15 +48,6 @@ export function useAvailableProfessionals(
   });
 }
 
-/** Assign a chosen Provider to the Booking (from the professionals list). */
-export function useSelectProfessional(
-  bookingId: string,
-): UseMutationResult<void, ApiError, string> {
-  return useMutation<void, ApiError, string>({
-    mutationFn: (providerId: string) => selectProfessional(bookingId, providerId),
-  });
-}
-
 /**
  * Live location for a Booking (Requirement 10).
  *
@@ -64,11 +61,22 @@ export function useSelectProfessional(
  * `connected` reflects the SSE transport state so the UI can show a live vs.
  * reconnecting indicator; staleness (Requirement 10.7) is derived by the screen
  * from `snapshot.updatedAt`.
+ *
+ * Only subscribe while the booking is in a state where the provider shares
+ * their location (`enabled`). A 404 from the snapshot endpoint means "no
+ * location yet" — the provider has not sent one — and is reported as
+ * `awaitingFirstFix`, not as an error. The snapshot is polled for as long as
+ * the stream is not connected, so the map moves even when SSE cannot be used.
  */
-export function useLiveLocation(bookingId: string): {
+export function useLiveLocation(
+  bookingId: string,
+  enabled = true,
+): {
   snapshot: LocationSnapshot | undefined;
   isLoading: boolean;
   isError: boolean;
+  /** True while no location has been reported for this booking yet. */
+  awaitingFirstFix: boolean;
   error: ApiError | null;
   connected: boolean;
   refetch: () => void;
@@ -82,17 +90,23 @@ export function useLiveLocation(bookingId: string): {
   const accessToken = useAuthStore((state) => state.accessToken);
   const [connected, setConnected] = useState(false);
 
+  const active = Boolean(bookingId) && enabled;
+
   const query = useQuery<LocationSnapshot, ApiError>({
     queryKey,
     queryFn: () => fetchLocationSnapshot(bookingId),
-    enabled: Boolean(bookingId),
-    // The SSE stream is authoritative once connected; don't background refetch.
-    staleTime: Infinity,
+    enabled: active,
+    // The SSE stream is authoritative while it is connected. It often is not —
+    // the gateway authenticates by header only, which EventSource cannot send —
+    // so until it connects the snapshot is polled; that is the delivery path the
+    // screen can rely on. Before the first fix exists the poll answers 404.
+    staleTime: connected ? Infinity : 0,
     gcTime: 60_000,
+    refetchInterval: connected ? false : NO_FIX_POLL_MS,
   });
 
   useEffect(() => {
-    if (!bookingId) return;
+    if (!active) return;
     if (typeof EventSource === 'undefined') return;
 
     const url = buildSseUrl(`/locations/${bookingId}/stream`, accessToken);
@@ -100,21 +114,10 @@ export function useLiveLocation(bookingId: string): {
 
     const handleUpdate = (event: MessageEvent<string>) => {
       try {
-        const update = JSON.parse(event.data) as Partial<LocationSnapshot>;
-        queryClient.setQueryData<LocationSnapshot>(queryKey, (prev) => {
-          const base: LocationSnapshot = prev ?? {
-            bookingId,
-            coordinates: update.coordinates ?? { latitude: 0, longitude: 0 },
-            etaMinutes: update.etaMinutes ?? 0,
-            updatedAt: update.updatedAt ?? new Date().toISOString(),
-          };
-          return {
-            ...base,
-            ...update,
-            coordinates: update.coordinates ?? base.coordinates,
-            updatedAt: update.updatedAt ?? new Date().toISOString(),
-          };
-        });
+        const update = toLocationSnapshot(bookingId, JSON.parse(event.data));
+        if (update) {
+          queryClient.setQueryData<LocationSnapshot>(queryKey, (prev) => ({ ...prev, ...update }));
+        }
       } catch {
         // Ignore malformed frames; the next valid update will refresh the view.
       }
@@ -134,13 +137,17 @@ export function useLiveLocation(bookingId: string): {
       source.close();
       setConnected(false);
     };
-  }, [bookingId, accessToken, queryClient, queryKey]);
+  }, [active, bookingId, accessToken, queryClient, queryKey]);
+
+  const awaitingFirstFix =
+    query.data === undefined && (query.error?.status === 404 || (active && query.isPending));
 
   return {
     snapshot: query.data,
     isLoading: query.isLoading,
-    isError: query.isError,
-    error: query.error ?? null,
+    isError: query.isError && query.error.status !== 404,
+    awaitingFirstFix,
+    error: query.error?.status === 404 ? null : (query.error ?? null),
     connected,
     refetch: () => void query.refetch(),
   };

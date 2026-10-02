@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Box, Button, Rating, Stack, TextField, Typography } from '@mui/material';
+import { Alert, Box, Button, Rating, Stack, TextField, Typography } from '@mui/material';
 import { ModuleScreen } from '@components/ModuleScreen';
 import { QueryStateView } from '@components/QueryStateView';
 import { DataTable, type Column } from '@components/DataTable';
@@ -22,8 +22,8 @@ export function ProviderManagementScreen() {
 
   const columns: Column<AdminProvider>[] = [
     { key: 'name', header: 'Provider', render: (row) => row.displayName },
-    { key: 'mobile', header: 'Mobile', render: (row) => row.mobileNumber },
-    { key: 'skill', header: 'Primary skill', render: (row) => row.primarySkill },
+    { key: 'mobile', header: 'Mobile', render: (row) => row.mobileNumber ?? '—' },
+    { key: 'skill', header: 'Primary skill', render: (row) => row.primarySkill ?? '—' },
     {
       key: 'verification',
       header: 'Verification',
@@ -32,25 +32,29 @@ export function ProviderManagementScreen() {
     {
       key: 'rating',
       header: 'Rating',
-      render: (row) => (
-        <Stack direction="row" spacing={0.5} alignItems="center">
-          <Rating value={row.rating} precision={0.1} size="small" readOnly />
-          <Typography variant="caption" color="text.secondary">
-            {row.rating.toFixed(1)}
-          </Typography>
-        </Stack>
-      ),
+      render: (row) =>
+        row.rating == null ? (
+          '—'
+        ) : (
+          <Stack direction="row" spacing={0.5} alignItems="center">
+            <Rating value={row.rating} precision={0.1} size="small" readOnly />
+            <Typography variant="caption" color="text.secondary">
+              {row.rating.toFixed(1)}
+            </Typography>
+          </Stack>
+        ),
     },
     {
       key: 'jobs',
       header: 'Jobs',
       align: 'right',
-      render: (row) => formatNumber(row.completedJobs),
+      render: (row) => (row.completedJobs == null ? '—' : formatNumber(row.completedJobs)),
     },
     {
       key: 'online',
       header: 'Availability',
-      render: (row) => <StatusChip status={row.isOnline ? 'ONLINE' : 'INACTIVE'} />,
+      render: (row) =>
+        row.isOnline == null ? '—' : <StatusChip status={row.isOnline ? 'ONLINE' : 'INACTIVE'} />,
     },
     { key: 'status', header: 'Status', render: (row) => <StatusChip status={row.status} /> },
     {
@@ -58,6 +62,9 @@ export function ProviderManagementScreen() {
       header: '',
       align: 'right',
       render: (row) => {
+        // Unknown status (verification service unreachable): offer nothing
+        // rather than guess which way the toggle should go.
+        if (!row.status) return null;
         const suspend = row.status === 'ACTIVE';
         return (
           <Button
@@ -104,6 +111,12 @@ export function ProviderManagementScreen() {
           </Button>
         </Box>
       </Stack>
+
+      {updateStatus.isError ? (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {updateStatus.error.message}
+        </Alert>
+      ) : null}
 
       <QueryStateView
         isLoading={providersQuery.isLoading}

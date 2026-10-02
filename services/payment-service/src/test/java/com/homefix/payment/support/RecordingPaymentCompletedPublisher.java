@@ -3,13 +3,20 @@ package com.homefix.payment.support;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.springframework.transaction.IllegalTransactionStateException;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+
 import com.homefix.payment.domain.PaymentTransaction;
 import com.homefix.payment.event.PaymentCompletedPublisher;
 
 /**
  * Test double for {@link PaymentCompletedPublisher} that records published transactions instead of
- * writing an outbox row, so {@code PaymentService} can be tested without a database or an active
- * transaction. Overrides {@code publish} and never invokes the outbox-backed super logic.
+ * writing an outbox row, so {@code PaymentService} can be tested without a database. Overrides
+ * {@code publish} and never invokes the outbox-backed super logic.
+ *
+ * <p>Like the real publisher's {@code Propagation.MANDATORY}, it refuses to publish outside a
+ * transaction, so a test fails if the event stops being written atomically with the SUCCESS state
+ * change. Pair it with {@link MarkingTransactionOperations}.
  */
 public class RecordingPaymentCompletedPublisher extends PaymentCompletedPublisher {
 
@@ -22,6 +29,10 @@ public class RecordingPaymentCompletedPublisher extends PaymentCompletedPublishe
 
     @Override
     public void publish(PaymentTransaction tx) {
+        if (!TransactionSynchronizationManager.isActualTransactionActive()) {
+            throw new IllegalTransactionStateException(
+                    "PaymentCompleted must be published inside the state-change transaction (MANDATORY)");
+        }
         published.add(tx);
     }
 

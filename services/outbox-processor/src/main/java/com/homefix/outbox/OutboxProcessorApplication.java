@@ -11,14 +11,16 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 /**
  * Entry point for the HomeFix Outbox Processor.
  *
- * <p>A standalone relay that drains the shared transactional-outbox table: it polls
- * {@link com.homefix.shared.outbox.OutboxEventStatus#PENDING} rows in configurable batches,
- * publishes each event to its Kafka topic via the shared idempotent producer, and marks the
- * row {@link com.homefix.shared.outbox.OutboxEventStatus#PUBLISHED} within the same DB
- * transaction once the broker acknowledges. On publish failure it retries with exponential
- * backoff (1 s doubling up to a 60 s cap, default 10 attempts) and, on exhaustion, emits an
- * alert with the event ID, Kafka topic, and total attempt count before marking the row
- * {@link com.homefix.shared.outbox.OutboxEventStatus#FAILED} (Requirement 22.4).
+ * <p>A standalone relay that drains the shared transactional-outbox table: it claims due
+ * {@link com.homefix.shared.outbox.OutboxEventStatus#PENDING} rows in configurable batches
+ * ({@code SELECT ... FOR UPDATE SKIP LOCKED} plus a claim lease, so several instances can run
+ * side by side), publishes each event to its Kafka topic via the shared idempotent producer, and
+ * marks the row {@link com.homefix.shared.outbox.OutboxEventStatus#PUBLISHED} once the broker
+ * acknowledges. A failed publish is rescheduled on the row with exponential backoff (1 s doubling
+ * up to a 60 s cap, default 10 attempts) rather than slept on; on exhaustion the relay emits an
+ * alert with the event ID, Kafka topic, and total attempt count and marks the row
+ * {@link com.homefix.shared.outbox.OutboxEventStatus#FAILED} (Requirement 22.4). Delivery is
+ * at-least-once; consumers deduplicate on the {@code eventId} header.
  *
  * <p>The shared observability library auto-configures structured JSON logging from the
  * classpath. The shared outbox JPA entity and repository live in

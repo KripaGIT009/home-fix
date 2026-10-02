@@ -23,13 +23,16 @@ class HomefixOutboxAutoConfigurationTest {
             .withConfiguration(AutoConfigurations.of(HomefixOutboxAutoConfiguration.class));
 
     @Test
-    void alwaysProvidesAnObjectMapper() {
-        runner.run(context -> assertThat(context).hasSingleBean(ObjectMapper.class));
+    void neverDeclaresAnObjectMapperOfItsOwn() {
+        // Declaring one would make Boot's JacksonAutoConfiguration back off in every service; the
+        // publisher uses the application's mapper instead (see HomefixOutboxAutoConfiguration).
+        runner.run(context -> assertThat(context).doesNotHaveBean(ObjectMapper.class));
     }
 
     @Test
     void publisherWiredWhenRepositoryPresent() {
         runner.withBean(OutboxEventRepository.class, () -> mock(OutboxEventRepository.class))
+                .withBean(ObjectMapper.class, ObjectMapper::new)
                 .run(context -> assertThat(context).hasSingleBean(OutboxEventPublisher.class));
     }
 

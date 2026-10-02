@@ -4,6 +4,8 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
 
+import org.hibernate.annotations.DynamicUpdate;
+
 import com.homefix.payment.service.PaymentException;
 
 import jakarta.persistence.Column;
@@ -23,10 +25,23 @@ import jakarta.persistence.Version;
  *
  * <p>Monetary values use {@link BigDecimal} throughout. Raw card numbers are never stored; any
  * gateway payment credential is persisted only as KMS/AES ciphertext (Requirement 12.9).
+ *
+ * <p><strong>Why {@link DynamicUpdate}.</strong> Several short transactions write this row
+ * independently after the charge: the charge flow records the gateway reference, the callback
+ * settles the state, the refund flow applies refunds, and the wallet-credit marker is cleared by a
+ * targeted bulk update that deliberately does not bump {@code version} (see
+ * {@link PaymentTransactionRepository#clearWalletCreditPending(UUID)}). With Hibernate's default
+ * all-columns UPDATE, a writer holding an older copy of the row would write every column back,
+ * resurrecting a marker that was already cleared. Writing only the columns a transaction actually
+ * changed keeps those writers from overwriting each other's fields.
  */
 @Entity
 @Table(name = "payment_transaction")
+@DynamicUpdate
 public class PaymentTransaction {
+
+    /** Column width of {@code failure_reason}; longer reasons are truncated rather than failing the write. */
+    public static final int FAILURE_REASON_MAX_LENGTH = 512;
 
     @Id
     @Column(name = "id", nullable = false, updatable = false)
@@ -82,8 +97,26 @@ public class PaymentTransaction {
     @Column(name = "attempt_count", nullable = false)
     private int attemptCount;
 
-    @Column(name = "failure_reason", length = 512)
+    @Column(name = "failure_reason", length = FAILURE_REASON_MAX_LENGTH)
     private String failureReason;
+
+    /**
+     * Gateway event id of the signed callback that settled this transaction (Requirement 12.5).
+     * Kept for reconciliation and audit; {@code null} until a callback is applied.
+     */
+    @Column(name = "callback_event_id", length = 128)
+    private String callbackEventId;
+
+    /**
+     * When the provider wallet credit for this payment became owed, or {@code null} when nothing is
+     * owed (Requirement 12.10, 12.11). Set in the same database transaction that moves the payment
+     * to SUCCESS (alongside the PaymentCompleted outbox row), and cleared only after the wallet
+     * accepted the credit. The credit itself runs after that commit, so without this durable marker a
+     * crash between the commit and the credit would lose the provider's earnings silently; with it,
+     * {@code WalletCreditSweeper} re-sends any credit still owed.
+     */
+    @Column(name = "wallet_credit_pending_since")
+    private Instant walletCreditPendingSince;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
@@ -140,11 +173,26 @@ public class PaymentTransaction {
         }
         this.status = target;
         this.updatedAt = Instant.now();
+        if (target == TransactionStatus.SUCCESS) {
+            // A successful payment owes the provider its net earning; recorded with the state change.
+            this.walletCreditPendingSince = this.updatedAt;
+        }
     }
 
-    /** Records a failed attempt reason without changing state (used before a retry). */
+    /**
+     * Records a failed attempt reason without changing state (used before a retry). Reasons longer
+     * than the column are truncated so a verbose gateway message cannot fail the whole write.
+     */
     public void recordFailureReason(String reason) {
-        this.failureReason = reason;
+        this.failureReason = reason != null && reason.length() > FAILURE_REASON_MAX_LENGTH
+                ? reason.substring(0, FAILURE_REASON_MAX_LENGTH)
+                : reason;
+        this.updatedAt = Instant.now();
+    }
+
+    /** Records the gateway event id of the signed callback being applied (Requirement 12.5). */
+    public void recordCallbackEvent(String eventId) {
+        this.callbackEventId = eventId;
         this.updatedAt = Instant.now();
     }
 
@@ -159,9 +207,56 @@ public class PaymentTransaction {
         return this.attemptCount;
     }
 
+    /**
+     * Marks the provider wallet credit as delivered. The service clears the marker through
+     * {@link PaymentTransactionRepository#clearWalletCreditPending(UUID)} instead, so the write does
+     * not bump {@code version}; this is the in-memory equivalent of that update.
+     */
+    public void clearWalletCreditPending() {
+        this.walletCreditPendingSince = null;
+    }
+
+    /** @return whether the provider wallet credit for this payment is still owed. */
+    public boolean isWalletCreditPending() {
+        return walletCreditPendingSince != null;
+    }
+
     /** @return the provider's net earning = amount - platformFee (Requirement 12.10). */
     public BigDecimal providerNetEarning() {
         return amount.subtract(platformFee);
+    }
+
+    /**
+     * Checks, without changing anything, that {@code refundAmount} could be applied right now: it is
+     * positive, does not push the refunded total past the transaction amount, and the resulting
+     * REFUNDED / PARTIALLY_REFUNDED state is reachable from the current state (Requirement 12.7).
+     *
+     * <p>The refund flow calls this <em>before</em> asking the gateway to move any money, so every
+     * refund the gateway executes is one {@link #applyRefund(BigDecimal)} will accept afterwards.
+     *
+     * @return the state the transaction would move to.
+     * @throws PaymentException 400 for a non-positive or over-limit amount, 409 for a state that
+     *                          cannot be refunded.
+     */
+    public TransactionStatus checkRefundable(BigDecimal refundAmount) {
+        if (refundAmount == null || refundAmount.signum() <= 0) {
+            throw PaymentException.validation("Refund amount must be positive");
+        }
+        BigDecimal newRefunded = this.refundedAmount.add(refundAmount);
+        if (newRefunded.compareTo(amount) > 0) {
+            throw PaymentException.validation(
+                    "Refund amount " + refundAmount + " would exceed the transaction amount " + amount
+                            + " (already refunded " + refundedAmount + ")");
+        }
+        TransactionStatus target = newRefunded.compareTo(amount) == 0
+                ? TransactionStatus.REFUNDED
+                : TransactionStatus.PARTIALLY_REFUNDED;
+        if (!status.canTransitionTo(target)) {
+            throw PaymentException.invalidTransition(
+                    "Transaction " + id + " cannot be refunded from " + status + " (would move to "
+                            + target + "); permitted targets: " + status.permittedTargets());
+        }
+        return target;
     }
 
     /**
@@ -169,19 +264,9 @@ public class PaymentTransaction {
      * enforcing the state machine (Requirement 12.7).
      */
     public void applyRefund(BigDecimal refundAmount) {
-        if (refundAmount == null || refundAmount.signum() <= 0) {
-            throw PaymentException.validation("Refund amount must be positive");
-        }
-        BigDecimal newRefunded = this.refundedAmount.add(refundAmount);
-        if (newRefunded.compareTo(amount) > 0) {
-            throw PaymentException.validation(
-                    "Refund amount " + refundAmount + " would exceed the transaction amount " + amount);
-        }
-        TransactionStatus target = newRefunded.compareTo(amount) == 0
-                ? TransactionStatus.REFUNDED
-                : TransactionStatus.PARTIALLY_REFUNDED;
+        TransactionStatus target = checkRefundable(refundAmount);
         transitionTo(target);
-        this.refundedAmount = newRefunded;
+        this.refundedAmount = this.refundedAmount.add(refundAmount);
     }
 
     public void setGatewayReference(String gatewayReference) {
@@ -247,6 +332,14 @@ public class PaymentTransaction {
 
     public String getFailureReason() {
         return failureReason;
+    }
+
+    public String getCallbackEventId() {
+        return callbackEventId;
+    }
+
+    public Instant getWalletCreditPendingSince() {
+        return walletCreditPendingSince;
     }
 
     public Instant getCreatedAt() {

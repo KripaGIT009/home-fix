@@ -9,10 +9,12 @@ import org.springframework.stereotype.Component;
 import com.homefix.complaint.domain.ComplaintStatus;
 
 /**
- * Default {@link CustomerNotificationPort} that logs a structured request to notify the customer.
- * A production adapter would enqueue a Notification Service dispatch (via HTTP or the shared
- * outbox) without touching the complaint logic. Activated only when no other
- * {@link CustomerNotificationPort} bean is present (tests supply their own).
+ * Default {@link CustomerNotificationPort}: logs a structured record of each customer notification
+ * and sends nothing. Keep the acknowledgment and status-change calls log-only: the Notification
+ * Service consumes {@code ComplaintCreated} and {@code ComplaintStatusChanged} from the outbox and
+ * notifies the customer itself (resolving contact details from the events' {@code customerId}), so
+ * dispatching here as well would notify the customer twice (Requirement 16.2, 16.3). Tests supply
+ * their own recording double.
  */
 @Component
 public class LoggingCustomerNotificationAdapter implements CustomerNotificationPort {

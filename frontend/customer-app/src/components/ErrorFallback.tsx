@@ -1,56 +1,74 @@
-import { Box, Button, Container, Stack, Typography } from '@mui/material';
-import ErrorOutlineRoundedIcon from '@mui/icons-material/ErrorOutlineRounded';
+import { Box, Button, Stack, Typography } from '@mui/material';
+import SentimentDissatisfiedRoundedIcon from '@mui/icons-material/SentimentDissatisfiedRounded';
 import RefreshRoundedIcon from '@mui/icons-material/RefreshRounded';
 import type { FallbackProps } from 'react-error-boundary';
-import { isApiError } from '@api/client';
+import { friendlyErrorMessage } from '@api/client';
+import { brand, radius } from '@lib/theme';
+import { BrandLogo } from './BrandLogo';
 
 /**
- * App-level error boundary fallback. Shows a friendly message and a reset
- * action. Rendered by react-error-boundary when a render/query error escapes.
+ * App-level error boundary fallback. A calm full-page message with a reset
+ * action; a render bug's developer-facing text is never shown to customers.
  */
 export function ErrorFallback({ error, resetErrorBoundary }: FallbackProps) {
-  const message = isApiError(error)
-    ? error.message
-    : error instanceof Error
-      ? error.message
-      : 'Something went wrong.';
-
   return (
-    <Container maxWidth="sm">
+    <Box
+      sx={{
+        minHeight: '100dvh',
+        display: 'grid',
+        placeItems: 'center',
+        px: 2,
+        bgcolor: 'background.default',
+      }}
+    >
       <Stack
         role="alert"
         spacing={2}
         alignItems="center"
         textAlign="center"
-        sx={{ minHeight: '100dvh', justifyContent: 'center', py: 4 }}
+        sx={{
+          maxWidth: 440,
+          width: '100%',
+          p: { xs: 3, md: 5 },
+          borderRadius: `${radius.xl}px`,
+          bgcolor: 'background.paper',
+          border: `1px solid ${brand.line}`,
+        }}
       >
+        <BrandLogo size={32} />
         <Box
+          aria-hidden
           sx={{
             width: 64,
             height: 64,
-            borderRadius: '50%',
+            borderRadius: `${radius.lg}px`,
             display: 'grid',
             placeItems: 'center',
-            bgcolor: 'error.light',
-            color: 'error.main',
+            bgcolor: brand.warmSoft,
+            color: brand.warmDark,
+            mt: 1,
           }}
         >
-          <ErrorOutlineRoundedIcon fontSize="large" aria-hidden />
+          <SentimentDissatisfiedRoundedIcon sx={{ fontSize: 32 }} />
         </Box>
-        <Typography variant="h5" component="h1">
+        <Typography variant="h4" component="h1">
           Something went wrong
         </Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 360 }}>
-          {message}
+        <Typography variant="body1" color="text.secondary">
+          {friendlyErrorMessage(
+            error,
+            'This screen ran into a problem. Trying again usually fixes it.',
+          )}
         </Typography>
         <Button
           variant="contained"
+          size="large"
           startIcon={<RefreshRoundedIcon />}
           onClick={resetErrorBoundary}
         >
           Try again
         </Button>
       </Stack>
-    </Container>
+    </Box>
   );
 }

@@ -1,7 +1,9 @@
 package com.homefix.notification.support;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -12,9 +14,12 @@ import com.homefix.notification.channel.InAppPort;
 import com.homefix.notification.channel.NotificationDeliveryException;
 import com.homefix.notification.channel.PushPort;
 import com.homefix.notification.channel.SmsPort;
+import com.homefix.notification.contact.ContactDirectoryPort;
+import com.homefix.notification.contact.ContactLookupException;
 import com.homefix.notification.delivery.DeliveryLogEntity;
 import com.homefix.notification.delivery.DeliveryLogStore;
 import com.homefix.notification.domain.NotificationChannel;
+import com.homefix.notification.domain.NotificationContact;
 import com.homefix.notification.domain.NotificationPreferences;
 import com.homefix.notification.preference.NotificationPreferencePort;
 
@@ -26,30 +31,61 @@ public final class TestDoubles {
     private TestDoubles() {
     }
 
-    /** In-memory {@link DeliveryLogStore} keyed on {@code (kafkaEventId, channel)}. */
+    /** In-memory {@link DeliveryLogStore} keyed on {@code (kafkaEventId, userId, channel)}. */
     public static final class InMemoryDeliveryLogStore implements DeliveryLogStore {
         private final ConcurrentHashMap<String, DeliveryLogEntity> rows = new ConcurrentHashMap<>();
         public final List<DeliveryLogEntity> records = new ArrayList<>();
 
         @Override
-        public boolean alreadyDelivered(UUID kafkaEventId, NotificationChannel channel) {
-            return rows.containsKey(key(kafkaEventId, channel));
+        public boolean alreadyDelivered(UUID kafkaEventId, UUID userId, NotificationChannel channel) {
+            return rows.containsKey(key(kafkaEventId, userId, channel));
         }
 
         @Override
         public synchronized void record(DeliveryLogEntity entry) {
-            // Enforce the (kafkaEventId, channel) uniqueness like the real PK would.
-            rows.putIfAbsent(key(entry.getKafkaEventId(), entry.getChannel()), entry);
+            // Enforce the (kafkaEventId, userId, channel) uniqueness like the real PK would.
+            rows.putIfAbsent(key(entry.getKafkaEventId(), entry.getUserId(), entry.getChannel()), entry);
             records.add(entry);
         }
 
-        /** Pre-seed a delivery so a subsequent dispatch sees it as a duplicate. */
-        public void seed(UUID kafkaEventId, NotificationChannel channel) {
-            rows.put(key(kafkaEventId, channel), null);
+        private static String key(UUID eventId, UUID userId, NotificationChannel channel) {
+            return eventId + "|" + userId + "|" + channel;
+        }
+    }
+
+    /**
+     * {@link ContactDirectoryPort} over a fixed map. Unknown users resolve to empty, like a 404
+     * from the Auth Service; {@link #failing()} simulates an unreachable directory.
+     */
+    public static final class FakeContactDirectory implements ContactDirectoryPort {
+        private final Map<UUID, NotificationContact> contacts = new HashMap<>();
+        private final boolean unreachable;
+        public final AtomicInteger lookups = new AtomicInteger();
+
+        public FakeContactDirectory() {
+            this(false);
         }
 
-        private static String key(UUID eventId, NotificationChannel channel) {
-            return eventId + "|" + channel;
+        private FakeContactDirectory(boolean unreachable) {
+            this.unreachable = unreachable;
+        }
+
+        public static FakeContactDirectory failing() {
+            return new FakeContactDirectory(true);
+        }
+
+        public FakeContactDirectory with(UUID userId, NotificationContact contact) {
+            contacts.put(userId, contact);
+            return this;
+        }
+
+        @Override
+        public Optional<NotificationContact> findContact(UUID userId) {
+            lookups.incrementAndGet();
+            if (unreachable) {
+                throw new ContactLookupException("simulated contact directory outage");
+            }
+            return Optional.ofNullable(contacts.get(userId));
         }
     }
 

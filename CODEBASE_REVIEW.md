@@ -566,3 +566,432 @@ memory=12GB
 
 Stopping the four services no admin module calls — chat, location, outbox-processor and
 invoice — was enough to make the portal respond consistently on a 16 GB machine.
+
+> **Superseded by section 14.4.** The stack now carries per-service memory limits and JVM
+> heap caps, and the whole thing runs together on a 16 GB host. Running a reduced slice is no
+> longer necessary.
+
+One diagnostic point from this pass is worth keeping: a readiness probe from the host is not
+evidence a service is down. Under load Docker's port forwarding drops connections while the
+service answers fine on the Compose network, so confirm from inside it before concluding
+anything is broken.
+
+---
+
+## 14. Third pass — 2026-09-13
+
+Found by restarting the whole stack and watching what broke. All three are latent bugs that
+only surface when a container is recreated — which `docker compose up` does routinely — so
+none of them would show up in a stack that is started once and left alone.
+
+### 14.1 The API Gateway cached the Auth Service's IP address
+
+**The most serious of the three.** The gateway's introspection `WebClient` was
+`WebClient.builder().build()`, whose Reactor Netty resolver caches a DNS answer for the TTL
+of the record. Docker's embedded DNS hands out 600 seconds. Recreating auth-service therefore
+left the gateway introspecting a dead address for ten minutes.
+
+Because a transport failure is — correctly — mapped to "inactive" so a downstream outage
+cannot be used to bypass authentication, the symptom was not an error. It was **every
+authenticated request on the platform returning 401** while auth-service sat there perfectly
+healthy, answering `/auth/introspect` on the command line. Nothing in the logs said "wrong
+address"; only `Token introspection call failed: WebClientRequestException` once per request.
+
+Fixed by resolving through the JDK resolver (`DefaultAddressResolverGroup`), which honours
+`networkaddress.cache.ttl`, and pinning that to 10s for the gateway in Compose. The same
+change adds the introspection response timeout that section 8.2 asked for: every authenticated
+request is introspected, so an unbounded call there does not delay one request, it holds
+gateway connections until they are exhausted.
+
+Verified live: auth-service was forced onto a new address (`.22` to `.28`, with a placeholder
+container parked on the old one) and the gateway followed it with no restart. 32 gateway tests
+pass.
+
+### 14.2 All three SPAs cached their backends' IP addresses
+
+The same bug one layer out. `proxy_pass http://auth-service:8081/auth/;` with a literal
+hostname is resolved once, at worker start, and cached for the life of the process — so
+recreating auth-service or the gateway meant every SPA served 502 until nginx was restarted.
+Observed directly: nginx was connecting to `172.20.0.15` while auth-service was on
+`172.20.0.19`.
+
+Fixed in all three `nginx.conf` files by adding Docker's embedded resolver and naming each
+upstream in a variable, which is what forces nginx to re-resolve; the `/api` prefix stripping
+each location did through `proxy_pass` is preserved with an explicit `rewrite`.
+
+Verified live: after moving auth-service to a new address, all three SPAs proxied correctly
+without a restart.
+
+### 14.3 Every page load fired one unauthenticated request and rotated the refresh token twice
+
+The access token is deliberately memory-only, so after a reload the store knows it is
+authenticated (it has a refresh token) but holds no access token. `RequireAuth` rendered
+immediately on that flag, so each screen's queries fired with no `Authorization` header,
+401'd, and were retried behind a refresh.
+
+Section 12.1 recorded this as fixed. It was half-fixed: the retry stops the user being bounced
+to login, which was the visible symptom, but the wasted round trip remained. Worse, the
+rehydration refresh in `onRehydrateStorage` called the store action directly, bypassing the
+token bridge that exists to collapse concurrent refreshes onto one request. It could not
+dedupe against the 401-driven refresh the unauthenticated query triggered, so a page load
+rotated the single-use refresh token twice.
+
+Fixed with an `isHydrating` flag that the route guard waits on, and by moving the hydration
+refresh out of `onRehydrateStorage` to after the bridge registrations, routed through the
+bridge so it collapses with any concurrent 401-driven refresh. Refresh tokens are single-use
+with replay detection, so two live refreshes presenting the same token revoke the whole family.
+
+Applied to all three SPAs — the stores and guards are near-identical copies, and customer-app
+and provider-app carried the same bug verbatim.
+
+Measured in a real browser, per page load:
+
+| | before | after |
+|---|---|---|
+| unauthenticated 401s | 1 | 0 |
+| refresh-token rotations | 2 | 1 |
+| first request authenticated | no | yes |
+
+### 14.4 Compose had no restart policies and no memory limits
+
+Neither existed anywhere in the file. Two consequences, both observed:
+
+- A service that lost a startup race stayed down permanently. rating-review-service failed
+  twice on a Kafka DNS race during the startup stampede and needed a manual restart each time.
+  All 26 services now carry a bounded `restart: "on-failure:5"`.
+- With no container limit each JVM sized its max heap at 25% of the whole VM — about 1.9 GB
+  each against a measured steady state of ~300 MB. Twenty of them had no reason to collect
+  early and between them exhausted the host. Every Java service now declares `mem_limit: 448m`
+  with a matching `MaxRAMPercentage`, and Kafka's 1 GB default heap is capped at 512 MB.
+
+With both in place and the WSL ceiling raised to 11 GB, all 20 services, 3 SPAs and the
+infrastructure run together on a 16 GB host using ~6.1 GB, with no container needing a restart.
+Section 13.3's advice to run a reduced slice no longer applies; see `docs/LOCAL_ACCESS.md`.
+
+---
+
+## 15. Fourth pass — 2026-09-20
+
+Found by starting the stack from cold on a machine where Docker was not even running, then
+running the two check scripts the repository ships. The stack itself came up cleanly — all 26
+containers healthy on the first attempt at ~5.9 GB, so section 14.4's memory work holds — but
+both scripts failed, and one of the failures was hiding a defect that broke a third of the
+platform's HTTP surface.
+
+### 15.1 Eight services 500'd on any request with a path variable
+
+`javac` discards parameter names unless it is given `-parameters`. Spring resolves an
+`@PathVariable`/`@RequestParam` that does not name its binding by reflecting on the parameter
+name, so without the flag those handlers throw at request time:
+
+```
+java.lang.IllegalArgumentException: Name for argument of type [java.util.UUID] not specified,
+and parameter name information not available via reflection.
+```
+
+Not a compile error, not a startup error — a 500 on the first request to reach the handler.
+
+The flag is missing because every service imports `spring-boot-dependencies` as a BOM rather
+than inheriting `spring-boot-starter-parent`, and the parent is what normally sets
+`maven.compiler.parameters`. No pom in the repository set it, so this was latent everywhere and
+live in the eight services that have an unnamed binding:
+
+| Service | Unnamed bindings | Caught by the smoke script |
+|---|---|---|
+| booking-service | 2 of 24 | no |
+| chat-service | 2 of 2 | yes |
+| complaint-service | 3 of 3 | no |
+| invoice-service | 4 of 6 | yes |
+| location-service | 3 of 3 | yes |
+| promotion-service | 4 of 4 | yes |
+| rating-review-service | 2 of 2 | no |
+| verification-service | 1 of 9 | no |
+
+The smoke script only reached four of them; the other four's affected endpoints were answered
+earlier in the chain by a 400 or a 403, so the bug sat behind a passing test.
+
+Fixed by adding `<parameters>true</parameters>` to the compiler plugin in all 24 poms —
+services and shared libraries — rather than naming the bindings at each of the 21 call sites,
+so a newly written handler cannot reintroduce it. Verified in the bytecode (`MethodParameters`
+is now emitted) and against the running stack: the five endpoints that returned 500 now return
+the correct 200 or 404.
+
+### 15.2 No domain event had ever been published — the relay died on every poll
+
+`verify-outbox-flow.sh` reported rows stuck in `PENDING` with `last_error=(none)` and an empty
+Kafka topic. The relay was logging, once per poll cycle and forever:
+
+```
+Outbox poll cycle failed: Unable to access lob stream
+```
+
+`OutboxEventEntity.payload` was mapped `@Lob String`. On PostgreSQL Hibernate renders that as
+`oid` — a pointer into `pg_largeobject`, not the JSON — and reads it back through the
+large-object API, whose stream is only valid inside the transaction that opened it. The
+confirmed column type was `oid`, and the payloads were intact but only reachable via `lo_get`.
+
+The failure mode is worse than an outage: the poller caught the exception per cycle, so rows
+accumulated as `PENDING` with **nothing written to `last_error`** and no row ever reaching
+`FAILED`. Every health check was green. Section 12's "the relay and the producers now agree on
+one outbox schema, so events are actually published" was true about the schema and wrong about
+the outcome — the events still went nowhere, for an unrelated reason one layer down.
+
+Fixed by mapping the column as text (`@JdbcTypeCode(SqlTypes.LONGVARCHAR)` plus
+`columnDefinition = "text"`). A database created from scratch now gets the right type from
+`ddl-auto`. An existing volume does not, because `ddl-auto: update` never changes a column
+type, so `docker/migrate-outbox-payload.sql` converts in place — it is idempotent, preserves
+pending rows, and unlinks the orphaned large objects instead of leaking them.
+
+This is a good argument for the migrations that section 8.1 asks for: the fix needed a data
+migration, and there is nowhere in this repository for one to live.
+
+### 15.3 Both check scripts reported failures that were their own
+
+Three defects, all of which made a working system look broken or a broken one look fine:
+
+- **`seed-pricing.sh` authenticated as a customer.** `PUT /admin/pricing/parameters` requires
+  ADMIN, which the authorization hardening in section 12 introduced; the script still
+  registered a throwaway OTP number, which self-registers as CUSTOMER. Every subcategory
+  403'd. It now signs in as the seeded `admin` account.
+- **…and reported success anyway.** It counted attempts, not outcomes, so a run in which all
+  eight PUTs failed still signed off with `Seeded pricing parameters for 8 subcategories`. It
+  now counts each separately, prints the failures, and exits non-zero.
+- **`smoke-flows.sh` tested a provider with a customer token.** `login()` never sent a role,
+  and `/auth/register/otp` defaults to CUSTOMER, so the three provider and verification checks
+  were failing on role enforcement rather than exercising the endpoint. It now passes
+  `SERVICE_PROVIDER` — which must go on the OTP request, not the verification, because that is
+  where the role is bound to the session.
+- **…and could not be run twice in an hour.** The three SPA proxy checks all requested an OTP
+  for one hard-coded number against a five-per-hour limit, so a second run inside the hour
+  failed with 429 against a proxy that was working. Each app now uses a fresh number per run.
+
+### 15.4 The Kafka assertion could not run on Windows at all
+
+`verify-outbox-flow.sh` reported `topic empty or unreachable` while the topic held the
+messages and the dispatch consumer was visibly reacting to them. Git Bash rewrites an argument
+that looks like an absolute POSIX path into a Windows one, so the in-container
+`/opt/kafka/bin/kafka-console-consumer.sh` reached `docker exec` as
+`C:/Program Files/Git/opt/kafka/bin/kafka-console-consumer.sh`. The consumer never started,
+its stderr was redirected to `/dev/null`, and the check blamed Kafka.
+
+Fixed with `export MSYS_NO_PATHCONV=1`, which is inert on Linux and macOS. Worth remembering
+for any future `docker exec` with an absolute path: on this platform the failure is silent and
+looks like the thing being tested.
+
+After all of the above, both scripts pass in full from a cold start: `smoke-flows.sh` 77/77
+(was 69/77) and `verify-outbox-flow.sh` 12/12 (was 9/12), with all 26 containers healthy at
+~6.4 GB and every outbox row reaching PUBLISHED.
+
+---
+
+## 16. Fifth pass — 2026-10-02
+
+The working tree held a large uncommitted change set (about 7,800 lines across 197 files) that
+closed most of section 12.3: signed payment callbacks, refund idempotency, notification
+recipients, producers for the three orphaned topics, dispatch enrichment, outbox row claiming,
+atomic refresh rotation, a real CI/CD pipeline and per-service Helm values. It built and passed
+on all 24 modules, but nobody had reviewed it. Four parallel reviews of that change set, a
+second build, and running the stack end to end turned up what follows. Everything listed as
+fixed was verified by a test run or against the running stack; section 16.10 has the numbers.
+
+The run also moved the local stack onto the Postgres, Kafka and Redis installed on the
+developer machine instead of containers (16.8).
+
+### 16.1 Provider matching could never succeed — now it does
+
+The enrichment work made dispatch resolve coordinates and skill tags, but two endpoints it then
+called did not exist anywhere: provider-service's `GET /internal/providers/eligible` and
+notification-service's `POST /internal/offers`. The provider app's offer screens called a third
+set (`/bookings/{id}/offer|accept|decline`) that booking-service never had. So every booking
+with a resolvable address ended in `SEARCHING_FAILED`, and one without an address sat in
+`SEARCHING_PROVIDER` forever: the unresolvable event was retried, dead-lettered, and nothing
+moved the booking on.
+
+- **Eligibility.** Provider profiles gained a base location (`base_latitude`, `base_longitude`)
+  and provider-service now answers `/internal/providers/eligible`: verification APPROVED
+  (one batch call to a new verification-service `/internal/verifications/approved`), not under
+  review, a matching skill tag (Requirement 8.2), within `min(radius, own radius)` by haversine,
+  emergency-available when required, available now. Scores are normalised to [0, 1]. Both
+  internal endpoints are guarded by the shared `X-Internal-Api-Key`, which dispatch now sends.
+- **Offers.** Dispatch owns them, in Redis: an offer records the window, the provider answers
+  through `GET /dispatch/offers`, `GET|POST /dispatch/offers/{bookingId}[/accept|/decline]`
+  (routed by the gateway, SERVICE_PROVIDER only, matched to the JWT subject), and decisions are
+  WATCH/MULTI/EXEC compare-and-set so a late or double answer is refused. The provider app's
+  dashboard polls for offers and its Job Request screen answers them.
+- **Dead ends closed.** An unresolvable booking is marked `SEARCHING_FAILED` instead of being
+  dead-lettered; a `BookingCancelled` stops an in-flight search and withdraws the pending offer;
+  a 409 from booking-service ends the run; and chat writes a tombstone when a cancellation
+  arrives before the channel exists, so a late `ProviderAccepted` cannot open a chat on a
+  cancelled booking.
+
+**Found only by running it:** every provider acceptance answered `409 OFFER_ALREADY_DECIDED`
+even though it had succeeded. The compare-and-set queued a lone `HMSET`, whose status reply
+`RedisTemplate.exec()` drops, so a committed transaction came back as an empty list — the
+code's signal for "discarded by a concurrent write". It retried, found its own write, and
+refused it. The unit test had stubbed `exec()` with a non-empty list and could not see this.
+The transaction now also queues `HLEN`, whose integer reply is always kept.
+
+### 16.2 The customer booking flow lost bookings, addresses and coupons
+
+- **Scheduled bookings were never confirmed.** Only `POST /bookings/{ref}/confirmation` moves
+  a scheduled booking out of `CREATED` and publishes `BookingCreated`; the customer app never
+  called it. It now confirms after creating, and a failed confirmation is retried against the
+  same booking rather than creating another.
+- **Bookings could be created without an address**, and therefore could never be dispatched:
+  a typed address had no coordinates, save failures were swallowed, and every GPS booking
+  saved a new address until the 10-address limit silently turned the rest into address-less
+  bookings. `addressId` is now required by booking-service, the app reuses a matching saved
+  address and surfaces save errors, and confirmation is blocked without coordinates.
+- **Coupons were shown but never charged.** The estimate applied the coupon; booking creation
+  dropped it and re-priced without it. `couponCode` now travels through booking creation to
+  pricing.
+
+### 16.3 Payments: a double-refund path and four smaller defects
+
+- **A gateway timeout during a refund could refund twice.** The refund was marked FAILED on an
+  unknown outcome and the caller told to retry with a new idempotency key — which minted a new
+  gateway idempotency key too. Now an unknown outcome stays PENDING (`502
+  REFUND_OUTCOME_UNKNOWN`), a same-key retry re-sends under the same refund id, and FINANCE
+  can reconcile a stuck refund (`POST /payments/{tx}/refunds/{refund}/reconcile`).
+- Amounts with more than two decimals were rounded by `numeric(12,2)` but sent unrounded to
+  the gateway; they are now rejected.
+- A fast callback could make the charge's final write lose an optimistic lock, returning 500
+  for a successful charge and never saving the gateway reference; it now retries that write,
+  and a refund without a gateway reference is refused before reaching the gateway.
+- `POST /payments/{id}/retries` lacked the ownership check, so any customer could fail another
+  customer's pending payment.
+- The provider wallet credit ran after the SUCCESS commit with nothing recording that it was
+  owed; a marker is now set in the same transaction and a sweeper re-sends owed credits.
+
+### 16.4 Pricing parameters are durable; coupons have one owner
+
+Pricing parameters lived only in memory (section 8.3), so every pricing-engine restart broke
+every booking until `seed-pricing.sh` was re-run. They now persist in a `pricing` schema behind
+the existing cache. Pricing's private copy of the coupon rules, which no API could ever
+populate, is gone: coupons are quoted by promotion-service through an internal endpoint, so
+there is one set of discount rules and error codes.
+
+### 16.5 Messaging: four ways to lose or duplicate an event
+
+- **Consumer dedupe was not atomic** (8.2): check, handle and record ran in separate
+  transactions, so a failure between handling and recording re-ran the handler. The
+  processed-event insert and the handler now share one transaction, insert first.
+- **Dead-lettering did not wait for the send**, so a failed DLT write lost the event while the
+  offset committed. It now waits and rethrows.
+- **A broker outage of about eight minutes still marked events FAILED for good**: every
+  timed-out publish spent an attempt. Retriable broker failures no longer count.
+- **Skipped outbox rows stayed hidden until their lease expired**, and the lease check ignored
+  `max.block.ms`. Skipped rows are now handed back, and the check includes it.
+- Notification delivery-log rows now commit on their own, because the handler now runs inside
+  the dedupe transaction: an SMS that went out must stay logged even if a later step fails.
+
+### 16.6 Gateway and authentication
+
+The introspection timeout now covers connecting and pool acquisition, not just the response
+(an unreachable auth-service could still hold gateway requests for 30-45 s). Logout revokes the
+whole refresh-token family, so a stolen, rotated token dies with the victim's logout. A startup
+task removes the cleartext refresh-token keys the pre-hashing version left in Redis; holders of
+those tokens sign in again.
+
+### 16.7 Schema migrations exist (closes 8.1 and 12.3 item 1)
+
+Every database-backed service now runs Flyway, and Hibernate only validates. Each `V1__baseline`
+was generated with `pg_dump` from a database Hibernate had populated from the current entities,
+then proven by applying all of them to an empty database and diffing the two dumps: identical
+apart from PostgreSQL's own re-spelling of the same CHECK expressions. The shared outbox tables
+ship as a repeatable migration inside `homefix-shared-outbox`, serialised across services with
+an advisory lock. `baseline-on-migrate` lets a database created by the old `ddl-auto=update`
+setup adopt the migrations without re-creating anything. Compose no longer forces
+`ddl-auto=update`, so the local stack now uses the same mechanism as a deployment.
+
+This was the largest single obstacle to deploying outside Compose. Every later schema change
+needs a `V2__…`; the baselines must not be edited.
+
+### 16.8 The local stack runs on the machine's own Postgres, Kafka and Redis
+
+At the user's request the local run no longer starts infrastructure containers: services reach
+PostgreSQL 18 (Windows service), Kafka 4.1 and Redis on the host through `host.docker.internal`.
+AWS is unaffected: Helm already wires RDS, MSK and ElastiCache per environment. The containerised
+infrastructure survives as an opt-in `docker-compose.infra.yml`. Setup is in
+`docs/LOCAL_ACCESS.md` section 1.1. Three things are worth knowing:
+
+- **Kafka needs a second listener.** The distribution advertises only `localhost:9092`, which
+  inside a container means the container. A `DOCKER` listener on 9094 advertised as
+  `host.docker.internal` fixes that.
+- **Kafka on native Windows cannot delete segments.** Retention, compaction and topic deletion
+  all rename memory-mapped files, which Windows refuses; Kafka then marks the whole log
+  directory failed and shuts down. It did, twice, within a minute of starting. Retention and
+  the log cleaner are now off for this broker, on a fresh data directory. Topic deletion must
+  be avoided.
+- **Redis is not installed yet.** The Memurai installer needs administrator rights the session
+  did not have; a Redis container on port 6379 stands in until it is installed.
+
+The seed and check scripts reach the host's Postgres and Kafka through a shared
+`docker/local-infra.sh` instead of `docker exec`, and Compose's health checks now allow a 300 s
+start period: on a cold start twenty CPU-bound JVMs need 3-5 minutes, and the old window made
+`up --wait` report a healthy stack as failed.
+
+### 16.9 Smaller fixes
+
+- The customer app and admin portal read `body.code` from errors while the backend envelope
+  uses `errorCode`, so every error code arrived as `UNKNOWN_ERROR`.
+- The deploy workflow's Secret preflight ran without `pipefail`, so a missing Secret was
+  reported as a list of missing keys.
+- Helm values for pricing-engine (database, coupon credential) and promotion-service (internal
+  key) were missing.
+- `smoke-flows.sh` and `verify-outbox-flow.sh` booked without an address; the latter now
+  asserts the whole match: offer, acceptance, `PROVIDER_ACCEPTED`, `ProviderAccepted`.
+
+### 16.10 Verification
+
+| Check | Result |
+|---|---|
+| All 24 modules, `mvn verify` / `install` | pass — 1,893 tests, 0 failures |
+| Schema baselines vs. Hibernate-generated schema | identical (16.7) |
+| Stack on local Postgres 18, Kafka 4.1, Redis | all 20 services healthy; Flyway baselined 18 schemas, validation passes |
+| `smoke-flows.sh` | 78/78 |
+| `verify-outbox-flow.sh` | 17/17, including dispatch match and provider acceptance |
+| Cold restart (`down`, then `up -d --build --wait`) | pass — all 20 services healthy, 400 s including image builds |
+
+### 16.11 Customers could not see their own bookings; the customer app was redesigned
+
+Found from the user's screenshots after the restart. booking-service had **no read endpoints**:
+the app's booking history (`GET /bookings/history`) and detail (`GET /bookings/{id}`) called
+paths that did not exist, and the tracking screen, unable to learn the booking's status,
+rendered "No location available yet for booking <uuid>" as a red error for a booking whose
+search had in fact failed. Both endpoints now exist (customer, assigned provider or staff;
+anyone else gets the same 404 as a missing booking; history is 1-based and paged), with a
+`V2` migration for the history index — the first incremental migration, applied cleanly on
+the live database.
+
+The customer app was redesigned: a self-hosted typeface and a real type scale, a responsive
+1200 px layout with a desktop top nav and a mobile tab bar instead of a phone column stranded
+on a wide screen, a proper home page, a split sign-in with a six-box OTP input, and every
+screen restyled. Two behaviours changed with it. Errors are humanised in one place — an
+unreachable or restarting backend (network, 502/503/504) reads "We can't reach HomeFix right
+now" instead of "Request failed with status code 502" — and tracking is status-aware, polling
+the new detail endpoint: finding a professional, no professional available (with book-again),
+assigned, on the way with the live map, in progress, done or cancelled. A missing location fix
+is a waiting state, never an error. The Vite dev proxy also failed to strip `/api` the way
+nginx does, so every gateway call 404'd under `npm run dev`; fixed.
+
+### 16.12 Still open
+
+1. **Admin portal back end** (13.2): eleven of sixteen modules call list endpoints that do not
+   exist. This is a feature project — a paged query endpoint per owning service — not a fix.
+2. **External providers are stubs**: payment gateways, SMS/email/push, document storage,
+   background checks, geocoding.
+3. **Coupons are never redeemed.** They are quoted and charged, but nothing calls
+   promotion-service's redeem, so per-user and total limits are never consumed. Bookings also
+   do not store the coupon, so a re-quote after parts are added drops it.
+4. **No address listing.** customer-service cannot list a customer's saved addresses, so the
+   app reuses only addresses saved from the same device.
+5. **Push and email cannot be addressed**: no device tokens or email addresses reach
+   notification-service. SMS and in-app work.
+6. **Deployment topology**: the deploy workflow puts all services in one namespace, while
+   Terraform creates six group namespaces with deny-all NetworkPolicies and a CPU quota the
+   chart cannot fit. One of the two has to change before the first real deploy.
+7. **CI coverage gate**: CI enforces 80% line coverage per service; several services may sit
+   below it. Measure before relying on the pipeline.
+8. **The leaked JWT in commit `1b5656d`** (section 11, Phase 0) — rotate the secret that
+   signed it if that has not been done.

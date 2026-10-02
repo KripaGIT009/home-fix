@@ -11,7 +11,7 @@ import jakarta.validation.constraints.NotNull;
  * current GPS coordinates (Requirement 10.1).
  */
 public record LocationUpdateRequest(
-        @NotNull(message = "providerId is required")
+        /** Ignored: the provider is the caller (see {@code LocationController#ingest}). */
         UUID providerId,
 
         @NotNull(message = "latitude is required")

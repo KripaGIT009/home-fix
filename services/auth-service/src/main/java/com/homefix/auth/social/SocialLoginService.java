@@ -5,6 +5,7 @@ import java.util.List;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.homefix.auth.domain.AccountDisabledException;
 import com.homefix.auth.domain.Role;
 import com.homefix.auth.domain.SocialIdentityLink;
 import com.homefix.auth.domain.SocialIdentityLinkRepository;
@@ -53,6 +54,8 @@ public class SocialLoginService {
      * @param provider      the social provider (Google, Apple)
      * @param identityToken the raw provider identity token
      * @return issued tokens plus the account id and roles
+     * @throws AccountDisabledException 403 if the linked account has been suspended or
+     *                                  deactivated by an administrator
      */
     @Transactional
     public SocialLoginResult login(SocialProvider provider, String identityToken) {
@@ -62,6 +65,7 @@ public class SocialLoginService {
                 .findByProviderAndProviderSubject(identity.provider(), identity.providerSubject())
                 .flatMap(link -> userRepository.findById(link.getUserId()))
                 .orElseGet(() -> createLinkedAccount(identity));
+        AccountDisabledException.requireActive(account);
 
         List<String> roles = account.getRoles().stream().map(Enum::name).sorted().toList();
         TokenPair tokens = tokenService.issueTokens(account.getId().toString(), roles);

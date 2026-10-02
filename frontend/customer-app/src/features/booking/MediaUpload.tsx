@@ -84,7 +84,14 @@ export function MediaUpload({ files, onChange }: MediaUploadProps) {
         startIcon={<AddPhotoAlternateRoundedIcon />}
         onClick={() => inputRef.current?.click()}
         disabled={atLimit}
-        sx={{ alignSelf: 'flex-start' }}
+        fullWidth
+        sx={{
+          py: 2,
+          borderStyle: 'dashed',
+          borderWidth: 1.5,
+          color: 'primary.main',
+          '&:hover': { borderStyle: 'dashed', borderWidth: 1.5 },
+        }}
       >
         {atLimit ? `Maximum ${MAX_MEDIA_FILES} files added` : 'Add photos or videos'}
       </Button>

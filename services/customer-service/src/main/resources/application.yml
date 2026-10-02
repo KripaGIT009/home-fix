@@ -14,6 +14,14 @@ spring:
         default_schema: customer
     open-in-view: false
 
+  # Schema migrations own the DDL; Hibernate only validates against it. V1 is the baseline
+  # schema, so on a database Hibernate already populated (ddl-auto=update, the old local default)
+  # Flyway records V1 as applied instead of re-creating tables that exist.
+  flyway:
+    schemas: customer
+    default-schema: customer
+    baseline-on-migrate: true
+    baseline-version: 1
 server:
   port: ${SERVER_PORT:8082}
 
@@ -25,6 +33,11 @@ homefix:
     # Required: no default, so the service fails fast when JWT_SECRET is not set.
     jwt-secret: ${JWT_SECRET}
   customer:
+    # Shared service credential other services present on /internal/** (X-Internal-Api-Key),
+    # e.g. the Dispatch Engine's address lookup. Same INTERNAL_API_KEY the Booking Service uses.
+    # No usable default: when unset every /internal/** request is refused (the rest of the
+    # service still starts).
+    internal-api-key: ${INTERNAL_API_KEY:}
     # Maximum saved addresses per customer (Requirement 2.3).
     max-addresses: 10
     # Data-deletion SLAs (Requirement 26.8, 26.9).
@@ -44,7 +57,7 @@ homefix:
     provider: ${GEOCODING_PROVIDER:noop}
   booking:
     # Base URL of the Booking Service used to check active-booking references.
-    base-url: ${BOOKING_SERVICE_URL:http://booking-service:8085}
+    base-url: ${BOOKING_SERVICE_URL:http://booking-service:8084}
 
 management:
   endpoints:

@@ -3,6 +3,7 @@ package com.homefix.verification.api;
 import org.slf4j.MDC;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -38,6 +39,20 @@ public class GlobalExceptionHandler {
                 .correlationId(MDC.get(CORRELATION_MDC_KEY));
         ex.getBindingResult().getFieldErrors()
                 .forEach(fe -> builder.addDetail(fe.getField() + ": " + fe.getDefaultMessage()));
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(builder.build());
+    }
+
+    /**
+     * A malformed or unparseable body — e.g. a {@code decision} other than {@code APPROVE} /
+     * {@code REJECT} on the Admin review decision — is a client error in the shared envelope, not
+     * Spring's bare default 400.
+     */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ErrorResponseDto> handleUnreadable(HttpMessageNotReadableException ex) {
+        ErrorResponseDto.Builder builder = ErrorResponseDto.builder()
+                .errorCode("VALIDATION_ERROR")
+                .message("Request body is missing or malformed")
+                .correlationId(MDC.get(CORRELATION_MDC_KEY));
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(builder.build());
     }
 }

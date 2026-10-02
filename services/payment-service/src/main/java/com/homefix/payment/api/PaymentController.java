@@ -34,9 +34,10 @@ import jakarta.validation.Valid;
  *
  * <p>Role-based access is enforced by {@code PaymentRbacConfig}; on top of it, the customer-facing
  * endpoints assert <em>ownership</em> via {@link CallerIdentity} so a customer cannot read another
- * customer's transaction or open a payment in somebody else's name. The callback, refund and
+ * customer's transaction, open a payment in somebody else's name, or push another customer's
+ * PENDING payment towards FAILED through the retry endpoint. The callback, refund, reconcile and
  * settlement handlers carry no ownership check: the callback has no authenticated principal at all
- * (it is HMAC-verified), and refunds/settlements are staff-only by role.
+ * (it is HMAC-verified), and refunds/reconciliation/settlements are staff-only by role.
  *
  * <p>{@code @PathVariable}/{@code @RequestParam} names are spelled out explicitly because the build
  * does not enable the {@code -parameters} compiler flag, and Spring 6 no longer falls back to the
@@ -73,27 +74,46 @@ public class PaymentController {
         return TransactionResponse.from(tx);
     }
 
-    /** Handle a gateway callback; signature verified before any state change (Requirement 12.5). */
+    /**
+     * Handle a gateway callback (Requirement 12.5). Only the signature-verified {@code payload} is
+     * passed on as the source of the outcome; see {@link GatewayCallbackRequest}.
+     */
     @PostMapping("/callbacks/{transactionId}")
     public TransactionResponse callback(@PathVariable("transactionId") UUID transactionId,
                                         @Valid @RequestBody GatewayCallbackRequest req) {
         PaymentTransaction tx = paymentService.handleGatewayCallback(transactionId, new GatewayCallback(
-                req.gatewayId(), req.payload(), req.signature(), req.succeeded(), req.failureReason()));
+                req.gatewayId(), req.payload(), req.signature()));
         return TransactionResponse.from(tx);
     }
 
-    /** Record a customer-driven retry attempt (Requirement 12.8). */
+    /**
+     * Record a customer-driven retry attempt (Requirement 12.8); restricted to the owning customer or
+     * to staff. Each attempt counts towards the limit that marks the payment permanently FAILED, so
+     * without the ownership check any customer could fail somebody else's payment.
+     */
     @PostMapping("/{transactionId}/retries")
     public TransactionResponse retry(@PathVariable("transactionId") UUID transactionId,
                                      @RequestParam(name = "failureReason", required = false) String failureReason) {
+        callerIdentity.requireSelfOrStaff(paymentService.getTransaction(transactionId).getCustomerId());
         return TransactionResponse.from(paymentService.retryPayment(transactionId, failureReason));
     }
 
-    /** Refund a transaction fully or partially (Requirement 12.7). */
+    /** Refund a transaction fully or partially; idempotent per client key (Requirement 12.7). */
     @PostMapping("/{transactionId}/refunds")
     public TransactionResponse refund(@PathVariable("transactionId") UUID transactionId,
                                       @Valid @RequestBody RefundRequest req) {
-        return TransactionResponse.from(paymentService.refund(transactionId, req.amount()));
+        return TransactionResponse.from(
+                paymentService.refund(transactionId, req.amount(), req.idempotencyKey()));
+    }
+
+    /**
+     * Settle a refund stuck in PENDING by re-sending it to the gateway under its original refund id
+     * and recording the outcome (Requirement 12.7); staff-only (FINANCE tier) by role.
+     */
+    @PostMapping("/{transactionId}/refunds/{refundId}/reconcile")
+    public TransactionResponse reconcileRefund(@PathVariable("transactionId") UUID transactionId,
+                                               @PathVariable("refundId") UUID refundId) {
+        return TransactionResponse.from(paymentService.reconcileRefund(transactionId, refundId));
     }
 
     /** Initiate a settlement bank transfer (Requirement 14.3). */

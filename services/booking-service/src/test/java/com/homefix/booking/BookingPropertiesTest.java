@@ -2,6 +2,7 @@ package com.homefix.booking;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowable;
+import static org.mockito.Mockito.mock;
 
 import java.math.BigDecimal;
 import java.time.Clock;
@@ -18,9 +19,11 @@ import com.homefix.booking.domain.BookingStatus;
 import com.homefix.booking.domain.JobDurationCalculator;
 import com.homefix.booking.domain.JobInterval;
 import com.homefix.booking.service.Actor;
+import com.homefix.booking.service.BookingLifecycleEventPublisher;
 import com.homefix.booking.service.BookingTransitionService;
 import com.homefix.booking.service.InvalidTransitionException;
 import com.homefix.booking.support.InMemoryBookingAuditRepository;
+import com.homefix.shared.outbox.OutboxEventPublisher;
 
 import net.jqwik.api.Arbitraries;
 import net.jqwik.api.Arbitrary;
@@ -57,7 +60,8 @@ class BookingPropertiesTest {
             @ForAll("bookingStatus") BookingStatus target) {
 
         InMemoryBookingAuditRepository auditRepo = new InMemoryBookingAuditRepository();
-        BookingTransitionService service = new BookingTransitionService(stateMachine, auditRepo, CLOCK);
+        BookingTransitionService service = new BookingTransitionService(stateMachine, auditRepo,
+                new BookingLifecycleEventPublisher(mock(OutboxEventPublisher.class), CLOCK), CLOCK);
         Booking booking = bookingIn(source);
         Actor actor = Actor.user(UUID.randomUUID(), "CUSTOMER");
 
@@ -94,7 +98,8 @@ class BookingPropertiesTest {
             @ForAll("transitionPath") List<BookingStatus> path) {
 
         InMemoryBookingAuditRepository auditRepo = new InMemoryBookingAuditRepository();
-        BookingTransitionService service = new BookingTransitionService(stateMachine, auditRepo, CLOCK);
+        BookingTransitionService service = new BookingTransitionService(stateMachine, auditRepo,
+                new BookingLifecycleEventPublisher(mock(OutboxEventPublisher.class), CLOCK), CLOCK);
         UUID actorId = UUID.randomUUID();
         Actor actor = Actor.user(actorId, "CUSTOMER");
 

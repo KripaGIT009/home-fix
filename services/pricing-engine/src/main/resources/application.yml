@@ -1,6 +1,32 @@
 spring:
   application:
     name: pricing-engine
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/homefix}
+    username: ${DB_USERNAME:homefix}
+    # Required: no default, so the service fails fast when DB_PASSWORD is not set.
+    password: ${DB_PASSWORD}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: pricing
+        # Lets ddl-auto=update (docker-compose.core.yml) create the 'pricing' schema itself.
+        # docker/init-db.sql creates it too, but only on a fresh volume; without this a stack
+        # whose Postgres volume predates the schema fails every parameter read and write. Inert
+        # under 'validate' (the default here), which never issues DDL.
+        hbm2ddl:
+          create_namespaces: true
+    open-in-view: false
+  # Schema migrations own the DDL; Hibernate only validates against it. V1 is the baseline
+  # schema, so on a database Hibernate already populated (ddl-auto=update, the old local default)
+  # Flyway records V1 as applied instead of re-creating tables that exist.
+  flyway:
+    schemas: pricing
+    default-schema: pricing
+    baseline-on-migrate: true
+    baseline-version: 1
   data:
     redis:
       host: ${REDIS_HOST:localhost}
@@ -34,6 +60,18 @@ homefix:
     money-rounding: HALF_UP
     # Local timezone used to evaluate night/weekend surcharge windows (Requirement 6.5, 6.6).
     zone-id: ${PRICING_ZONE:UTC}
+    # Coupon discounts are quoted by the Promotion Service, which owns coupons and their usage
+    # counters (Requirement 6.10, 21.2), via its service-to-service GET /internal/coupons/{code}/quote.
+    promotion:
+      base-url: ${PROMOTION_SERVICE_URL:http://promotion-service:8098}
+      # Shared service credential sent as X-Internal-Api-Key. No usable default: when unset,
+      # estimates without a coupon still work and estimates with one fail with
+      # 503 COUPON_SERVICE_UNAVAILABLE.
+      internal-api-key: ${INTERNAL_API_KEY:}
+      # Kept well inside the Booking Service's 5 s budget for the whole estimate call, which
+      # also retries a 5xx; this client therefore does not retry on its own.
+      connect-timeout: 1s
+      read-timeout: 2s
 
 management:
   endpoints:

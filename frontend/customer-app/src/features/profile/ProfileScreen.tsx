@@ -1,14 +1,13 @@
+import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Avatar,
   Box,
   Button,
   Card,
-  CardContent,
   Divider,
   List,
   ListItemButton,
-  ListItemIcon,
   ListItemText,
   Stack,
   Typography,
@@ -19,12 +18,15 @@ import ReceiptLongRoundedIcon from '@mui/icons-material/ReceiptLongRounded';
 import SupportAgentRoundedIcon from '@mui/icons-material/SupportAgentRounded';
 import LogoutRoundedIcon from '@mui/icons-material/LogoutRounded';
 import ChevronRightRoundedIcon from '@mui/icons-material/ChevronRightRounded';
+import VerifiedUserRoundedIcon from '@mui/icons-material/VerifiedUserRounded';
 import { AppShell } from '@components/AppShell';
+import { IconTile } from '@components/StateViews';
 import { formatMobileNumber } from '@features/auth/phone';
 import { useAuthStore } from '@stores/authStore';
+import { brand, radius } from '@lib/theme';
 
 /**
- * Profile screen: the account home base reached from the bottom navigation.
+ * Profile screen: the account home base reached from the main navigation.
  *
  * It shows the signed-in identity and routes to the areas of the app that are
  * about the customer rather than a single booking. Entries whose screens are
@@ -53,35 +55,61 @@ export function ProfileScreen() {
 
   return (
     <AppShell>
-      <Stack spacing={2}>
-        <Card>
-          <CardContent>
-            <Stack direction="row" spacing={2} alignItems="center">
-              <Avatar
-                {...(user?.photoUrl ? { src: user.photoUrl } : {})}
-                sx={{ width: 60, height: 60, bgcolor: 'primary.main', fontSize: 22 }}
+      <Stack spacing={{ xs: 2.5, md: 3 }}>
+        <Typography variant="h2" component="h1" sx={{ display: { xs: 'none', md: 'block' } }}>
+          Your profile
+        </Typography>
+
+        <Card
+          sx={{
+            background: `linear-gradient(135deg, ${brand.accentSoft} 0%, #FFFFFF 70%)`,
+            borderColor: brand.accentLine,
+          }}
+        >
+          <Stack direction="row" spacing={2.5} alignItems="center" sx={{ p: { xs: 2.5, md: 3.5 } }}>
+            <Avatar
+              {...(user?.photoUrl ? { src: user.photoUrl } : {})}
+              sx={{ width: 72, height: 72, bgcolor: 'primary.main', fontSize: 26 }}
+            >
+              {initials || <PersonRoundedIcon sx={{ fontSize: 36 }} />}
+            </Avatar>
+            <Box sx={{ minWidth: 0 }}>
+              <Typography variant="h4" component="h2" noWrap>
+                {user?.displayName || 'Your account'}
+              </Typography>
+              <Typography variant="body1" color="text.secondary">
+                {user?.mobileNumber ? formatMobileNumber(user.mobileNumber) : 'Signed in'}
+              </Typography>
+              {user?.email ? (
+                <Typography variant="body2" color="text.secondary" noWrap>
+                  {user.email}
+                </Typography>
+              ) : null}
+              <Stack
+                direction="row"
+                spacing={0.5}
+                alignItems="center"
+                sx={{
+                  display: 'inline-flex',
+                  mt: 1,
+                  px: 1,
+                  py: 0.25,
+                  borderRadius: `${radius.pill}px`,
+                  bgcolor: brand.greenSoft,
+                  color: '#05603A',
+                }}
               >
-                {initials || <PersonRoundedIcon />}
-              </Avatar>
-              <Box sx={{ minWidth: 0 }}>
-                <Typography variant="h6" component="h1" noWrap>
-                  {user?.displayName || 'Your account'}
+                <VerifiedUserRoundedIcon sx={{ fontSize: 14 }} aria-hidden />
+                <Typography variant="caption" fontWeight={700}>
+                  Number verified
                 </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  {user?.mobileNumber ? formatMobileNumber(user.mobileNumber) : 'Signed in'}
-                </Typography>
-                {user?.email ? (
-                  <Typography variant="caption" color="text.secondary">
-                    {user.email}
-                  </Typography>
-                ) : null}
-              </Box>
-            </Stack>
-          </CardContent>
+              </Stack>
+            </Box>
+          </Stack>
         </Card>
 
         <Card>
-          <List disablePadding>
+          <List disablePadding aria-label="Account">
             <ProfileLink
               icon={<ReceiptLongRoundedIcon />}
               label="Your bookings"
@@ -99,7 +127,7 @@ export function ProfileScreen() {
             <ProfileLink
               icon={<SupportAgentRoundedIcon />}
               label="Help & support"
-              caption="Raise a complaint or reach the team"
+              caption="Answers, and a way through to our team"
               onClick={() => navigate('/help')}
             />
           </List>
@@ -112,6 +140,7 @@ export function ProfileScreen() {
           fullWidth
           startIcon={<LogoutRoundedIcon />}
           onClick={handleLogout}
+          sx={{ borderColor: '#F7D4D0', bgcolor: 'background.paper' }}
         >
           Log out
         </Button>
@@ -131,21 +160,21 @@ function ProfileLink({
   caption,
   onClick,
 }: {
-  icon: React.ReactNode;
+  icon: ReactNode;
   label: string;
   caption: string;
   onClick: () => void;
 }) {
   return (
-    <ListItemButton onClick={onClick} sx={{ py: 1.5, borderRadius: 0 }}>
-      <ListItemIcon sx={{ color: 'primary.main', minWidth: 42 }}>{icon}</ListItemIcon>
+    <ListItemButton onClick={onClick} sx={{ py: 2, px: { xs: 2, md: 3 }, borderRadius: 0, gap: 2 }}>
+      <IconTile size={40}>{icon}</IconTile>
       <ListItemText
         primary={label}
         secondary={caption}
-        primaryTypographyProps={{ variant: 'subtitle1', fontWeight: 600 }}
-        secondaryTypographyProps={{ variant: 'caption' }}
+        primaryTypographyProps={{ variant: 'subtitle1', fontWeight: 700 }}
+        secondaryTypographyProps={{ variant: 'body2' }}
       />
-      <ChevronRightRoundedIcon sx={{ color: 'text.secondary' }} />
+      <ChevronRightRoundedIcon sx={{ color: 'text.disabled' }} />
     </ListItemButton>
   );
 }

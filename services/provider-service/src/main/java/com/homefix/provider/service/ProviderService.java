@@ -71,9 +71,14 @@ public class ProviderService {
         validateSkillTags(cmd.skillTags());
         validateYearsExperience(cmd.yearsExperience());
         validateServiceRadius(cmd.serviceRadiusKm());
+        validateBaseLocation(cmd.baseLatitude(), cmd.baseLongitude());
         List<ProviderCategorySelection> selections = validateAndBuildSelections(cmd.categories());
 
         ProviderProfile profile = getOrCreate(providerId);
+        if (cmd.baseLatitude() != null) {
+            // Both-or-neither is validated above; neither means "keep the location on file".
+            profile.setBaseLocation(cmd.baseLatitude(), cmd.baseLongitude());
+        }
         profile.setDisplayName(cmd.displayName());
         profile.replaceSkillTags(cmd.skillTags());
         profile.setYearsExperience(cmd.yearsExperience());
@@ -105,6 +110,29 @@ public class ProviderService {
             throw ProviderException.validation(
                     "Service radius must be between " + props.getMinServiceRadiusKm()
                             + " and " + props.getMaxServiceRadiusKm() + " kilometers (got " + radiusKm + ")");
+        }
+    }
+
+    /**
+     * Base service location (Requirement 8.2): both coordinates or neither, each finite and within
+     * the WGS84 range. The DTO's bean-validation bounds cover the HTTP path; this is the
+     * authoritative check for every caller of the service.
+     */
+    private void validateBaseLocation(Double latitude, Double longitude) {
+        if (latitude == null && longitude == null) {
+            return;
+        }
+        if (latitude == null || longitude == null) {
+            throw ProviderException.validation(
+                    "baseLatitude and baseLongitude must be provided together");
+        }
+        if (!Double.isFinite(latitude) || latitude < -90.0 || latitude > 90.0) {
+            throw ProviderException.validation(
+                    "baseLatitude must be between -90 and 90 (got " + latitude + ")");
+        }
+        if (!Double.isFinite(longitude) || longitude < -180.0 || longitude > 180.0) {
+            throw ProviderException.validation(
+                    "baseLongitude must be between -180 and 180 (got " + longitude + ")");
         }
     }
 
@@ -248,7 +276,7 @@ public class ProviderService {
 
     @Transactional(readOnly = true)
     public Page<ProviderEarning> earningsHistory(UUID providerId, Pageable pageable) {
-        getExisting(providerId);
+        // No profile yet means no earnings yet: the ledger query simply finds nothing.
         return earningRepository.findByProviderIdOrderByCreditedAtDesc(providerId, pageable);
     }
 
@@ -330,7 +358,7 @@ public class ProviderService {
      */
     @Transactional(readOnly = true)
     public EarningsSnapshot earningsSummary(UUID providerId) {
-        ProviderProfile profile = getExisting(providerId);
+        ProviderProfile profile = getOrEmpty(providerId);
         Instant dayStart = LocalDate.now(ZoneId.of(props.getEarningsDayZone()))
                 .atStartOfDay(ZoneId.of(props.getEarningsDayZone()))
                 .toInstant();
@@ -348,7 +376,6 @@ public class ProviderService {
     /** Settlement request history, newest first (Requirement 14.3). */
     @Transactional(readOnly = true)
     public List<Settlement> settlementHistory(UUID providerId) {
-        getExisting(providerId);
         return settlementRepository.findByProviderIdOrderByRequestedAtDesc(providerId);
     }
 
@@ -360,7 +387,7 @@ public class ProviderService {
      */
     @Transactional(readOnly = true)
     public ProviderProfile settlementInfo(UUID providerId) {
-        return getExisting(providerId);
+        return getOrEmpty(providerId);
     }
 
     /** Wallet balance and today's credited total, as returned by {@link #earningsSummary(UUID)}. */
@@ -370,6 +397,18 @@ public class ProviderService {
     private ProviderProfile getExisting(UUID providerId) {
         return profileRepository.findById(providerId)
                 .orElseThrow(() -> ProviderException.notFound("Provider " + providerId + " not found"));
+    }
+
+    /**
+     * The provider's profile for a dashboard read, or an unsaved blank one when they have not
+     * completed onboarding yet. A freshly registered provider has a zero wallet and no history —
+     * that is an empty ledger, not a missing provider — and answering 404 left the provider app's
+     * dashboard showing "provider not found" with no way forward. Writes still require a real
+     * profile ({@link #getExisting}).
+     */
+    private ProviderProfile getOrEmpty(UUID providerId) {
+        return profileRepository.findById(providerId)
+                .orElseGet(() -> ProviderProfile.createWithId(providerId));
     }
 
     private ProviderProfile getOrCreate(UUID providerId) {

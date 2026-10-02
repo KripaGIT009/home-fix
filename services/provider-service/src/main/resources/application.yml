@@ -14,6 +14,14 @@ spring:
         default_schema: provider
     open-in-view: false
 
+  # Schema migrations own the DDL; Hibernate only validates against it. V1 is the baseline
+  # schema, so on a database Hibernate already populated (ddl-auto=update, the old local default)
+  # Flyway records V1 as applied instead of re-creating tables that exist.
+  flyway:
+    schemas: provider
+    default-schema: provider
+    baseline-on-migrate: true
+    baseline-version: 1
 server:
   port: ${SERVER_PORT:8083}
 
@@ -32,7 +40,19 @@ homefix:
     internal-api-key: ${INTERNAL_API_KEY:}
   catalog:
     base-url: ${CATALOG_SERVICE_URI:http://catalog-service:8085}
+  verification:
+    # Batch APPROVED lookup behind the dispatch eligibility search (Req 5.10, 8.2).
+    base-url: ${VERIFICATION_SERVICE_URL:http://verification-service:8094}
+    # Must match the Verification Service's homefix.verification.internal-api-key. When unset,
+    # no provider can be confirmed APPROVED and every eligibility search returns nobody.
+    internal-api-key: ${INTERNAL_API_KEY:}
   provider:
+    # Shared service credential other services present on /internal/** (X-Internal-Api-Key),
+    # i.e. the Dispatch Engine's eligible-provider search. Same INTERNAL_API_KEY as above.
+    # No usable default: when unset every /internal/** request is refused (fail closed).
+    internal-api-key: ${INTERNAL_API_KEY:}
+    # Zone the weekly availability slots are read in by the eligibility search.
+    availability-zone: ${PROVIDER_AVAILABILITY_ZONE:Asia/Kolkata}
     max-active-categories: 5
     max-subcategories-per-category: 10
     min-skill-tags: 1

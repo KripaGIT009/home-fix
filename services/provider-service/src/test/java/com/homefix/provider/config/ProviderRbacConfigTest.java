@@ -208,6 +208,52 @@ class ProviderRbacConfigTest {
 
     // ------------------------------------------------------------------ public surface guard
 
+    // ------------------------------------------------------------------ Admin Portal provider management
+
+    @Test
+    void adminTierPassesThroughOnAdminProviderListAndStatusChange() throws Exception {
+        for (String role : List.of("ADMIN", "SUPER_ADMIN")) {
+            SecurityContextHolder.clearContext();
+            authenticateAs(role);
+            for (String[] call : List.of(
+                    new String[] {"GET", "/admin/providers"},
+                    new String[] {"PATCH", "/admin/providers/" + providerId + "/status"})) {
+                FilterChain chain = mock(FilterChain.class);
+
+                MockHttpServletResponse response = invoke(call[0], call[1], chain);
+
+                assertThat(response.getStatus()).as(role + " " + call[0] + " " + call[1])
+                        .isEqualTo(HttpStatus.OK.value());
+                verify(chain, times(1)).doFilter(any(), any());
+            }
+        }
+    }
+
+    @Test
+    void nonAdminRolesAreForbiddenOnAdminProviderManagement() throws Exception {
+        for (String role : List.of("CUSTOMER", "SERVICE_PROVIDER", "SUPPORT_AGENT", "DISPATCHER",
+                "FINANCE_ADMIN")) {
+            SecurityContextHolder.clearContext();
+            authenticateAs(role);
+            for (String[] call : List.of(
+                    new String[] {"GET", "/admin/providers"},
+                    new String[] {"PATCH", "/admin/providers/" + providerId + "/status"})) {
+                FilterChain chain = mock(FilterChain.class);
+
+                assertThat(invoke(call[0], call[1], chain).getStatus())
+                        .as(role + " " + call[0] + " " + call[1])
+                        .isEqualTo(HttpStatus.FORBIDDEN.value());
+                verify(chain, never()).doFilter(any(), any());
+            }
+        }
+    }
+
+    @Test
+    void unauthenticatedAdminProviderListIsUnauthorized() throws Exception {
+        assertThat(invoke("GET", "/admin/providers", mock(FilterChain.class)).getStatus())
+                .isEqualTo(HttpStatus.UNAUTHORIZED.value());
+    }
+
     @Test
     void healthAndMetricsSurfacePassesThroughWithNoAuthentication() throws Exception {
         for (String path : List.of("/health/liveness", "/health/readiness", "/actuator/health",

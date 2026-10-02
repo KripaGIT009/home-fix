@@ -1,0 +1,372 @@
+name: Build services (reusable)
+
+# Builds, tests and packages a set of backend services and builds their images
+# from the real Dockerfiles. Called by ci.yml (push to main/release) and
+# pr-checks.yml (pull requests); not triggered on its own.
+#
+# Repository layout this relies on:
+#   shared/homefix-shared-{observability,security,resilience,outbox}
+#       Plain Maven jars (1.0.0-SNAPSHOT) every service depends on through the
+#       local repository. There is no aggregator pom, so they are `mvn install`ed
+#       first and handed to the service jobs as an artifact.
+#   services/<name>/pom.xml, services/<name>/Dockerfile
+#       Standalone Spring Boot projects (Java 21). `mvn verify` produces
+#       target/<name>-1.0.0-SNAPSHOT.jar, which is exactly what the Dockerfile
+#       COPYs; the image is built from that jar, never from a stale one.
+
+on:
+  workflow_call:
+    inputs:
+      services:
+        description: JSON array of directory names under services/ to build.
+        type: string
+        required: true
+      image-tag:
+        description: Tag for the built images (the full commit SHA).
+        type: string
+        required: true
+      min-line-coverage:
+        description: JaCoCo line-coverage floor in percent per service. 0 turns the gate off.
+        type: number
+        default: 0
+      push-images:
+        description: >
+          Push images to ECR after they pass the scan. Needs the ECR_REGISTRY,
+          AWS_REGION and AWS_CI_ROLE_ARN repository variables and the caller to
+          grant id-token: write.
+        type: boolean
+        default: false
+
+# No permissions key: jobs inherit the caller's token permissions. ci.yml grants
+# id-token: write (for the OIDC push); pr-checks.yml grants only contents: read,
+# and never pushes.
+
+env:
+  JAVA_VERSION: '21'
+  MAVEN_ARGS: --batch-mode --no-transfer-progress
+
+jobs:
+  # ─────────────────────────────────────────────
+  # Shared libraries → local Maven repository → artifact
+  # ─────────────────────────────────────────────
+  shared-libs:
+    name: Shared libraries
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Restore Maven repository
+        uses: actions/cache@v4
+        with:
+          # Our own artifacts are never cached: they must come from this commit.
+          path: |
+            ~/.m2/repository
+            !~/.m2/repository/com/homefix
+          key: m2-${{ runner.os }}-shared-${{ hashFiles('shared/*/pom.xml') }}
+          restore-keys: |
+            m2-${{ runner.os }}-shared-
+
+      - name: Build, test and install shared modules
+        run: |
+          # The four modules depend only on third-party artifacts, never on each
+          # other, so any order works; it is fixed to keep logs comparable.
+          for module in \
+            homefix-shared-observability \
+            homefix-shared-security \
+            homefix-shared-resilience \
+            homefix-shared-outbox; do
+            echo "::group::${module}"
+            mvn -f "shared/${module}/pom.xml" install
+            echo "::endgroup::"
+          done
+
+      - name: Stage installed artifacts
+        run: |
+          mkdir -p shared-m2
+          cp -R ~/.m2/repository/com/homefix/shared/. shared-m2/
+          find shared-m2 -name '*.jar' -print
+
+      - name: Upload shared libraries
+        uses: actions/upload-artifact@v4
+        with:
+          name: homefix-shared-m2
+          path: shared-m2/
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Upload shared test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports-shared
+          path: shared/*/target/surefire-reports/
+          retention-days: 7
+
+  # ─────────────────────────────────────────────
+  # One job per service: test → package → image → scan → (push)
+  # ─────────────────────────────────────────────
+  service:
+    name: ${{ matrix.service }}
+    needs: shared-libs
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        service: ${{ fromJSON(inputs.services) }}
+    env:
+      SERVICE: ${{ matrix.service }}
+      SERVICE_DIR: services/${{ matrix.service }}
+      LOCAL_IMAGE: homefix/${{ matrix.service }}:${{ inputs.image-tag }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Restore Maven repository
+        uses: actions/cache@v4
+        with:
+          # Keyed per service: each pulls a different dependency set, and a single
+          # shared key would only ever store whichever job saved first.
+          path: |
+            ~/.m2/repository
+            !~/.m2/repository/com/homefix
+          key: m2-${{ runner.os }}-svc-${{ matrix.service }}-${{ hashFiles(format('services/{0}/pom.xml', matrix.service), 'shared/*/pom.xml') }}
+          restore-keys: |
+            m2-${{ runner.os }}-svc-${{ matrix.service }}-
+            m2-${{ runner.os }}-shared-
+
+      - name: Download shared libraries
+        uses: actions/download-artifact@v4
+        with:
+          name: homefix-shared-m2
+          path: shared-m2
+
+      - name: Install shared libraries into the local repository
+        run: |
+          mkdir -p ~/.m2/repository/com/homefix/shared
+          cp -R shared-m2/. ~/.m2/repository/com/homefix/shared/
+          rm -rf shared-m2
+
+      - name: Build, test and package
+        run: mvn -f "${SERVICE_DIR}/pom.xml" verify
+
+      - name: Enforce line coverage (>= ${{ inputs.min-line-coverage }}%)
+        if: inputs.min-line-coverage > 0
+        env:
+          MIN_COVERAGE: ${{ inputs.min-line-coverage }}
+        run: |
+          REPORT="${SERVICE_DIR}/target/site/jacoco/jacoco.csv"
+          if [ ! -f "${REPORT}" ]; then
+            echo "::error::No JaCoCo report at ${REPORT}; the coverage gate cannot pass without one."
+            exit 1
+          fi
+          # jacoco.csv columns 8 and 9 are LINE_MISSED and LINE_COVERED.
+          read -r MISSED COVERED < <(awk -F',' 'NR>1 {m += $8; c += $9} END {print m+0, c+0}' "${REPORT}")
+          TOTAL=$((MISSED + COVERED))
+          if [ "${TOTAL}" -eq 0 ]; then
+            echo "::error::JaCoCo measured no lines for ${SERVICE}."
+            exit 1
+          fi
+          COVERAGE=$(awk -v c="${COVERED}" -v t="${TOTAL}" 'BEGIN {printf "%.2f", c * 100 / t}')
+          echo "Line coverage for ${SERVICE}: ${COVERAGE}% (floor ${MIN_COVERAGE}%)"
+          echo "| ${SERVICE} | ${COVERAGE}% |" >> "$GITHUB_STEP_SUMMARY"
+          if awk -v c="${COVERAGE}" -v m="${MIN_COVERAGE}" 'BEGIN {exit !(c < m)}'; then
+            echo "::error::Line coverage ${COVERAGE}% is below the ${MIN_COVERAGE}% floor."
+            exit 1
+          fi
+
+      - name: Check the jar the Dockerfile copies was produced
+        run: |
+          JAR=$(sed -n 's#^COPY[[:space:]]\{1,\}\(target/[^[:space:]]*\.jar\)[[:space:]].*#\1#p' "${SERVICE_DIR}/Dockerfile" | head -n 1)
+          if [ -z "${JAR}" ]; then
+            echo "::error file=${SERVICE_DIR}/Dockerfile::No 'COPY target/<name>.jar' line found."
+            exit 1
+          fi
+          if [ ! -f "${SERVICE_DIR}/${JAR}" ]; then
+            echo "::error file=${SERVICE_DIR}/Dockerfile::The Dockerfile copies ${JAR}, which the build did not produce."
+            ls -l "${SERVICE_DIR}/target" || true
+            exit 1
+          fi
+          ls -l "${SERVICE_DIR}/${JAR}"
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports-${{ matrix.service }}
+          path: |
+            services/${{ matrix.service }}/target/surefire-reports/
+            services/${{ matrix.service }}/target/site/jacoco/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: jar-${{ matrix.service }}
+          path: services/${{ matrix.service }}/target/${{ matrix.service }}-*.jar
+          if-no-files-found: error
+          retention-days: 7
+
+      # booking-service is the Pact consumer; its tests write the contracts the
+      # providers verify. The contract-drift job compares them with the
+      # providers' committed copies.
+      - name: Upload generated pacts
+        if: matrix.service == 'booking-service'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pacts-booking-service
+          path: services/booking-service/target/pacts/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: services/${{ matrix.service }}
+          file: services/${{ matrix.service }}/Dockerfile
+          load: true
+          push: false
+          tags: ${{ env.LOCAL_IMAGE }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.title=${{ matrix.service }}
+          # No layer cache: the only layer of ours is the freshly built jar, and
+          # caching 20 copies of the JRE base would crowd the Maven caches out.
+
+      - name: Scan image (fails on fixable CRITICAL vulnerabilities)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.LOCAL_IMAGE }}
+          format: table
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+
+      - name: Check push configuration
+        if: inputs.push-images
+        env:
+          ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          AWS_CI_ROLE_ARN: ${{ vars.AWS_CI_ROLE_ARN }}
+        run: |
+          missing=()
+          for v in ECR_REGISTRY AWS_REGION AWS_CI_ROLE_ARN; do
+            [ -n "${!v}" ] || missing+=("$v")
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Image push is enabled but these repository variables are not set: ${missing[*]}"
+            exit 1
+          fi
+
+      - name: Configure AWS credentials (OIDC)
+        if: inputs.push-images
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_CI_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        if: inputs.push-images
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Push image
+        if: inputs.push-images
+        env:
+          REMOTE_IMAGE: ${{ vars.ECR_REGISTRY }}/${{ matrix.service }}:${{ inputs.image-tag }}
+        run: |
+          docker tag "${LOCAL_IMAGE}" "${REMOTE_IMAGE}"
+          docker push "${REMOTE_IMAGE}"
+          echo "Pushed ${REMOTE_IMAGE}" >> "$GITHUB_STEP_SUMMARY"
+
+  # ─────────────────────────────────────────────
+  # Pact drift: the providers verify committed copies of the consumer contracts
+  # (@PactFolder), so a consumer change that is not copied across would never be
+  # verified. Compare what booking-service generated with those copies.
+  # ─────────────────────────────────────────────
+  contract-drift:
+    name: Pact contracts in sync
+    needs: service
+    if: contains(fromJSON(inputs.services), 'booking-service')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download generated pacts
+        uses: actions/download-artifact@v4
+        with:
+          name: pacts-booking-service
+          path: generated-pacts
+
+      - name: Compare with the providers' committed copies
+        shell: python
+        run: |
+          import glob, json, os, sys
+
+          # Example values in bodies can be generated per run (UUIDs, timestamps), so
+          # body/content leaves are compared by JSON type only; structure, matching
+          # rules, generators, paths, methods, statuses and headers must match exactly.
+          def shape(node):
+              if isinstance(node, dict):
+                  return {k: shape(v) for k, v in node.items()}
+              if isinstance(node, list):
+                  return [shape(v) for v in node]
+              return type(node).__name__
+
+          def normalise(pact):
+              pact = dict(pact)
+              pact.pop("metadata", None)
+              for key in ("interactions", "messages"):
+                  items = []
+                  for item in pact.get(key, []):
+                      item = json.loads(json.dumps(item))
+                      for part in (item, item.get("request", {}), item.get("response", {})):
+                          for field in ("body", "contents"):
+                              if field in part:
+                                  part[field] = shape(part[field])
+                      items.append(item)
+                  if key in pact:
+                      pact[key] = sorted(items, key=lambda i: i.get("description", ""))
+              return pact
+
+          generated = sorted(glob.glob("generated-pacts/*.json"))
+          if not generated:
+              print("::error::booking-service produced no pact files.")
+              sys.exit(1)
+          failed = False
+          for path in generated:
+              pact = json.load(open(path))
+              provider = pact["provider"]["name"]
+              committed = f"services/{provider}/src/test/resources/pacts/{os.path.basename(path)}"
+              if not os.path.exists(committed):
+                  print(f"::error::{provider} has no committed copy of {os.path.basename(path)} at {committed}.")
+                  failed = True
+                  continue
+              if normalise(pact) != normalise(json.load(open(committed))):
+                  print(f"::error file={committed}::Out of date with the contract booking-service now generates. "
+                        f"Copy services/booking-service/target/pacts/{os.path.basename(path)} over it.")
+                  failed = True
+              else:
+                  print(f"{committed}: in sync")
+          sys.exit(1 if failed else 0)

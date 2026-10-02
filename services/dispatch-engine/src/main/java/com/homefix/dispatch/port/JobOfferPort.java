@@ -1,5 +1,7 @@
 package com.homefix.dispatch.port;
 
+import com.homefix.dispatch.domain.DispatchRequest;
+
 import java.time.Duration;
 import java.util.UUID;
 
@@ -19,6 +21,15 @@ public interface JobOfferPort {
      *         {@link OfferOutcome#REJECTED}, or {@link OfferOutcome#TIMED_OUT}
      */
     OfferOutcome offer(UUID bookingId, UUID providerId, Duration timeout);
+
+    /**
+     * As {@link #offer(UUID, UUID, Duration)}, with the whole dispatch request available so an
+     * adapter can show the provider what they are being offered (emergency flag, reference, slot).
+     * Adapters that need only the ids inherit this.
+     */
+    default OfferOutcome offer(DispatchRequest request, UUID providerId, Duration timeout) {
+        return offer(request.bookingId(), providerId, timeout);
+    }
 
     /** The outcome of a single job offer. */
     enum OfferOutcome {

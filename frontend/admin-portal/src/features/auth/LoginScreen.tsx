@@ -9,6 +9,7 @@ import BoltRoundedIcon from '@mui/icons-material/BoltRounded';
 import { BrandLogo } from '@components/BrandLogo';
 import { useAuthStore } from '@stores/authStore';
 import { isApiError } from '@api/client';
+import { canAccessPath } from '@config/navFilter';
 import { brand } from '@lib/theme';
 import { OTP_EXPIRY_SECONDS } from './constants';
 import { getLockoutInfo } from './lockout';
@@ -64,6 +65,8 @@ export function LoginScreen() {
   const navigate = useNavigate();
   const location = useLocation();
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const roles = useAuthStore((state) => state.user?.roles);
+  const signOutNotice = useAuthStore((state) => state.signOutNotice);
 
   const [method, setMethod] = useState<Method>('password');
   const [step, setStep] = useState<'mobile' | 'otp'>('mobile');
@@ -74,10 +77,14 @@ export function LoginScreen() {
   const verifyOtp = useVerifyOtp();
   const expiry = useCountdown(0);
 
+  // Back to where the user was headed, if their roles open it; otherwise "/",
+  // which resolves to their own landing module. Defaulting to the Dashboard
+  // would strand support agents, dispatchers and finance on a Forbidden screen.
   const redirectTo = useMemo(() => {
     const state = location.state as RedirectState | null;
-    return state?.from?.pathname ?? '/dashboard';
-  }, [location.state]);
+    const from = state?.from?.pathname;
+    return from && canAccessPath(roles ?? [], from) ? from : '/';
+  }, [location.state, roles]);
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -242,7 +249,10 @@ export function LoginScreen() {
           </Stack>
         </Stack>
 
-        <Typography variant="caption" sx={{ position: 'relative', color: 'rgba(255,255,255,0.55)' }}>
+        <Typography
+          variant="caption"
+          sx={{ position: 'relative', color: 'rgba(255,255,255,0.55)' }}
+        >
           © {new Date().getFullYear()} HomeFix. Internal staff console.
         </Typography>
       </Box>
@@ -282,6 +292,14 @@ export function LoginScreen() {
               {subheading}
             </Typography>
           </Stack>
+
+          {/* A session ended by the server (e.g. the account was suspended) says
+              why, instead of silently dropping the user back here. */}
+          {signOutNotice ? (
+            <Alert severity="warning" sx={{ mb: 2 }}>
+              {signOutNotice}
+            </Alert>
+          ) : null}
 
           {/* Hidden once a code is in flight: switching method there would throw
               away the code the user is part-way through typing. */}

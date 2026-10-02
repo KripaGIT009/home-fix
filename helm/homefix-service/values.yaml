@@ -1,40 +1,117 @@
 # Default values for the shared homefix-service chart.
-# Each microservice overrides these via values-<env>.yaml and/or --set flags.
+#
+# One chart, one release per Spring Boot service. A release is rendered from three
+# layers, most specific last:
+#
+#   values.yaml                       (this file: chart defaults)
+#   values-<environment>.yaml         (staging | production sizing)
+#   ../services/<service>.yaml        (port, dependencies, config, secret wiring)
+#
+# plus the per-deploy values the pipeline passes with --set:
+#   image.repository, image.tag, platform.redis.host, platform.redis.port,
+#   platform.kafka.bootstrapServers
+#
+# Example (what .github/workflows/deploy-services.yml runs):
+#   helm upgrade --install homefix-booking-service helm/homefix-service \
+#     -n <namespace> \
+#     -f helm/homefix-service/values-staging.yaml \
+#     -f helm/services/booking-service.yaml \
+#     --set image.repository=<registry>/booking-service --set image.tag=<git sha>
 
-# Service identity — override per service.
+# ── Identity ────────────────────────────────────────────────────────────────
+# Required, set by helm/services/<service>.yaml. Every resource (Deployment,
+# Service, ServiceAccount, ...) is named after it, so in-cluster DNS matches
+# docker-compose.core.yml (auth-service:8081, booking-service:8084, ...) and the
+# services' built-in URL defaults work unchanged. The ServiceAccount name also
+# matches the IRSA role subjects in infra/terraform/modules/iam.
+serviceName: ""
 nameOverride: ""
 fullnameOverride: ""
-serviceName: homefix-service
 
-# Deployment environment: staging | production (also used as a label).
-environment: staging
+# Required, set by values-<environment>.yaml: staging | production.
+environment: ""
+
+# Required, set by helm/services/<service>.yaml. The port the service listens on.
+# Injected as SERVER_PORT, and used by the container port, the Service, the probes
+# and the Prometheus annotations. Must equal the Dockerfile EXPOSE and the
+# SERVER_PORT in docker-compose.core.yml (CI checks the Dockerfile).
+containerPort: null
 
 replicaCount: 2
 
 image:
-  repository: placeholder
-  tag: latest
+  # Both required; passed by the pipeline (<registry>/<service>, <git sha>).
+  repository: ""
+  tag: ""
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
 
 serviceAccount:
   create: true
-  # IRSA role ARN — set per service to grant scoped AWS permissions.
+  # IRSA role ARN goes here per service/environment, e.g.
+  #   eks.amazonaws.com/role-arn: arn:aws:iam::<acct>:role/<prefix>-irsa-<service>
   annotations: {}
+  # Defaults to the service name.
   name: ""
+  # The services never call the Kubernetes API.
+  automountToken: false
 
-podAnnotations:
-  prometheus.io/scrape: "true"
-  prometheus.io/port: "8080"
-  prometheus.io/path: "/actuator/prometheus"
+# ── Platform dependencies ───────────────────────────────────────────────────
+# Which shared infrastructure the service needs. Set per service.
+dependencies:
+  # Adds DB_HOST/DB_PORT/DB_NAME/DB_USERNAME/DB_PASSWORD from the service Secret
+  # (keys db_host, db_port, db_name, db_username, db_password — the same keys as the
+  # Secrets Manager shells in infra/terraform/modules/secrets_manager) and builds
+  # DB_URL=jdbc:postgresql://$(DB_HOST):$(DB_PORT)/$(DB_NAME) from them.
+  postgres: false
+  # Adds REDIS_HOST / REDIS_PORT from platform.redis (required when true).
+  redis: false
+  # Adds KAFKA_BOOTSTRAP_SERVERS from platform.kafka (required when true).
+  kafka: false
 
-podLabels:
-  prometheus.io/scrape: "true"
+# Per-environment endpoints of the shared infrastructure. Not secrets; passed by
+# the deploy workflow from GitHub environment variables. Rendering fails if a
+# service declares a dependency whose endpoint is empty.
+platform:
+  redis:
+    host: ""
+    port: 6379
+  kafka:
+    bootstrapServers: ""
+
+# ── Secrets ─────────────────────────────────────────────────────────────────
+# The chart never creates or contains secret values. Each service reads from ONE
+# existing Secret in the release namespace (default "<serviceName>-secrets"),
+# created out of band — e.g. by External Secrets Operator from the
+# "<project>-<env>/<service>" entry in AWS Secrets Manager. Missing keys make the
+# pod fail to start (secretKeyRef is not optional).
+secrets:
+  name: ""
+  # ENV_VAR_NAME: secret-key, set per service.
+  env: {}
+
+# ── Configuration ───────────────────────────────────────────────────────────
+# Non-secret environment, rendered into a ConfigMap and loaded with envFrom.
+# Merged across the three values layers.
+config: {}
+
+# Extra env entries appended verbatim (e.g. additional valueFrom refs).
+extraEnv: []
+
+podAnnotations: {}
+podLabels: {}
+
+# Prometheus scrape annotations, rendered with the service's own port.
+# Every service exposes Micrometer at /prometheus (management base-path "/").
+metrics:
+  prometheusAnnotations: true
+  path: /prometheus
 
 podSecurityContext:
   runAsNonRoot: true
   runAsUser: 1000
+  runAsGroup: 1000
   fsGroup: 1000
   seccompProfile:
     type: RuntimeDefault
@@ -48,13 +125,9 @@ securityContext:
 
 service:
   type: ClusterIP
-  port: 80
-  targetPort: 8080
-  # Named port used by ServiceMonitor scrape config.
+  # Defaults to containerPort, so callers use the same host:port as in compose.
+  port: null
   portName: http
-
-# Container port the Spring Boot app listens on.
-containerPort: 8080
 
 resources:
   requests:
@@ -72,39 +145,33 @@ autoscaling:
   targetCPUUtilizationPercentage: 70
   targetMemoryUtilizationPercentage: 80
 
-# Liveness / readiness probes hitting Spring Boot Actuator.
+# Spring Boot health groups. management.endpoints.web.base-path is "/" in every
+# service and probes are enabled, so these live on the server port at
+# /health/liveness and /health/readiness (the same paths the compose
+# healthchecks use).
 probes:
   liveness:
-    path: /actuator/health/liveness
-    initialDelaySeconds: 30
+    path: /health/liveness
+    initialDelaySeconds: 0
     periodSeconds: 10
     timeoutSeconds: 3
     failureThreshold: 3
   readiness:
-    path: /actuator/health/readiness
-    initialDelaySeconds: 15
+    path: /health/readiness
+    initialDelaySeconds: 0
     periodSeconds: 10
     timeoutSeconds: 3
     failureThreshold: 3
+  # Gives a cold JVM up to ~3 minutes before liveness takes over.
   startup:
-    path: /actuator/health
+    path: /health/liveness
     initialDelaySeconds: 10
     periodSeconds: 5
     timeoutSeconds: 3
-    failureThreshold: 30
+    failureThreshold: 36
 
-# Non-secret configuration surfaced as a ConfigMap and mounted as env vars.
-config:
-  SPRING_PROFILES_ACTIVE: staging
-  JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=75.0"
-  OTEL_TRACES_EXPORTER: otlp
-  OTEL_METRICS_EXPORTER: none
-  OTEL_LOGS_EXPORTER: none
-
-# Extra env vars (e.g. valueFrom secretKeyRef) appended verbatim.
-extraEnv: []
-
-# Volumes required because readOnlyRootFilesystem is true (tmp + Spring work dir).
+# readOnlyRootFilesystem is on, so /tmp (Tomcat work dir, multipart uploads)
+# needs a writable emptyDir.
 tmpVolumes:
   enabled: true
 
@@ -112,11 +179,11 @@ nodeSelector: {}
 tolerations: []
 affinity: {}
 
-# Spread replicas across zones/nodes for availability.
+# Spread replicas across zones for availability.
 topologySpreadConstraints:
   enabled: true
 
-# PodDisruptionBudget to keep at least one replica during voluntary disruptions.
+# PodDisruptionBudget to keep replicas during voluntary disruptions.
 podDisruptionBudget:
   enabled: true
   minAvailable: 1

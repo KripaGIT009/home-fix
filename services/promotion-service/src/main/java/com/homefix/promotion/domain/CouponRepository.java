@@ -1,8 +1,10 @@
 package com.homefix.promotion.domain;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 /**
@@ -15,4 +17,7 @@ public interface CouponRepository extends JpaRepository<Coupon, UUID> {
     Optional<Coupon> findByCode(String code);
 
     boolean existsByCode(String code);
+
+    /** Coupons newest first, bounded by {@code page}: the Admin Portal list (Requirement 19.2). */
+    List<Coupon> findAllByOrderByCreatedAtDesc(Pageable page);
 }

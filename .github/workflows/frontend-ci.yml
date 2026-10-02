@@ -1,4 +1,9 @@
-name: Frontend CI — Lint, Type-check, Build
+name: Frontend CI — Format, Lint, Type-check, Build, Image
+
+# The three React/Vite apps under frontend/. Each is checked with its own
+# package.json scripts, then its Dockerfile is built (not pushed) so a broken
+# image fails here rather than in docker compose. Nothing here deploys the SPAs:
+# there is no chart or hosting for them in this repository yet.
 
 on:
   push:
@@ -15,31 +20,31 @@ on:
     paths:
       - 'frontend/**'
       - '.github/workflows/frontend-ci.yml'
-  workflow_dispatch:
-    inputs:
-      app:
-        description: 'Frontend app directory under frontend/ (e.g. customer-app)'
-        required: true
-        default: 'customer-app'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
 
 concurrency:
   group: frontend-ci-${{ github.ref }}
   cancel-in-progress: true
 
 env:
+  # Matches the Dockerfiles (node:20-alpine) and "engines": {"node": ">=20"}.
   NODE_VERSION: '20'
 
 jobs:
   build:
-    name: Lint, Type-check & Build — ${{ matrix.app }}
+    name: ${{ matrix.app }}
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
+      fail-fast: false
       matrix:
         app:
           - customer-app
           - provider-app
           - admin-portal
-      fail-fast: false
     defaults:
       run:
         working-directory: frontend/${{ matrix.app }}
@@ -60,18 +65,34 @@ jobs:
       - name: Prettier format check
         run: npm run format:check
 
-      - name: ESLint
+      - name: ESLint (zero warnings)
         run: npm run lint
 
-      - name: Type-check
-        run: npm run typecheck
+      # `npm run typecheck` is `tsc --noEmit` against tsconfig.json, which is a
+      # solution file with "files": [] and only project references — it checks
+      # nothing. `tsc -b` follows the references (tsconfig.app.json and
+      # tsconfig.node.json, both noEmit) and is what `npm run build` runs first.
+      - name: Type-check (all project references)
+        run: npx --no-install tsc -b --pretty
 
       - name: Build
         run: npm run build
 
       - name: Upload build artifact
-        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.app }}-dist
           path: frontend/${{ matrix.app }}/dist/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (not pushed)
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend/${{ matrix.app }}
+          file: frontend/${{ matrix.app }}/Dockerfile
+          push: false
+          tags: homefix/${{ matrix.app }}:${{ github.sha }}

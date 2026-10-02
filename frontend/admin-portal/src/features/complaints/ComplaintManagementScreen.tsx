@@ -18,14 +18,19 @@ import { DataTable, type Column } from '@components/DataTable';
 import { StatusChip } from '@components/StatusChip';
 import { formatDateTime } from '@lib/format';
 import { useComplaints, useUpdateComplaint } from './hooks';
-import { isSlaBreached, type AdminComplaint, type ComplaintStatus } from './api';
+import {
+  COMPLAINT_STATUSES,
+  complaintTransitions,
+  isSlaBreached,
+  isTerminalComplaint,
+  type AdminComplaint,
+  type ComplaintStatus,
+} from './api';
 
-const STATUS_OPTIONS: ReadonlyArray<ComplaintStatus> = [
-  'OPEN',
-  'IN_PROGRESS',
-  'RESOLVED',
-  'DISPUTED',
-];
+/** "REFUND_FAILED" -> "refund failed", matching the StatusChip label. */
+function statusLabel(status: ComplaintStatus): string {
+  return status.replace(/_/g, ' ').toLowerCase();
+}
 
 /**
  * Complaint Management module (Requirement 19.2). Lists complaints with search
@@ -41,8 +46,8 @@ export function ComplaintManagementScreen() {
   const complaintsQuery = useComplaints(search, status);
 
   const columns: Column<AdminComplaint>[] = [
-    { key: 'booking', header: 'Booking', render: (row) => row.bookingReference },
-    { key: 'raisedBy', header: 'Raised by', render: (row) => row.raisedByName },
+    { key: 'booking', header: 'Booking', render: (row) => row.bookingReference ?? '—' },
+    { key: 'raisedBy', header: 'Raised by', render: (row) => row.raisedByName ?? '—' },
     { key: 'category', header: 'Category', render: (row) => row.category },
     { key: 'summary', header: 'Summary', render: (row) => row.summary },
     { key: 'status', header: 'Status', render: (row) => <StatusChip status={row.status} /> },
@@ -99,9 +104,9 @@ export function ComplaintManagementScreen() {
           sx={{ minWidth: 180 }}
         >
           <MenuItem value="">All statuses</MenuItem>
-          {STATUS_OPTIONS.map((option) => (
+          {COMPLAINT_STATUSES.map((option) => (
             <MenuItem key={option} value={option}>
-              {option.replace(/_/g, ' ').toLowerCase()}
+              {statusLabel(option)}
             </MenuItem>
           ))}
         </TextField>
@@ -138,6 +143,11 @@ function ManageDialog({ complaint, onClose }: ManageDialogProps) {
   const [nextStatus, setNextStatus] = useState<ComplaintStatus>(complaint.status);
   const [note, setNote] = useState('');
 
+  // The current status stays selectable so a note can be added without moving
+  // the complaint; the rest are only the moves the Complaint Service accepts.
+  const terminal = isTerminalComplaint(complaint.status);
+  const statusOptions = [complaint.status, ...complaintTransitions(complaint.status)];
+
   const noteRequired = nextStatus === 'RESOLVED';
   const noteInvalid = noteRequired && !note.trim();
   const [touched, setTouched] = useState(false);
@@ -153,7 +163,9 @@ function ManageDialog({ complaint, onClose }: ManageDialogProps) {
 
   return (
     <Dialog open onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>Complaint — {complaint.bookingReference}</DialogTitle>
+      <DialogTitle>
+        {complaint.bookingReference ? `Complaint — ${complaint.bookingReference}` : 'Complaint'}
+      </DialogTitle>
       <DialogContent dividers>
         <Stack spacing={2}>
           <TextField
@@ -162,10 +174,18 @@ function ManageDialog({ complaint, onClose }: ManageDialogProps) {
             value={nextStatus}
             onChange={(event) => setNextStatus(event.target.value as ComplaintStatus)}
             fullWidth
+            disabled={terminal}
+            helperText={
+              terminal
+                ? `This complaint is ${statusLabel(complaint.status)} and can't be reopened; you can still add a note.`
+                : undefined
+            }
           >
-            {STATUS_OPTIONS.map((option) => (
+            {statusOptions.map((option) => (
               <MenuItem key={option} value={option}>
-                {option.replace(/_/g, ' ').toLowerCase()}
+                {option === complaint.status
+                  ? `${statusLabel(option)} (current)`
+                  : statusLabel(option)}
               </MenuItem>
             ))}
           </TextField>

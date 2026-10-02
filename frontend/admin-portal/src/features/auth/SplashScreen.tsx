@@ -9,7 +9,8 @@ const SPLASH_DURATION_MS = 1200;
 
 /**
  * Splash screen: shows HomeFix Admin branding briefly, then routes
- * authenticated admins to the Dashboard and everyone else to Login.
+ * authenticated staff to their landing module ("/" resolves it per role) and
+ * everyone else to Login.
  */
 export function SplashScreen() {
   const navigate = useNavigate();
@@ -17,7 +18,7 @@ export function SplashScreen() {
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      navigate(isAuthenticated ? '/dashboard' : '/login', { replace: true });
+      navigate(isAuthenticated ? '/' : '/login', { replace: true });
     }, SPLASH_DURATION_MS);
     return () => clearTimeout(timer);
   }, [navigate, isAuthenticated]);

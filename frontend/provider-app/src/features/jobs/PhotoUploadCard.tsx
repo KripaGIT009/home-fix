@@ -71,13 +71,30 @@ export function PhotoUploadCard({
           <ImageList cols={3} gap={8} sx={{ mt: 1.5, mb: 0 }}>
             {photos.map((photo) => (
               <ImageListItem key={photo.id}>
-                <Box
-                  component="img"
-                  src={photo.url}
-                  alt={`${kind === 'BEFORE' ? 'Before' : 'After'} photo`}
-                  loading="lazy"
-                  sx={{ borderRadius: 1, aspectRatio: '1 / 1', objectFit: 'cover' }}
-                />
+                {photo.url ? (
+                  <Box
+                    component="img"
+                    src={photo.url}
+                    alt={`${kind === 'BEFORE' ? 'Before' : 'After'} photo`}
+                    loading="lazy"
+                    sx={{ borderRadius: 1, aspectRatio: '1 / 1', objectFit: 'cover' }}
+                  />
+                ) : (
+                  // Stored photos are not served back yet: show that one is on file.
+                  <Box
+                    role="img"
+                    aria-label={`${kind === 'BEFORE' ? 'Before' : 'After'} photo uploaded`}
+                    sx={{
+                      borderRadius: 1,
+                      aspectRatio: '1 / 1',
+                      bgcolor: 'action.hover',
+                      display: 'grid',
+                      placeItems: 'center',
+                    }}
+                  >
+                    <CheckCircleRoundedIcon color="success" />
+                  </Box>
+                )}
               </ImageListItem>
             ))}
           </ImageList>

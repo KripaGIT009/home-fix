@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Accordion,
@@ -6,14 +7,15 @@ import {
   Box,
   Card,
   CardActionArea,
-  CardContent,
   Stack,
   Typography,
 } from '@mui/material';
 import ExpandMoreRoundedIcon from '@mui/icons-material/ExpandMoreRounded';
 import ReceiptLongRoundedIcon from '@mui/icons-material/ReceiptLongRounded';
 import BoltRoundedIcon from '@mui/icons-material/BoltRounded';
+import ArrowForwardRoundedIcon from '@mui/icons-material/ArrowForwardRounded';
 import { AppShell } from '@components/AppShell';
+import { IconTile } from '@components/StateViews';
 import { brand } from '@lib/theme';
 
 /**
@@ -44,7 +46,7 @@ const FAQS = [
 ] as const;
 
 /**
- * Help & support screen reached from the bottom navigation. Answers the common
+ * Help & support screen reached from the main navigation. Answers the common
  * questions inline and routes the two things a customer in trouble actually
  * wants: the booking a problem relates to, and the emergency path.
  */
@@ -53,56 +55,52 @@ export function HelpScreen() {
 
   return (
     <AppShell>
-      <Stack spacing={2}>
+      <Stack spacing={{ xs: 3, md: 4 }}>
         <Box>
-          <Typography variant="h4" component="h1">
-            Help &amp; support
+          <Typography variant="h2" component="h1">
+            How can we help?
           </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-            Answers to the questions we get most, and a way through to us.
+          <Typography variant="body1" color="text.secondary" sx={{ mt: 0.5 }}>
+            Answers to the questions we get most, and a quick way to the right place.
           </Typography>
         </Box>
 
-        <Stack direction="row" spacing={1.5}>
+        <Box
+          sx={{
+            display: 'grid',
+            gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))' },
+            gap: 1.5,
+          }}
+        >
           <ActionCard
             icon={<ReceiptLongRoundedIcon />}
-            title="A booking issue"
-            caption="Open the job"
+            title="A problem with a booking"
+            caption="Open the job to track it, chat or get the invoice"
             onClick={() => navigate('/history')}
           />
           <ActionCard
             icon={<BoltRoundedIcon />}
             title="Emergency help"
-            caption="Book 24×7 now"
+            caption="Book a 24×7 service and get a pro now"
             tone="danger"
             onClick={() => navigate('/home')}
           />
-        </Stack>
+        </Box>
 
-        <Box>
-          <Typography variant="overline" color="text.secondary">
+        <Box component="section" aria-labelledby="faq-title">
+          <Typography id="faq-title" variant="h4" component="h2" sx={{ mb: 2 }}>
             Frequently asked
           </Typography>
-          <Stack spacing={1} sx={{ mt: 1 }}>
+          <Stack spacing={1.25}>
             {FAQS.map((faq) => (
-              <Accordion
-                key={faq.question}
-                disableGutters
-                elevation={0}
-                sx={{
-                  border: `1px solid ${brand.line}`,
-                  borderRadius: 3,
-                  '&::before': { display: 'none' },
-                  '&.Mui-expanded': { margin: 0 },
-                }}
-              >
-                <AccordionSummary expandIcon={<ExpandMoreRoundedIcon />}>
-                  <Typography variant="subtitle1" fontWeight={600}>
+              <Accordion key={faq.question} disableGutters elevation={0}>
+                <AccordionSummary expandIcon={<ExpandMoreRoundedIcon />} sx={{ px: 2.5, py: 0.5 }}>
+                  <Typography variant="subtitle1" fontWeight={700}>
                     {faq.question}
                   </Typography>
                 </AccordionSummary>
-                <AccordionDetails>
-                  <Typography variant="body2" color="text.secondary">
+                <AccordionDetails sx={{ px: 2.5, pb: 2.5, pt: 0 }}>
+                  <Typography variant="body1" color="text.secondary">
                     {faq.answer}
                   </Typography>
                 </AccordionDetails>
@@ -123,7 +121,7 @@ function ActionCard({
   onClick,
   tone = 'primary',
 }: {
-  icon: React.ReactNode;
+  icon: ReactNode;
   title: string;
   caption: string;
   onClick: () => void;
@@ -131,30 +129,30 @@ function ActionCard({
 }) {
   const isDanger = tone === 'danger';
   return (
-    <Card sx={{ flex: 1 }}>
-      <CardActionArea onClick={onClick} sx={{ height: '100%' }} aria-label={title}>
-        <CardContent>
-          <Box
-            sx={{
-              width: 40,
-              height: 40,
-              borderRadius: 2,
-              display: 'grid',
-              placeItems: 'center',
-              mb: 1.25,
-              bgcolor: isDanger ? brand.redSoft : brand.accentSoft,
-              color: isDanger ? 'error.main' : 'primary.main',
-            }}
+    <Card sx={{ borderColor: isDanger ? '#F7D4D0' : undefined }}>
+      <CardActionArea
+        onClick={onClick}
+        sx={{ height: '100%', p: { xs: 2, md: 2.5 } }}
+        aria-label={title}
+      >
+        <Stack direction="row" spacing={2} alignItems="center">
+          <IconTile
+            size={48}
+            bg={isDanger ? brand.redSoft : brand.accentSoft}
+            color={isDanger ? brand.red : brand.accent}
           >
             {icon}
+          </IconTile>
+          <Box sx={{ flexGrow: 1 }}>
+            <Typography variant="subtitle1" fontWeight={700} lineHeight={1.3}>
+              {title}
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              {caption}
+            </Typography>
           </Box>
-          <Typography variant="subtitle1" fontWeight={700} lineHeight={1.3}>
-            {title}
-          </Typography>
-          <Typography variant="caption" color="text.secondary">
-            {caption}
-          </Typography>
-        </CardContent>
+          <ArrowForwardRoundedIcon sx={{ color: 'text.disabled' }} aria-hidden />
+        </Stack>
       </CardActionArea>
     </Card>
   );

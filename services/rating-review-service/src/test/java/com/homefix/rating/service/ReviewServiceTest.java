@@ -16,6 +16,7 @@ import org.springframework.http.HttpStatus;
 
 import com.homefix.rating.audit.AuditLogEntry;
 import com.homefix.rating.config.RatingProperties;
+import com.homefix.rating.domain.ModerationStatus;
 import com.homefix.rating.domain.Review;
 import com.homefix.rating.domain.ReviewPrompt;
 import com.homefix.rating.domain.ReviewerRole;
@@ -292,6 +293,108 @@ class ReviewServiceTest {
         assertThat(reviews.findById(flagged.getId()).orElseThrow().isFlagged()).isFalse();
         assertThat(providerRating.lastAggregate(provider)).isEqualByComparingTo("5.00");
         assertThat(publisher.published()).extracting(Review::getId).containsExactly(flagged.getId());
+    }
+
+    // ---- Admin Portal list and moderation (19.2) -----------------------------------------------
+
+    private Review stored(boolean flagged, Instant submittedAt) {
+        return reviews.save(Review.customerReview(UUID.randomUUID(), UUID.randomUUID(),
+                UUID.randomUUID(), 4, 4, 4, 4, 4, "good", "1.1.1.1", flagged, submittedAt));
+    }
+
+    @Test
+    void adminListFiltersByDerivedStatusNewestFirst() {
+        Review published = stored(false, NOW.minus(Duration.ofDays(3)));
+        Review flagged = stored(true, NOW.minus(Duration.ofDays(2)));
+        Review removed = stored(true, NOW.minus(Duration.ofDays(1)));
+        removed.deactivate();
+        ReviewService service = serviceAt(NOW);
+
+        assertThat(service.listForAdmin(null)).extracting(Review::getId)
+                .containsExactly(removed.getId(), flagged.getId(), published.getId());
+        assertThat(service.listForAdmin(ModerationStatus.FLAGGED)).extracting(Review::getId)
+                .containsExactly(flagged.getId());
+        assertThat(service.listForAdmin(ModerationStatus.PUBLISHED)).extracting(Review::getId)
+                .containsExactly(published.getId());
+        assertThat(service.listForAdmin(ModerationStatus.REMOVED)).extracting(Review::getId)
+                .containsExactly(removed.getId());
+        assertThat(service.listForAdmin(ModerationStatus.PENDING)).isEmpty();
+    }
+
+    @Test
+    void adminListIsBounded() {
+        for (int i = 0; i < ReviewService.ADMIN_LIST_LIMIT + 3; i++) {
+            stored(false, NOW.minusSeconds(i));
+        }
+
+        assertThat(serviceAt(NOW).listForAdmin(null)).hasSize(ReviewService.ADMIN_LIST_LIMIT);
+    }
+
+    @Test
+    void moderatePublishApprovesTheFlaggedReviewIntoTheAggregate() {
+        Review flagged = stored(true, NOW.minus(Duration.ofDays(1)));
+
+        Review result = serviceAt(NOW).moderate(flagged.getId(), ModerationAction.PUBLISH,
+                UUID.randomUUID(), null);
+
+        assertThat(ModerationStatus.of(result)).isEqualTo(ModerationStatus.PUBLISHED);
+        assertThat(providerRating.lastAggregate(flagged.getRevieweeId())).isEqualByComparingTo("4.00");
+        assertThat(publisher.published()).extracting(Review::getId).containsExactly(flagged.getId());
+    }
+
+    @Test
+    void moderateRemoveDeactivatesRecalculatesAndAudits() {
+        UUID provider = UUID.randomUUID();
+        reviews.save(Review.customerReview(UUID.randomUUID(), UUID.randomUUID(), provider,
+                5, 5, 5, 5, 5, null, "1.1.1.1", false, NOW.minus(Duration.ofDays(2))));
+        Review offending = reviews.save(Review.customerReview(UUID.randomUUID(), UUID.randomUUID(),
+                provider, 1, 1, 1, 1, 1, "abuse", "2.2.2.2", false, NOW.minus(Duration.ofDays(1))));
+        UUID admin = UUID.randomUUID();
+
+        Review result = serviceAt(NOW).moderate(offending.getId(), ModerationAction.REMOVE, admin,
+                "abusive language");
+
+        assertThat(ModerationStatus.of(result)).isEqualTo(ModerationStatus.REMOVED);
+        // Only the 5-star review still counts.
+        assertThat(providerRating.lastAggregate(provider)).isEqualByComparingTo("5.00");
+        assertThat(auditLog.findAll()).singleElement().satisfies(entry -> {
+            assertThat(entry.getActorId()).isEqualTo(admin);
+            assertThat(entry.getReason()).isEqualTo("abusive language");
+        });
+    }
+
+    @Test
+    void moderateRemoveRequiresAReason() {
+        Review review = stored(false, NOW);
+
+        assertThatThrownBy(() -> serviceAt(NOW).moderate(review.getId(), ModerationAction.REMOVE,
+                UUID.randomUUID(), " "))
+                .isInstanceOf(ReviewException.class)
+                .extracting(e -> ((ReviewException) e).getErrorCode()).isEqualTo("VALIDATION_ERROR");
+        assertThat(review.isActive()).isTrue();
+    }
+
+    @Test
+    void removedReviewCannotBePublishedAndRemovingAgainIsANoOp() {
+        Review review = stored(false, NOW);
+        ReviewService service = serviceAt(NOW);
+        service.moderate(review.getId(), ModerationAction.REMOVE, UUID.randomUUID(), "spam");
+
+        assertThatThrownBy(() -> service.moderate(review.getId(), ModerationAction.PUBLISH,
+                UUID.randomUUID(), null))
+                .isInstanceOf(ReviewException.class)
+                .extracting(e -> ((ReviewException) e).getStatus()).isEqualTo(HttpStatus.CONFLICT);
+
+        service.moderate(review.getId(), ModerationAction.REMOVE, UUID.randomUUID(), "spam again");
+        assertThat(auditLog.findAll()).hasSize(1);
+    }
+
+    @Test
+    void moderatingAnUnknownReviewIsNotFound() {
+        assertThatThrownBy(() -> serviceAt(NOW).moderate(UUID.randomUUID(),
+                ModerationAction.PUBLISH, UUID.randomUUID(), null))
+                .isInstanceOf(ReviewException.class)
+                .extracting(e -> ((ReviewException) e).getStatus()).isEqualTo(HttpStatus.NOT_FOUND);
     }
 
     // ---- Payload validation (15.3) -------------------------------------------------------------

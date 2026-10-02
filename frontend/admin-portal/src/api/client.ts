@@ -26,6 +26,8 @@ export class ApiError extends Error {
 }
 
 interface BackendErrorBody {
+  /** The backend's shared error envelope names the field errorCode. */
+  errorCode?: string;
   code?: string;
   message?: string;
   error?: string;
@@ -38,13 +40,29 @@ function toApiError(error: AxiosError<BackendErrorBody>): ApiError {
 
   return new ApiError({
     status,
-    code: body?.code ?? (status === 0 ? 'NETWORK_ERROR' : 'UNKNOWN_ERROR'),
+    code: body?.errorCode ?? body?.code ?? (status === 0 ? 'NETWORK_ERROR' : 'UNKNOWN_ERROR'),
     message:
       body?.message ??
       body?.error ??
       (status === 0 ? 'Unable to reach the server. Check your connection.' : error.message),
     ...(correlationId ? { correlationId } : {}),
   });
+}
+
+/**
+ * A request made with `responseType: 'blob'` (the report export) receives its
+ * error envelope as a Blob too, which toApiError cannot read. Decode a JSON
+ * blob in place so the service's message and errorCode survive.
+ */
+async function decodeBlobErrorBody(error: AxiosError<BackendErrorBody>): Promise<void> {
+  const response = error.response;
+  const data: unknown = response?.data;
+  if (!response || !(data instanceof Blob) || !data.type.includes('json')) return;
+  try {
+    response.data = JSON.parse(await data.text()) as BackendErrorBody;
+  } catch {
+    // Unreadable body: fall back to the generic message.
+  }
 }
 
 /**
@@ -107,6 +125,7 @@ authClient.interceptors.request.use(withCorrelationId);
 apiClient.interceptors.response.use(
   (response) => response,
   async (error: AxiosError<BackendErrorBody>) => {
+    await decodeBlobErrorBody(error);
     const apiError = toApiError(error);
     if (apiError.status !== 401) {
       throw apiError;

@@ -13,10 +13,16 @@ import java.util.UUID;
  *
  * <p>The location and skill fields are deliberately boxed. The Booking Service owns booking facts
  * and publishes {@code addressId} and {@code subcategoryId}, not denormalised coordinates or skill
- * tags, so these arrive absent and the Dispatch Engine resolves them itself before matching. When
- * they were primitives, an absent coordinate silently deserialised to {@code 0.0} and every
- * candidate was scored against the Gulf of Guinea; boxed types make "not supplied" observable, and
- * {@link #requiresEnrichment()} is what the consumer asks instead of guessing.
+ * tags, so these arrive absent and the
+ * {@link com.homefix.dispatch.service.BookingEnrichmentService} resolves them from the Customer
+ * Service and the Service Catalog before matching. When they were primitives, an absent coordinate
+ * silently deserialised to {@code 0.0} and every candidate was scored against the Gulf of Guinea;
+ * boxed types make "not supplied" observable, so the enrichment step looks up exactly what is
+ * missing instead of guessing. An event that does carry them (an older or test producer) is
+ * matched on them as-is.
+ *
+ * <p>{@code reference} and {@code scheduledAt} are carried through to the job offer so the provider
+ * can see which booking and which slot they are being offered; both may be absent.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record BookingCreatedEvent(
@@ -28,14 +34,15 @@ public record BookingCreatedEvent(
         Double customerLon,
         List<String> requiredSkillTags,
         boolean emergency,
-        Instant occurredAt) {
+        Instant occurredAt,
+        String reference,
+        Instant scheduledAt) {
 
-    /**
-     * Whether the Dispatch Engine must resolve the customer location or the required skills before
-     * it can match a provider. True for every event the Booking Service publishes today.
-     */
-    public boolean requiresEnrichment() {
-        return customerLat == null || customerLon == null
-                || requiredSkillTags == null || requiredSkillTags.isEmpty();
+    /** An event without the display-only {@code reference} and {@code scheduledAt}. */
+    public BookingCreatedEvent(UUID bookingId, UUID customerId, UUID subcategoryId, UUID addressId,
+                               Double customerLat, Double customerLon, List<String> requiredSkillTags,
+                               boolean emergency, Instant occurredAt) {
+        this(bookingId, customerId, subcategoryId, addressId, customerLat, customerLon,
+                requiredSkillTags, emergency, occurredAt, null, null);
     }
 }

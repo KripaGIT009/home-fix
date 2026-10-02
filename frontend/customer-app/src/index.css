@@ -10,7 +10,8 @@ body,
 }
 
 body {
-  background-color: #f5f7fb;
+  background-color: #f7f8fa;
+  text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   /* The app is tap-driven; the grey flash on touch reads as a rendering bug. */

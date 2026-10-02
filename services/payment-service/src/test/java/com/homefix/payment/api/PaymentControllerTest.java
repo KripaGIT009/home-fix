@@ -2,6 +2,8 @@ package com.homefix.payment.api;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -31,6 +33,7 @@ import com.homefix.payment.domain.PaymentMethod;
 import com.homefix.payment.domain.PaymentTransaction;
 import com.homefix.payment.domain.Settlement;
 import com.homefix.payment.gateway.RazorpayGatewayAdapter;
+import com.homefix.payment.service.GatewayCallback;
 import com.homefix.payment.service.InitiatePaymentCommand;
 import com.homefix.payment.service.PaymentException;
 import com.homefix.payment.service.PaymentService;
@@ -157,6 +160,95 @@ class PaymentControllerTest {
                 .andExpect(jsonPath("$.status").value("PENDING"));
     }
 
+    // ------------------------------------------------------------------ callback and refund wiring
+
+    @Test
+    void callback_forwardsOnlyTheSignedFields_andIgnoresLegacyUnsignedOutcome() throws Exception {
+        PaymentTransaction tx = pending(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
+        GatewayCallback expected = new GatewayCallback("razorpay", "{\"signed\":true}", "abc123");
+        when(paymentService.handleGatewayCallback(tx.getId(), expected)).thenReturn(tx);
+
+        // A legacy client still sending the old unsigned outcome fields: they must have no effect.
+        String body = """
+                {"gatewayId":"razorpay","payload":"{\\"signed\\":true}","signature":"abc123",
+                 "succeeded":false,"failureReason":"forged"}
+                """;
+
+        mvc.perform(post("/payments/callbacks/" + tx.getId())
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(tx.getId().toString()));
+        verify(paymentService).handleGatewayCallback(tx.getId(), expected);
+    }
+
+    @Test
+    void callback_missingSignature_returns400() throws Exception {
+        String body = """
+                {"gatewayId":"razorpay","payload":"{}"}
+                """;
+
+        mvc.perform(post("/payments/callbacks/" + UUID.randomUUID())
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("VALIDATION_ERROR"));
+    }
+
+    @Test
+    void refund_forwardsAmountAndIdempotencyKey() throws Exception {
+        PaymentTransaction tx = pending(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
+        when(paymentService.refund(tx.getId(), new BigDecimal("40.00"), "rf-1")).thenReturn(tx);
+
+        mvc.perform(post("/payments/" + tx.getId() + "/refunds")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"amount\":\"40.00\",\"idempotencyKey\":\"rf-1\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(tx.getId().toString()));
+    }
+
+    @Test
+    void refund_amountWithMoreThanTwoDecimals_returns400() throws Exception {
+        mvc.perform(post("/payments/" + UUID.randomUUID() + "/refunds")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"amount\":\"33.334\",\"idempotencyKey\":\"rf-1\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("VALIDATION_ERROR"));
+        verify(paymentService, never()).refund(any(), any(), any());
+    }
+
+    @Test
+    void initiate_amountWithMoreThanTwoDecimals_returns400() throws Exception {
+        String body = """
+                {"customerId":"%s","bookingId":"%s","providerId":"%s","amount":"33.334",
+                 "method":"UPI","gatewayId":"razorpay"}
+                """.formatted(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
+
+        mvc.perform(post("/payments").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("VALIDATION_ERROR"));
+        verify(paymentService, never()).initiatePayment(any());
+    }
+
+    @Test
+    void reconcile_forwardsTransactionAndRefundIds() throws Exception {
+        PaymentTransaction tx = pending(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
+        UUID refundId = UUID.randomUUID();
+        when(paymentService.reconcileRefund(tx.getId(), refundId)).thenReturn(tx);
+        authenticate(UUID.randomUUID(), "FINANCE_ADMIN");
+
+        mvc.perform(post("/payments/" + tx.getId() + "/refunds/" + refundId + "/reconcile"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(tx.getId().toString()));
+    }
+
+    @Test
+    void refund_withoutIdempotencyKey_returns400() throws Exception {
+        mvc.perform(post("/payments/" + UUID.randomUUID() + "/refunds")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"amount\":\"40.00\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("VALIDATION_ERROR"));
+    }
+
     // ------------------------------------------------------------------ ownership
 
     @Test
@@ -194,6 +286,34 @@ class PaymentControllerTest {
         authenticate(staffId, "FINANCE_ADMIN");
 
         mvc.perform(get("/payments/" + tx.getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(tx.getId().toString()));
+    }
+
+    /** Review finding: any customer could push another customer's PENDING payment towards FAILED. */
+    @Test
+    void retry_otherCustomersTransaction_isForbidden_andNotRecorded() throws Exception {
+        UUID callerA = UUID.randomUUID();
+        UUID callerB = UUID.randomUUID();
+        PaymentTransaction tx = pending(callerB, UUID.randomUUID(), UUID.randomUUID());
+        when(paymentService.getTransaction(tx.getId())).thenReturn(tx);
+        authenticate(callerA, "CUSTOMER");
+
+        mvc.perform(post("/payments/" + tx.getId() + "/retries").param("failureReason", "declined"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode").value("FORBIDDEN"));
+        verify(paymentService, never()).retryPayment(any(), any());
+    }
+
+    @Test
+    void retry_ownTransaction_isRecorded() throws Exception {
+        UUID callerA = UUID.randomUUID();
+        PaymentTransaction tx = pending(callerA, UUID.randomUUID(), UUID.randomUUID());
+        when(paymentService.getTransaction(tx.getId())).thenReturn(tx);
+        when(paymentService.retryPayment(tx.getId(), "declined")).thenReturn(tx);
+        authenticate(callerA, "CUSTOMER");
+
+        mvc.perform(post("/payments/" + tx.getId() + "/retries").param("failureReason", "declined"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(tx.getId().toString()));
     }

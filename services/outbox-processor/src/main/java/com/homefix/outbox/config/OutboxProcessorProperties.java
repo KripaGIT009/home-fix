@@ -16,11 +16,22 @@ import org.springframework.boot.context.properties.NestedConfigurationProperty;
 @ConfigurationProperties(prefix = "homefix.outbox-processor")
 public class OutboxProcessorProperties {
 
-    /** Maximum number of PENDING rows fetched and relayed per poll cycle. */
+    /** Maximum number of due PENDING rows claimed and relayed per poll cycle. */
     private int batchSize = 100;
 
     /** Interval between poll cycles. */
     private Duration pollInterval = Duration.ofSeconds(1);
+
+    /**
+     * How long a claim keeps a row out of every other relay instance's claims. Must comfortably
+     * exceed {@link #publishTimeout} plus the producer's {@code max.block.ms}: a relay only starts
+     * a publish while at least {@code publishTimeout} of its lease remains, and a relay that dies
+     * mid-batch leaves its unpublished rows invisible for at most this long.
+     */
+    private Duration claimLease = Duration.ofMinutes(2);
+
+    /** Maximum wait for the broker ACK of one publish before it counts as a failed attempt. */
+    private Duration publishTimeout = Duration.ofSeconds(30);
 
     @NestedConfigurationProperty
     private Retry retry = new Retry();
@@ -44,6 +55,22 @@ public class OutboxProcessorProperties {
         this.pollInterval = pollInterval;
     }
 
+    public Duration getClaimLease() {
+        return claimLease;
+    }
+
+    public void setClaimLease(Duration claimLease) {
+        this.claimLease = claimLease;
+    }
+
+    public Duration getPublishTimeout() {
+        return publishTimeout;
+    }
+
+    public void setPublishTimeout(Duration publishTimeout) {
+        this.publishTimeout = publishTimeout;
+    }
+
     public Retry getRetry() {
         return retry;
     }
@@ -60,7 +87,10 @@ public class OutboxProcessorProperties {
         this.topics = topics;
     }
 
-    /** Exponential-backoff retry policy for publish failures (Requirement 22.4). */
+    /**
+     * Exponential-backoff retry policy for publish failures (Requirement 22.4). The delay is
+     * persisted on the row as its next attempt time, never slept in-line.
+     */
     public static class Retry {
         /** Delay before the first retry; doubled each subsequent attempt. */
         private Duration initialInterval = Duration.ofSeconds(1);

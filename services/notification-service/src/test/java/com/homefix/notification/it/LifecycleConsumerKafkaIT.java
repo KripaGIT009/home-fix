@@ -16,6 +16,7 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 import com.homefix.notification.consumer.LifecycleEventConsumer;
+import com.homefix.notification.contact.ContactDirectoryPort;
 import com.homefix.notification.delivery.NotificationDeliveryService;
 import com.homefix.notification.domain.NotificationEvent;
 import com.homefix.shared.outbox.kafka.DlqForwarder;
@@ -123,6 +124,11 @@ class LifecycleConsumerKafkaIT {
     // stage before it (listener, dedup, retry, DLQ) is the real production code.
     @MockBean
     private NotificationDeliveryService deliveryService;
+
+    // Contact lookup goes to the Auth Service over HTTP; stubbed here (an unknown user resolves to
+    // an empty contact) so the test needs no Auth Service. The adapter has its own HTTP test.
+    @MockBean
+    private ContactDirectoryPort contactDirectory;
 
     private Consumer<String, String> dltConsumer;
 
@@ -235,11 +241,9 @@ class LifecycleConsumerKafkaIT {
     }
 
     private static String payloadFor(UUID recipient) {
+        // BookingCreated as booking-service publishes it: ids only, no contact details.
         return "{\"bookingId\":\"" + UUID.randomUUID() + "\","
-                + "\"bookingReference\":\"HF-IT-0001\","
-                + "\"customerId\":\"" + recipient + "\","
-                + "\"mobileNumber\":\"+15551234567\","
-                + "\"emailAddress\":\"it@example.com\","
-                + "\"deviceToken\":\"device-token-it\"}";
+                + "\"reference\":\"HF-IT-0001\","
+                + "\"customerId\":\"" + recipient + "\"}";
     }
 }

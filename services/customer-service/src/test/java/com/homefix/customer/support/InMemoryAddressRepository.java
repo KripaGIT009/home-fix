@@ -1,6 +1,7 @@
 package com.homefix.customer.support;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -44,6 +45,9 @@ public class InMemoryAddressRepository implements AddressRepository {
     @Override
     public List<Address> findByCustomerIdAndIsActiveTrueOrderByCreatedAtDesc(UUID customerId) {
         List<Address> list = new ArrayList<>(findByCustomerIdAndIsActiveTrue(customerId));
+        // Addresses added in quick succession can share a createdAt. Reverse insertion order first
+        // so the stable sort breaks those ties newest-first, as the real insert order would.
+        Collections.reverse(list);
         list.sort(Comparator.comparing(Address::getCreatedAt).reversed());
         return list;
     }

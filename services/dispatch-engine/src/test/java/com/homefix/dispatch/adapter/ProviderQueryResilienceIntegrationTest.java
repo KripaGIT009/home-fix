@@ -86,7 +86,7 @@ class ProviderQueryResilienceIntegrationTest {
         DispatchClientProperties props = new DispatchClientProperties();
         props.setProviderServiceBaseUrl("http://127.0.0.1:" + port);
         ResilienceFactory factory = new ResilienceFactory();
-        HttpProviderQueryAdapter adapter = new HttpProviderQueryAdapter(props, factory);
+        HttpProviderQueryAdapter adapter = new HttpProviderQueryAdapter(props, factory, "test-internal-key");
 
         DispatchRequest request = new DispatchRequest(
                 UUID.randomUUID(), UUID.randomUUID(), 12.9, 77.6,

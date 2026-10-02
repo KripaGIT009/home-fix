@@ -1,5 +1,6 @@
 package com.homefix.outbox.support;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -19,7 +20,8 @@ import org.springframework.data.domain.Sort;
 
 /**
  * Minimal in-memory {@link OutboxEventRepository} for pure unit tests — no Spring, JPA, or
- * database. Implements only the methods the relay and poller actually call; the remaining
+ * database, hence no row locks or optimistic versioning (the H2-backed {@code OutboxClaimJpaTest}
+ * covers those). Implements only the methods the claimer, relay and poller call; the remaining
  * {@link OutboxEventRepository}/{@code JpaRepository} surface throws to make accidental use
  * obvious.
  */
@@ -42,6 +44,17 @@ public class InMemoryOutboxEventRepository implements OutboxEventRepository {
         int from = (int) Math.min(pageable.getOffset(), matches.size());
         int to = Math.min(from + pageable.getPageSize(), matches.size());
         return new ArrayList<>(matches.subList(from, to));
+    }
+
+    @Override
+    public List<OutboxEventEntity> claimDue(Instant now, Pageable pageable) {
+        List<OutboxEventEntity> due = store.values().stream()
+                .filter(e -> e.getStatus() == OutboxEventStatus.PENDING)
+                .filter(e -> e.getNextAttemptAt() == null || !e.getNextAttemptAt().isAfter(now))
+                .sorted(Comparator.comparing(OutboxEventEntity::getCreatedAt))
+                .limit(pageable.getPageSize())
+                .toList();
+        return new ArrayList<>(due);
     }
 
     @Override
@@ -69,7 +82,9 @@ public class InMemoryOutboxEventRepository implements OutboxEventRepository {
 
     @Override
     public <S extends OutboxEventEntity> List<S> saveAll(Iterable<S> entities) {
-        throw new UnsupportedOperationException();
+        List<S> saved = new ArrayList<>();
+        entities.forEach(e -> saved.add(save(e)));
+        return saved;
     }
 
     @Override

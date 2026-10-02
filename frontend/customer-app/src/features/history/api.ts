@@ -32,7 +32,8 @@ export interface BookingHistoryPage {
 
 /**
  * GET /bookings/history?page&pageSize — paginated booking history for the
- * authenticated Customer, newest first.
+ * authenticated Customer, newest first. `page` is 1-based; `pageSize` is at
+ * most 50.
  */
 export async function fetchBookingHistory(
   page: number,
@@ -44,16 +45,39 @@ export async function fetchBookingHistory(
   return data;
 }
 
-/** Detailed view of a single booking (Requirement 28.7). */
+/**
+ * Detailed view of a single booking (Requirement 28.7).
+ *
+ * The Booking Service omits null fields: `scheduledAt` and `providerId` are
+ * absent until set. `address`, `description`, `provider` and `invoice` are not
+ * owned by the Booking Service and are not sent today, so every screen treats
+ * them as optional and hides their sections when absent.
+ */
 export interface BookingDetail {
   bookingId: string;
   referenceNumber: string;
   status: BookingStatus;
+  /** Falls back to the literal "Service" when the catalog cannot resolve it. */
   serviceName: string;
   date: string;
   amount: number;
   currency?: string;
+  /** True for an emergency (dispatch-now) booking. */
+  emergency?: boolean;
+  /** ISO-8601 time the visit is scheduled for; absent for emergency bookings. */
+  scheduledAt?: string;
+  /** ISO-8601 time the booking was created. */
+  createdAt?: string;
+  /** The assigned provider's id, once one is assigned. */
+  providerId?: string;
+  /** The booked subcategory — used to resolve the service name and to book again. */
+  subcategoryId?: string;
+  /** The service address as the customer entered it. */
   address?: string;
+  /** The service address's position — frames the live map and the ETA estimate. */
+  coordinates?: { latitude: number; longitude: number };
+  /** Parts and materials the professional has recorded (Requirement 11.3). */
+  parts?: Array<{ id: string; itemName: string; quantity: number; unitCost: number }>;
   description?: string;
   provider?: {
     displayName: string;
@@ -67,10 +91,23 @@ export interface BookingDetail {
   };
 }
 
-/** GET /bookings/{bookingId} — detailed booking view. */
+/**
+ * GET /bookings/{key} — detailed booking view. The key may be the booking id or
+ * its HFX- reference; a booking that is not the caller's is a 404.
+ */
 export async function fetchBookingDetail(bookingId: string): Promise<BookingDetail> {
   const { data } = await apiClient.get<BookingDetail>(`/bookings/${bookingId}`);
   return data;
+}
+
+/**
+ * POST /bookings/{key}/quote/approval or /quote/rejection — the customer's
+ * answer to an updated quote after the professional added parts (Requirement
+ * 9.7, 9.8). Approving resumes the job at the new price; declining completes
+ * it at the original price.
+ */
+export async function decideQuote(bookingId: string, approve: boolean): Promise<void> {
+  await apiClient.post(`/bookings/${bookingId}/quote/${approve ? 'approval' : 'rejection'}`);
 }
 
 /** A short-lived signed URL for downloading an invoice PDF (Requirement 13.3). */

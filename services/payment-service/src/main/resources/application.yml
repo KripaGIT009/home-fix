@@ -13,6 +13,14 @@ spring:
       hibernate:
         default_schema: payment
     open-in-view: false
+  # Schema migrations own the DDL; Hibernate only validates against it. V1 is the baseline
+  # schema, so on a database Hibernate already populated (ddl-auto=update, the old local default)
+  # Flyway records V1 as applied instead of re-creating tables that exist.
+  flyway:
+    schemas: payment
+    default-schema: payment
+    baseline-on-migrate: true
+    baseline-version: 1
   data:
     redis:
       host: ${REDIS_HOST:localhost}
@@ -43,6 +51,13 @@ homefix:
     idempotency-ttl: 24h
     # Idempotency store backend: 'redis' (production) or 'memory' (dev/test).
     idempotency-store: ${PAYMENT_IDEMPOTENCY_STORE:redis}
+    # Oldest signed gateway-callback timestamp accepted (Requirement 12.5); 0 disables the check.
+    callback-max-age: 72h
+    # Owed provider wallet credits (Requirement 12.10, 12.11): a credit not confirmed after the
+    # SUCCESS commit is re-sent by WalletCreditSweeper once it is at least min-age old (keep this
+    # well above the in-line retry window), checked every sweep-interval (ISO-8601 duration).
+    wallet-credit-sweep-min-age: 5m
+    wallet-credit-sweep-interval: PT1M
     gateways:
       razorpay:
         # Razorpay webhook signing secret (HMAC-SHA256). From AWS Secrets Manager in production.

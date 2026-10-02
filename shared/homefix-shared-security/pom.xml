@@ -112,6 +112,12 @@
                 <version>3.13.0</version>
                 <configuration>
                     <release>21</release>
+                    <!-- Retain parameter names in the bytecode. Spring resolves an unnamed
+                         @PathVariable/@RequestParam by reflecting on the parameter name, which
+                         javac drops without this; these services import the Spring Boot BOM but
+                         do not inherit spring-boot-starter-parent, which is what would otherwise
+                         set it. Without it such a handler fails at request time with a 500. -->
+                    <parameters>true</parameters>
                 </configuration>
             </plugin>
 

@@ -97,7 +97,10 @@ public class ProviderController {
         }
     }
 
-    /** {@code PUT /providers/{id}/profile} — categories, skills, experience, radius (Req 4.1–4.3, 4.8). */
+    /**
+     * {@code PUT /providers/{id}/profile} — categories, skills, experience, radius (Req 4.1–4.3,
+     * 4.8), and optionally the base service location dispatch measures distance from (Req 8.2).
+     */
     @PutMapping("/profile")
     public ResponseEntity<ProfileResponse> updateProfile(@PathVariable("id") String rawId,
                                                          @Valid @RequestBody ProfileRequest request) {
@@ -110,7 +113,8 @@ public class ProviderController {
                 .toList();
         ProviderProfile profile = providerService.updateProfile(id, new ProfileUpdateCommand(
                 request.displayName(), cats, request.skillTags(),
-                request.yearsExperience(), request.serviceRadiusKm()));
+                request.yearsExperience(), request.serviceRadiusKm(),
+                request.baseLatitude(), request.baseLongitude()));
         return ResponseEntity.ok(ProfileResponse.from(profile));
     }
 
