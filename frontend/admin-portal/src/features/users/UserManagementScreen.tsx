@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Box, Button, Stack, TextField } from '@mui/material';
+import { Alert, Box, Button, Stack, TextField } from '@mui/material';
 import { ModuleScreen } from '@components/ModuleScreen';
 import { QueryStateView } from '@components/QueryStateView';
 import { DataTable, type Column } from '@components/DataTable';
@@ -20,7 +20,7 @@ export function UserManagementScreen() {
   const updateStatus = useUpdateUserStatus();
 
   const columns: Column<AdminUser>[] = [
-    { key: 'name', header: 'Name', render: (row) => row.displayName },
+    { key: 'name', header: 'Name', render: (row) => row.displayName ?? '—' },
     { key: 'mobile', header: 'Mobile', render: (row) => row.mobileNumber },
     { key: 'email', header: 'Email', render: (row) => row.email ?? '—' },
     { key: 'roles', header: 'Roles', render: (row) => row.roles.join(', ') },
@@ -74,6 +74,14 @@ export function UserManagementScreen() {
           </Button>
         </Box>
       </Stack>
+
+      {/* Surfaces the service's refusals verbatim, e.g. changing your own
+          account or a Super Admin's without being one. */}
+      {updateStatus.isError ? (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {updateStatus.error.message}
+        </Alert>
+      ) : null}
 
       <QueryStateView
         isLoading={usersQuery.isLoading}

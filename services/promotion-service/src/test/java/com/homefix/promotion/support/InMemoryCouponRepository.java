@@ -43,6 +43,14 @@ public class InMemoryCouponRepository implements CouponRepository {
     }
 
     @Override
+    public List<Coupon> findAllByOrderByCreatedAtDesc(Pageable page) {
+        return byId.values().stream()
+                .sorted(java.util.Comparator.comparing(Coupon::getCreatedAt).reversed())
+                .limit(page.getPageSize())
+                .toList();
+    }
+
+    @Override
     public <S extends Coupon> S save(S entity) {
         byId.put(entity.getId(), entity);
         return entity;

@@ -1,24 +1,21 @@
 {{/*
-Expand the name of the chart / service.
-Prefers .Values.serviceName so every microservice gets a stable identity.
+Service name. Required: every release must say which service it is.
 */}}
 {{- define "homefix-service.name" -}}
-{{- default .Values.serviceName .Values.nameOverride | trunc 63 | trimSuffix "-" -}}
+{{- $svc := required "serviceName is required (set it in helm/services/<service>.yaml)" .Values.serviceName -}}
+{{- default $svc .Values.nameOverride | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
 {{/*
-Fully qualified app name.
+Resource name. Deliberately the bare service name (not "<release>-<name>"), so
+in-cluster DNS is <service>:<port> exactly as in docker-compose.core.yml and the
+services' built-in URL defaults resolve without extra wiring.
 */}}
 {{- define "homefix-service.fullname" -}}
 {{- if .Values.fullnameOverride -}}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}
 {{- else -}}
-{{- $name := default .Values.serviceName .Values.nameOverride -}}
-{{- if contains $name .Release.Name -}}
-{{- .Release.Name | trunc 63 | trimSuffix "-" -}}
-{{- else -}}
-{{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" -}}
-{{- end -}}
+{{- include "homefix-service.name" . -}}
 {{- end -}}
 {{- end -}}
 
@@ -30,15 +27,22 @@ Chart name and version label.
 {{- end -}}
 
 {{/*
+Port the service listens on.
+*/}}
+{{- define "homefix-service.port" -}}
+{{- required "containerPort is required (set it in helm/services/<service>.yaml)" .Values.containerPort | int -}}
+{{- end -}}
+
+{{/*
 Common labels applied to every resource.
 */}}
 {{- define "homefix-service.labels" -}}
 helm.sh/chart: {{ include "homefix-service.chart" . }}
 {{ include "homefix-service.selectorLabels" . }}
-app.kubernetes.io/version: {{ .Values.image.tag | default .Chart.AppVersion | quote }}
+app.kubernetes.io/version: {{ .Values.image.tag | default .Chart.AppVersion | trunc 63 | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 app.kubernetes.io/part-of: homefix
-environment: {{ .Values.environment | quote }}
+environment: {{ required "environment is required (values-staging.yaml or values-production.yaml)" .Values.environment | quote }}
 {{- end -}}
 
 {{/*
@@ -59,4 +63,11 @@ ServiceAccount name to use.
 {{- else -}}
 {{- default "default" .Values.serviceAccount.name -}}
 {{- end -}}
+{{- end -}}
+
+{{/*
+Name of the existing Secret the service reads credentials from.
+*/}}
+{{- define "homefix-service.secretName" -}}
+{{- default (printf "%s-secrets" (include "homefix-service.fullname" .)) .Values.secrets.name -}}
 {{- end -}}

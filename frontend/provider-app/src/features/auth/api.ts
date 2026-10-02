@@ -88,9 +88,19 @@ export function toSession(
   };
 }
 
-/** POST /auth/register/otp — request an OTP for the given mobile number. */
+/**
+ * POST /auth/register/otp — request an OTP for the given mobile number.
+ *
+ * Always asks for the SERVICE_PROVIDER role: without it the Auth Service
+ * registers a CUSTOMER, who could sign in here but would be refused by every
+ * provider endpoint. An existing account (say, a customer) gains the role
+ * alongside the ones it has (Requirement 1.14).
+ */
 export async function requestOtp(payload: RequestOtpPayload): Promise<RequestOtpResponse> {
-  const { data } = await authClient.post<RequestOtpResponse>('/auth/register/otp', payload);
+  const { data } = await authClient.post<RequestOtpResponse>('/auth/register/otp', {
+    ...payload,
+    role: 'SERVICE_PROVIDER',
+  });
   return data;
 }
 
@@ -120,9 +130,7 @@ export interface RefreshTokenPayload {
  * interceptor that triggers it. Refresh tokens are single-use and rotate, so
  * the caller must persist `refreshToken` from the response.
  */
-export async function refreshSession(
-  payload: RefreshTokenPayload,
-): Promise<AuthSessionResponse> {
+export async function refreshSession(payload: RefreshTokenPayload): Promise<AuthSessionResponse> {
   const { data } = await authClient.post<AuthSessionResponse>('/auth/token/refresh', payload);
   return data;
 }

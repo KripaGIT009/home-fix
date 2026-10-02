@@ -6,7 +6,7 @@ import { apiClient } from '@api/client';
  * Endpoints (see design.md — Provider Service PROVIDER_EARNINGS + SETTLEMENT
  * data models; Payment Service settlement transfer). The `me` provider is
  * resolved from the bearer token:
- * - GET  /providers/me/earnings?page&pageSize — paginated per-job earnings (Req 14.5)
+ * - GET  /providers/me/earnings?page&size     — paginated per-job earnings (Req 14.5)
  * - GET  /providers/me/settlement-info        — wallet balance + verified bank accounts (Req 14.2)
  * - POST /providers/me/settlements            — request a settlement (Req 14.2, 14.3)
  * - GET  /providers/me/settlements            — settlement request history (Req 14.3)
@@ -42,18 +42,65 @@ export interface EarningsHistoryPage {
   totalPages: number;
 }
 
+/** One earning row as the Provider Service sends it. */
+interface EarningResponse {
+  id: string;
+  bookingId: string | null;
+  bookingReference: string | null;
+  /** Ledger entry kind, e.g. `JOB_CREDIT`. */
+  type: string;
+  gross: number;
+  platformFee: number;
+  net: number;
+  creditedAt: string;
+}
+
+/** The Spring Data page envelope the Provider Service answers with (0-based `number`). */
+interface SpringPage<T> {
+  content: T[];
+  number: number;
+  size: number;
+  totalElements: number;
+  totalPages: number;
+}
+
+/** `JOB_CREDIT` → "Job credit": the ledger kind is the only label the row carries. */
+function describeEarningType(type: string): string {
+  const words = type.toLowerCase().split('_').filter(Boolean).join(' ');
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : 'Earning';
+}
+
 /**
- * GET /providers/me/earnings?page&pageSize — paginated per-job earnings history,
+ * GET /providers/me/earnings?page&size — paginated per-job earnings history,
  * newest first (Requirement 14.5).
+ *
+ * `page` is 1-based here, like the screen's pager; the Provider Service pages
+ * from 0 and answers with a Spring Data page, which is adapted to
+ * {@link EarningsHistoryPage} in this one place.
  */
 export async function fetchEarningsHistory(
   page: number,
   pageSize: number,
 ): Promise<EarningsHistoryPage> {
-  const { data } = await apiClient.get<EarningsHistoryPage>('/providers/me/earnings', {
-    params: { page, pageSize },
+  const { data } = await apiClient.get<SpringPage<EarningResponse>>('/providers/me/earnings', {
+    params: { page: page - 1, size: pageSize },
   });
-  return data;
+  return {
+    items: data.content.map((e) => ({
+      bookingId: e.bookingId ?? '',
+      reference: e.bookingReference ?? '',
+      serviceName: describeEarningType(e.type),
+      creditedAt: e.creditedAt,
+      gross: e.gross,
+      platformFee: e.platformFee,
+      net: e.net,
+      currency: 'INR',
+    })),
+    page: data.number + 1,
+    pageSize: data.size,
+    totalItems: data.totalElements,
+    totalPages: Math.max(data.totalPages, 1),
+  };
 }
 
 /** A verified bank account a settlement can be paid into (Requirement 14.2). */
@@ -75,8 +122,20 @@ export interface SettlementInfo {
 
 /** GET /providers/me/settlement-info — balance + bank accounts (Requirement 14.2). */
 export async function fetchSettlementInfo(): Promise<SettlementInfo> {
-  const { data } = await apiClient.get<SettlementInfo>('/providers/me/settlement-info');
-  return data;
+  const { data } = await apiClient.get<
+    Omit<SettlementInfo, 'bankAccounts'> & {
+      bankAccounts: Array<{ id: string; masked?: string; label?: string; verified: boolean }>;
+    }
+  >('/providers/me/settlement-info');
+  return {
+    ...data,
+    // The Provider Service calls the masked account text `masked`.
+    bankAccounts: (data.bankAccounts ?? []).map((a) => ({
+      id: a.id,
+      label: a.label ?? a.masked ?? 'Bank account',
+      verified: a.verified,
+    })),
+  };
 }
 
 /** Settlement request lifecycle states (Requirement 14.3). */

@@ -15,15 +15,18 @@ export function usePayments(search: string): UseQueryResult<AdminPayment[], ApiE
   });
 }
 
+/** A refund submission: the payment, what to refund, and its idempotency key. */
+export interface RefundVariables {
+  id: string;
+  payload: RefundPayload;
+  idempotencyKey: string;
+}
+
 /** Issue a full or partial refund against a payment. */
-export function useRefundPayment(): UseMutationResult<
-  AdminPayment,
-  ApiError,
-  { id: string; payload: RefundPayload }
-> {
+export function useRefundPayment(): UseMutationResult<AdminPayment, ApiError, RefundVariables> {
   const queryClient = useQueryClient();
-  return useMutation<AdminPayment, ApiError, { id: string; payload: RefundPayload }>({
-    mutationFn: ({ id, payload }) => refundPayment(id, payload),
+  return useMutation<AdminPayment, ApiError, RefundVariables>({
+    mutationFn: ({ id, payload, idempotencyKey }) => refundPayment(id, payload, idempotencyKey),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['admin', 'payments'] });
     },

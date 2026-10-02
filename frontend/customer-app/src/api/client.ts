@@ -26,25 +26,124 @@ export class ApiError extends Error {
 }
 
 interface BackendErrorBody {
+  /** The backend's shared error envelope names the field errorCode. */
+  errorCode?: string;
   code?: string;
   message?: string;
   error?: string;
 }
 
+/** Copy shown when the platform cannot be reached at all (offline, 502/503/504). */
+export const UNREACHABLE_MESSAGE =
+  "We can't reach HomeFix right now. Please try again in a moment.";
+/** Copy shown for an unexpected server failure (500). */
+export const SERVER_ERROR_MESSAGE = 'Something went wrong on our side. Please try again.';
+/** Copy shown when nothing more specific is known. */
+export const GENERIC_ERROR_MESSAGE = 'Something went wrong. Please try again.';
+
+/** Statuses that mean "the platform is unreachable", not "your request was wrong". */
+const UNREACHABLE_STATUSES = new Set([0, 502, 503, 504]);
+
+const UUID_PATTERN =
+  /\s*[:#]?\s*\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
+
+const REASON_PHRASES = new Set([
+  'bad request',
+  'unauthorized',
+  'forbidden',
+  'not found',
+  'method not allowed',
+  'conflict',
+  'unprocessable entity',
+  'too many requests',
+  'internal server error',
+  'bad gateway',
+  'service unavailable',
+  'gateway timeout',
+]);
+
+/**
+ * Removes internal identifiers from a server message so a customer never sees a
+ * raw UUID, and rejects messages that are really transport noise (axios's
+ * "Request failed with status code …", bare HTTP reason phrases).
+ */
+function sanitizeServerMessage(message: string | undefined): string | undefined {
+  if (!message) return undefined;
+  const cleaned = message
+    .replace(UUID_PATTERN, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  if (!cleaned || /request failed with status code/i.test(cleaned)) return undefined;
+  // A bare HTTP reason phrase ("Not Found", "Bad Request") explains nothing.
+  if (REASON_PHRASES.has(cleaned.toLowerCase().replace(/\.$/, ''))) return undefined;
+  return cleaned;
+}
+
+/** Fallback copy by status when the server sent nothing usable. */
+function fallbackMessage(status: number): string {
+  if (UNREACHABLE_STATUSES.has(status)) return UNREACHABLE_MESSAGE;
+  if (status >= 500) return SERVER_ERROR_MESSAGE;
+  switch (status) {
+    case 401:
+      return 'Your session has ended. Please sign in again.';
+    case 403:
+      return "You don't have access to this.";
+    case 404:
+      return "We couldn't find what you were looking for.";
+    case 429:
+      return 'Too many attempts. Please wait a moment and try again.';
+    default:
+      return GENERIC_ERROR_MESSAGE;
+  }
+}
+
+/**
+ * Human copy for a failed request. Outages and server faults always get calm,
+ * generic copy (the server's own text there is internal detail); client errors
+ * keep the server's message, which is written for the customer (validation,
+ * coupon rejection, OTP lockout), once internal ids are stripped.
+ */
+function toUserMessage(status: number, body: BackendErrorBody | undefined): string {
+  if (UNREACHABLE_STATUSES.has(status)) return UNREACHABLE_MESSAGE;
+  if (status >= 500) return SERVER_ERROR_MESSAGE;
+  return sanitizeServerMessage(body?.message) ?? fallbackMessage(status);
+}
+
 function toApiError(error: AxiosError<BackendErrorBody>): ApiError {
   const status = error.response?.status ?? 0;
-  const body = error.response?.data;
+  // A proxy in front of a stopped service answers with an HTML page, not JSON.
+  const rawBody = error.response?.data;
+  const body = rawBody && typeof rawBody === 'object' ? rawBody : undefined;
   const correlationId = error.config?.headers?.[CORRELATION_ID_HEADER] as string | undefined;
 
   return new ApiError({
     status,
-    code: body?.code ?? (status === 0 ? 'NETWORK_ERROR' : 'UNKNOWN_ERROR'),
-    message:
-      body?.message ??
-      body?.error ??
-      (status === 0 ? 'Unable to reach the server. Check your connection.' : error.message),
+    code:
+      body?.errorCode ??
+      body?.code ??
+      (status === 0
+        ? 'NETWORK_ERROR'
+        : UNREACHABLE_STATUSES.has(status)
+          ? 'SERVICE_UNAVAILABLE'
+          : 'UNKNOWN_ERROR'),
+    message: toUserMessage(status, body),
     ...(correlationId ? { correlationId } : {}),
   });
+}
+
+/** True when the error means the platform could not be reached (offline or 502/503/504). */
+export function isUnreachableError(error: unknown): boolean {
+  return isApiError(error) && UNREACHABLE_STATUSES.has(error.status);
+}
+
+/**
+ * The message to show a customer for any thrown value. ApiErrors already carry
+ * normalised copy; anything else (a render bug, a library error) gets generic
+ * copy rather than its developer-facing text.
+ */
+export function friendlyErrorMessage(error: unknown, fallback = GENERIC_ERROR_MESSAGE): string {
+  if (isApiError(error)) return error.message || fallback;
+  return fallback;
 }
 
 /**

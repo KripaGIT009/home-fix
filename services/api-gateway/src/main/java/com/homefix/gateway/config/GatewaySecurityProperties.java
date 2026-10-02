@@ -11,6 +11,9 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  *     https-enforced: true
  *     auth:
  *       introspect-uri: http://auth-service:8081/auth/introspect
+ *       introspection-cache:
+ *         ttl: 30s
+ *         max-entries: 10000
  *     rate-limit:
  *       customer-per-minute: 100
  *       provider-per-minute: 60
@@ -55,12 +58,75 @@ public class GatewaySecurityProperties {
         /** Absolute URI of the Auth Service {@code GET /auth/introspect} endpoint. */
         private String introspectUri = "http://localhost:8081/auth/introspect";
 
+        /**
+         * How long to wait for an introspection response before giving up.
+         *
+         * <p>Every authenticated request on the platform is introspected, so without a bound a
+         * slow Auth Service does not merely delay one call: it holds gateway connections open
+         * until they are exhausted and takes the whole platform down with it. A timeout turns
+         * that into a fast 401 for the affected requests instead.
+         */
+        private java.time.Duration introspectTimeout = java.time.Duration.ofSeconds(3);
+
+        /** Reuse of positive introspection results; see {@link IntrospectionCache}. */
+        private final IntrospectionCache introspectionCache = new IntrospectionCache();
+
         public String getIntrospectUri() {
             return introspectUri;
         }
 
         public void setIntrospectUri(String introspectUri) {
             this.introspectUri = introspectUri;
+        }
+
+        public java.time.Duration getIntrospectTimeout() {
+            return introspectTimeout;
+        }
+
+        public void setIntrospectTimeout(java.time.Duration introspectTimeout) {
+            this.introspectTimeout = introspectTimeout;
+        }
+
+        public IntrospectionCache getIntrospectionCache() {
+            return introspectionCache;
+        }
+    }
+
+    /**
+     * Short-lived reuse of <em>positive</em> introspection results
+     * ({@code com.homefix.gateway.auth.CachingTokenIntrospector}).
+     *
+     * <p>An active result is reused for at most {@link #ttl}, and never past the token's own
+     * expiry; inactive results and transport failures are never cached. The cost is revocation
+     * latency: should the Auth Service start revoking access tokens before they expire, the gateway
+     * honours that within {@code ttl}. Set {@code ttl} to {@code 0} to introspect every request.
+     */
+    public static class IntrospectionCache {
+        /** Upper bound on how long an active result is reused; {@code 0} disables the cache. */
+        private java.time.Duration ttl = java.time.Duration.ofSeconds(30);
+
+        /** Upper bound on the number of distinct tokens held. */
+        private long maxEntries = 10_000;
+
+        public java.time.Duration getTtl() {
+            return ttl;
+        }
+
+        public void setTtl(java.time.Duration ttl) {
+            this.ttl = ttl;
+        }
+
+        public long getMaxEntries() {
+            return maxEntries;
+        }
+
+        public void setMaxEntries(long maxEntries) {
+            this.maxEntries = maxEntries;
+        }
+
+        /** The cache is active only with a positive ttl and a positive size bound. */
+        public boolean isEnabled() {
+            return ttl != null && !ttl.isNegative() && !ttl.isZero() && maxEntries > 0;
         }
     }
 

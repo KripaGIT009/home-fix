@@ -3,7 +3,11 @@ package com.homefix.booking.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.math.BigDecimal;
@@ -15,12 +19,16 @@ import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import com.homefix.booking.domain.Booking;
+import com.homefix.booking.domain.BookingAudit;
 import com.homefix.booking.domain.BookingAuditRepository;
 import com.homefix.booking.domain.BookingRepository;
 import com.homefix.booking.domain.BookingStateMachine;
 import com.homefix.booking.domain.BookingStatus;
+import com.homefix.booking.event.BookingCancelledEvent;
+import com.homefix.shared.outbox.OutboxEventPublisher;
 
 /**
  * Tests for the transitions the Dispatch Engine requests (Requirements 8.6, 8.9).
@@ -30,7 +38,8 @@ import com.homefix.booking.domain.BookingStatus;
  * an endpoint that did not exist. The service now walks the legal two-step path and assigns the
  * provider, and both entry points tolerate the retries the caller's resilience stack performs.
  *
- * <p>The state machine, transition service and audit trail are real; only the repository is stubbed.
+ * <p>The state machine, transition service, audit trail and lifecycle-event publisher are real; only
+ * the repositories and the outbox writer are stubbed.
  */
 class DispatchOutcomeServiceTest {
 
@@ -38,6 +47,7 @@ class DispatchOutcomeServiceTest {
 
     private BookingRepository bookingRepository;
     private BookingAuditRepository auditRepository;
+    private OutboxEventPublisher outboxPublisher;
     private DispatchOutcomeService service;
 
     @BeforeEach
@@ -45,8 +55,10 @@ class DispatchOutcomeServiceTest {
         bookingRepository = mock(BookingRepository.class);
         auditRepository = mock(BookingAuditRepository.class);
         when(auditRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        outboxPublisher = mock(OutboxEventPublisher.class);
         service = new DispatchOutcomeService(bookingRepository,
-                new BookingTransitionService(new BookingStateMachine(), auditRepository, CLOCK));
+                new BookingTransitionService(new BookingStateMachine(), auditRepository,
+                        new BookingLifecycleEventPublisher(outboxPublisher, CLOCK), CLOCK));
     }
 
     private Booking searchingBooking() {
@@ -149,5 +161,45 @@ class DispatchOutcomeServiceTest {
 
         assertThatThrownBy(() -> service.markSearchingFailed(unknown))
                 .isInstanceOf(BookingException.class);
+    }
+
+    // ----- State-driven events (Requirement 22.1) -----
+
+    @Test
+    void acceptance_publishesNoProviderAssignedButStillAuditsTheIntermediateStep() {
+        Booking booking = searchingBooking();
+        UUID providerId = UUID.randomUUID();
+
+        service.markProviderAccepted(booking.getId(), providerId);
+        service.markProviderAccepted(booking.getId(), providerId); // redelivered callback
+
+        // PROVIDER_ASSIGNED is passed through inside one transaction, so nobody can observe it:
+        // announcing it would precede the Dispatch Engine's ProviderAccepted with a stale
+        // "assigned" notice. booking-service writes no outbox row for the acceptance at all.
+        verify(outboxPublisher, never()).publish(any(), any(), any(), any());
+
+        // The audit chain still records both steps (Property 9).
+        ArgumentCaptor<BookingAudit> audits = ArgumentCaptor.forClass(BookingAudit.class);
+        verify(auditRepository, times(2)).save(audits.capture());
+        assertThat(audits.getAllValues()).extracting(BookingAudit::getToState)
+                .containsExactly(BookingStatus.PROVIDER_ASSIGNED, BookingStatus.PROVIDER_ACCEPTED);
+    }
+
+    @Test
+    void searchingFailed_writesExactlyOneBookingCancelled() {
+        Booking booking = searchingBooking();
+
+        service.markSearchingFailed(booking.getId());
+        // A redelivered callback is a no-op and must not publish again.
+        service.markSearchingFailed(booking.getId());
+
+        ArgumentCaptor<Object> payload = ArgumentCaptor.forClass(Object.class);
+        verify(outboxPublisher, times(1)).publish(eq(BookingCancelledEvent.AGGREGATE_TYPE),
+                eq(booking.getId()), eq(BookingCancelledEvent.EVENT_TYPE), payload.capture());
+        BookingCancelledEvent event = (BookingCancelledEvent) payload.getValue();
+        assertThat(event.status()).isEqualTo(BookingStatus.SEARCHING_FAILED);
+        assertThat(event.previousStatus()).isEqualTo(BookingStatus.SEARCHING_PROVIDER);
+        assertThat(event.customerId()).isEqualTo(booking.getCustomerId());
+        verify(outboxPublisher, times(1)).publish(any(), any(), any(), any());
     }
 }

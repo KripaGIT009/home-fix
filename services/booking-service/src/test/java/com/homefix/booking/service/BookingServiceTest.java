@@ -4,8 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -21,6 +23,9 @@ import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.ArgumentCaptor;
 
 import com.homefix.booking.catalog.CatalogClientPort;
 import com.homefix.booking.config.BookingProperties;
@@ -31,9 +36,11 @@ import com.homefix.booking.domain.BookingStateMachine;
 import com.homefix.booking.domain.BookingStatus;
 import com.homefix.booking.domain.SagaStep;
 import com.homefix.booking.domain.SagaStepRepository;
+import com.homefix.booking.event.BookingCancelledEvent;
 import com.homefix.booking.event.BookingCreatedEvent;
 import com.homefix.booking.media.MediaStoragePort;
 import com.homefix.booking.pricing.PriceEstimate;
+import com.homefix.booking.pricing.PriceEstimateRequest;
 import com.homefix.booking.pricing.PricingClientPort;
 import com.homefix.booking.pricing.PricingUnavailableException;
 import com.homefix.shared.outbox.OutboxEventPublisher;
@@ -61,6 +68,8 @@ class BookingServiceTest {
     @BeforeEach
     void setUp() {
         bookingRepository = mock(BookingRepository.class);
+        // findByKey is a default method over findByReference/findById, which the tests stub.
+        lenient().when(bookingRepository.findByKey(any())).thenCallRealMethod();
         auditRepository = mock(BookingAuditRepository.class);
         sagaStepRepository = mock(SagaStepRepository.class);
         catalogClient = mock(CatalogClientPort.class);
@@ -78,7 +87,8 @@ class BookingServiceTest {
         BookingProperties props = new BookingProperties();
         BookingStateMachine sm = new BookingStateMachine();
         BookingTransitionService transitionService =
-                new BookingTransitionService(sm, auditRepository, CLOCK);
+                new BookingTransitionService(sm, auditRepository,
+                        new BookingLifecycleEventPublisher(outboxPublisher, CLOCK), CLOCK);
         BookingSagaOrchestrator saga = new BookingSagaOrchestrator(sagaStepRepository);
         BookingReferenceGenerator refGen = new BookingReferenceGenerator(bookingRepository, CLOCK);
         MediaService mediaService = new MediaService(mediaStorage,
@@ -97,12 +107,12 @@ class BookingServiceTest {
 
     private CreateBookingCommand scheduledCmd(Instant scheduledAt) {
         return new CreateBookingCommand(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
-                UUID.randomUUID(), false, scheduledAt, "leaky tap", List.of());
+                UUID.randomUUID(), false, scheduledAt, "leaky tap", null, List.of());
     }
 
     private CreateBookingCommand emergencyCmd() {
         return new CreateBookingCommand(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
-                UUID.randomUUID(), true, null, "burst pipe", List.of());
+                UUID.randomUUID(), true, null, "burst pipe", null, List.of());
     }
 
     // ----- scheduled create ------------------------------------------------
@@ -119,6 +129,56 @@ class BookingServiceTest {
         assertThat(result.estimate().total()).isEqualByComparingTo("799.00");
         // No event is published until confirmation (Requirement 7.5).
         verify(outboxPublisher, never()).publish(any(), any(), any(), any());
+    }
+
+    @Test
+    void scheduledCreatePricesWithTheCustomersCoupon() {
+        when(pricingClient.estimate(any())).thenReturn(estimate());
+        Instant scheduledAt = NOW.plus(Duration.ofHours(5));
+        CreateBookingCommand cmd = new CreateBookingCommand(UUID.randomUUID(), UUID.randomUUID(),
+                UUID.randomUUID(), UUID.randomUUID(), false, scheduledAt, "leaky tap", "SAVE10",
+                List.of());
+
+        service.createScheduled(cmd);
+
+        // The coupon shown on the estimate must reach the Pricing Engine, or the booking is
+        // re-priced without the discount the customer accepted (Requirement 6.10).
+        ArgumentCaptor<PriceEstimateRequest> request = ArgumentCaptor.forClass(PriceEstimateRequest.class);
+        verify(pricingClient).estimate(request.capture());
+        assertThat(request.getValue().couponCode()).isEqualTo("SAVE10");
+        assertThat(request.getValue().customerId()).isEqualTo(cmd.customerId());
+    }
+
+    @Test
+    void emergencyCreatePricesWithTheCustomersCoupon() {
+        when(pricingClient.estimate(any())).thenReturn(estimate());
+        CreateBookingCommand cmd = new CreateBookingCommand(UUID.randomUUID(), UUID.randomUUID(),
+                UUID.randomUUID(), UUID.randomUUID(), true, null, "burst pipe", "SAVE10", List.of());
+
+        service.createEmergency(cmd);
+
+        ArgumentCaptor<PriceEstimateRequest> request = ArgumentCaptor.forClass(PriceEstimateRequest.class);
+        verify(pricingClient).estimate(request.capture());
+        assertThat(request.getValue().couponCode()).isEqualTo("SAVE10");
+    }
+
+    @Test
+    void scheduledCreateWithoutCouponSendsNone() {
+        when(pricingClient.estimate(any())).thenReturn(estimate());
+
+        service.createScheduled(scheduledCmd(NOW.plus(Duration.ofHours(5))));
+
+        ArgumentCaptor<PriceEstimateRequest> request = ArgumentCaptor.forClass(PriceEstimateRequest.class);
+        verify(pricingClient).estimate(request.capture());
+        assertThat(request.getValue().couponCode()).isNull();
+    }
+
+    @Test
+    void blankCouponCodeIsTreatedAsNone() {
+        CreateBookingCommand cmd = new CreateBookingCommand(UUID.randomUUID(), UUID.randomUUID(),
+                UUID.randomUUID(), UUID.randomUUID(), false, NOW, null, "   ", List.of());
+
+        assertThat(cmd.couponCode()).isNull();
     }
 
     @Test
@@ -243,7 +303,8 @@ class BookingServiceTest {
         // Rebuild the service with a non-zero default fee.
         BookingStateMachine sm = new BookingStateMachine();
         BookingTransitionService transitionService =
-                new BookingTransitionService(sm, auditRepository, CLOCK);
+                new BookingTransitionService(sm, auditRepository,
+                        new BookingLifecycleEventPublisher(outboxPublisher, CLOCK), CLOCK);
         CancellationFeePolicy feePolicy = new CancellationFeePolicy(id -> Optional.empty(), props);
         BookingService svc = new BookingService(bookingRepository, catalogClient, pricingClient,
                 new MediaService(mediaStorage, mock(com.homefix.booking.domain.JobMediaRepository.class), props),
@@ -259,6 +320,8 @@ class BookingServiceTest {
 
         assertThat(cancelled.getStatus()).isEqualTo(BookingStatus.CANCELLED);
         assertThat(cancelled.getCancellationFee()).isEqualByComparingTo("75.00");
+        // The BookingCancelled event carries the fee that was applied (Requirement 9.17, 22.1).
+        assertThat(singleBookingCancelled(booking).cancellationFee()).isEqualByComparingTo("75.00");
     }
 
     @Test
@@ -268,5 +331,69 @@ class BookingServiceTest {
         assertThatThrownBy(() -> service.cancel(booking.getReference(),
                 Actor.user(booking.getCustomerId(), "CUSTOMER"), "x"))
                 .isInstanceOf(BookingException.class);
+        verify(outboxPublisher, never()).publish(any(), any(), any(), any());
+    }
+
+    @Test
+    void cancelFromCreatedIsRejectedByTheStateMachineAndPublishesNothing() {
+        // CREATED is fee-free in the policy but has no CANCELLED edge, so the transition itself
+        // rejects it after the fee is computed. No event may escape.
+        Booking booking = com.homefix.booking.support.Bookings.inState(BookingStatus.CREATED);
+        when(bookingRepository.findByReference(booking.getReference())).thenReturn(Optional.of(booking));
+        assertThatThrownBy(() -> service.cancel(booking.getReference(),
+                Actor.user(booking.getCustomerId(), "CUSTOMER"), "x"))
+                .isInstanceOf(InvalidTransitionException.class);
+        verify(outboxPublisher, never()).publish(any(), any(), any(), any());
+    }
+
+    // ----- BookingCancelled on every cancellation path (Requirement 22.1) ---
+
+    @ParameterizedTest
+    @ValueSource(strings = {"CUSTOMER", "SERVICE_PROVIDER", "ADMIN"})
+    void cancellationByAnyActorWritesExactlyOneBookingCancelled(String role) {
+        Booking booking = com.homefix.booking.support.Bookings.inState(BookingStatus.PROVIDER_ACCEPTED);
+        UUID providerId = UUID.randomUUID();
+        booking.setProviderId(providerId);
+        when(bookingRepository.findByReference(booking.getReference())).thenReturn(Optional.of(booking));
+        UUID actorId = switch (role) {
+            case "CUSTOMER" -> booking.getCustomerId();
+            case "SERVICE_PROVIDER" -> providerId;
+            default -> UUID.randomUUID();
+        };
+        Actor actor = Actor.user(actorId, role);
+
+        service.cancel(booking.getReference(), actor, "reason from " + role);
+
+        BookingCancelledEvent event = singleBookingCancelled(booking);
+        assertThat(event.bookingId()).isEqualTo(booking.getId());
+        assertThat(event.customerId()).isEqualTo(booking.getCustomerId());
+        assertThat(event.providerId()).isEqualTo(providerId);
+        assertThat(event.previousStatus()).isEqualTo(BookingStatus.PROVIDER_ACCEPTED);
+        assertThat(event.status()).isEqualTo(BookingStatus.CANCELLED);
+        assertThat(event.cancelledBy()).isEqualTo(actor.id());
+        assertThat(event.cancelledByRole()).isEqualTo(role);
+        assertThat(event.reason()).isEqualTo("reason from " + role);
+        assertThat(event.cancellationFee()).isEqualByComparingTo("0.00");
+    }
+
+    @Test
+    void genericTransitionToCancelledAlsoWritesBookingCancelled() {
+        Booking booking = com.homefix.booking.support.Bookings.inState(BookingStatus.SEARCHING_PROVIDER);
+        when(bookingRepository.findByReference(booking.getReference())).thenReturn(Optional.of(booking));
+
+        service.transition(booking.getReference(), BookingStatus.CANCELLED, Actor.system(), "ops");
+
+        BookingCancelledEvent event = singleBookingCancelled(booking);
+        assertThat(event.cancelledByRole()).isEqualTo("booking-service");
+        assertThat(event.cancelledBy()).isNull();
+    }
+
+    /** Asserts exactly one outbox write in total, a BookingCancelled for {@code booking}, and returns it. */
+    private BookingCancelledEvent singleBookingCancelled(Booking booking) {
+        ArgumentCaptor<Object> payload = ArgumentCaptor.forClass(Object.class);
+        verify(outboxPublisher, times(1)).publish(eq(BookingCancelledEvent.AGGREGATE_TYPE),
+                eq(booking.getId()), eq(BookingCancelledEvent.EVENT_TYPE), payload.capture());
+        verify(outboxPublisher, times(1)).publish(any(), any(), any(), any());
+        return (BookingCancelledEvent) payload.getValue();
     }
 }

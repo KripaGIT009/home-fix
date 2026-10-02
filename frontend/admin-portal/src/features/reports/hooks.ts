@@ -2,8 +2,10 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import type { UseMutationResult, UseQueryResult } from '@tanstack/react-query';
 import type { ApiError } from '@api/client';
 import {
+  exportReport,
   fetchReportTypes,
   requestReport,
+  type ReportExport,
   type ReportRequestPayload,
   type ReportResult,
   type ReportType,
@@ -29,5 +31,12 @@ export function useRequestReport(): UseMutationResult<
 > {
   return useMutation<ReportResult, ApiError, ReportRequestPayload>({
     mutationFn: requestReport,
+  });
+}
+
+/** Download the report file, or learn that it was queued for email. */
+export function useExportReport(): UseMutationResult<ReportExport, ApiError, ReportRequestPayload> {
+  return useMutation<ReportExport, ApiError, ReportRequestPayload>({
+    mutationFn: exportReport,
   });
 }

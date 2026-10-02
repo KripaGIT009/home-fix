@@ -4,6 +4,7 @@ import jakarta.servlet.DispatcherType;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Profile;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -18,10 +19,16 @@ import com.homefix.shared.security.RbacEnforcementFilter;
  *
  * <p>Only the health and metrics surface is public. All other endpoints require an authenticated
  * principal; fine-grained role checks are performed by the shared {@code RbacEnforcementFilter}
- * (Task 4). Without this bean, Spring Boot's default security auto-configuration (pulled in
+ * (Task 4) against the allow-list in {@link NotificationRbacConfig} (the Admin Portal's
+ * {@code /admin/notification-templates/**}: ADMIN, SUPER_ADMIN). Without this bean, Spring Boot's default security auto-configuration (pulled in
  * transitively via the shared-security module) would secure every endpoint with HTTP Basic.
+ *
+ * <p>Inactive under the {@code it} profile, as in the Booking Service: the Kafka integration test
+ * disables the shared security filters ({@code homefix.security.enabled=false}) because it drives
+ * only the consumer path, and this chain cannot be built without them.
  */
 @Configuration
+@Profile("!it")
 public class WebSecurityConfig {
 
     @Bean

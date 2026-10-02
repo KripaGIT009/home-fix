@@ -21,12 +21,12 @@ import { formatDateTime } from '@lib/format';
 import { useModerateReview, useReviews } from './hooks';
 import type { AdminReview, ModerationStatus } from './api';
 
-const STATUS_OPTIONS: ReadonlyArray<ModerationStatus> = [
-  'PENDING',
-  'FLAGGED',
-  'PUBLISHED',
-  'REMOVED',
-];
+/**
+ * Filter options. The Rating & Review Service derives a review's status from
+ * its flagged/active state, so it reports only these three; PENDING stays in
+ * the type for safety but would never match a filter.
+ */
+const STATUS_OPTIONS: ReadonlyArray<ModerationStatus> = ['FLAGGED', 'PUBLISHED', 'REMOVED'];
 
 /**
  * Review Moderation module (Requirement 19.2). Lists reviews with a moderation
@@ -42,14 +42,14 @@ export function ReviewModerationScreen() {
   const moderate = useModerateReview();
 
   const columns: Column<AdminReview>[] = [
-    { key: 'provider', header: 'Provider', render: (row) => row.providerName },
-    { key: 'reviewer', header: 'Reviewer', render: (row) => row.reviewerName },
+    { key: 'provider', header: 'Provider', render: (row) => row.providerName ?? '—' },
+    { key: 'reviewer', header: 'Reviewer', render: (row) => row.reviewerName ?? '—' },
     {
       key: 'rating',
       header: 'Rating',
       render: (row) => <Rating value={row.rating} precision={0.5} size="small" readOnly />,
     },
-    { key: 'comment', header: 'Comment', render: (row) => row.comment },
+    { key: 'comment', header: 'Comment', render: (row) => row.comment || '—' },
     {
       key: 'status',
       header: 'Status',
@@ -164,7 +164,9 @@ function RemoveDialog({ review, onClose }: RemoveDialogProps) {
 
   return (
     <Dialog open onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>Remove review by {review.reviewerName}</DialogTitle>
+      <DialogTitle>
+        {review.reviewerName ? `Remove review by ${review.reviewerName}` : 'Remove review'}
+      </DialogTitle>
       <DialogContent dividers>
         <TextField
           label="Removal reason"

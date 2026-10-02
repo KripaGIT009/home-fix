@@ -102,7 +102,7 @@ public class BookingService {
      */
     @Transactional
     public Booking confirm(String reference, Actor actor) {
-        Booking booking = requireBooking(reference);
+        Booking booking = BookingAccess.requireForCustomer(bookingRepository, reference, actor);
         beginSearchingProvider(booking, actor);
         return booking;
     }
@@ -132,13 +132,17 @@ public class BookingService {
      * no fee before PROVIDER_ON_THE_WAY; the configured subcategory fee (0.00-999.99) once the
      * provider is on the way or later. The transition to CANCELLED is validated by the state
      * machine (invalid source states yield 409).
+     *
+     * <p>The fee is set before the transition so the {@code BookingCancelled} event the
+     * transition writes to the outbox (Requirement 22.1) carries it. A rejected transition
+     * throws and rolls the whole transaction back, fee included.
      */
     @Transactional
     public Booking cancel(String reference, Actor actor, String reason) {
-        Booking booking = requireBooking(reference);
+        Booking booking = BookingAccess.requireForParticipant(bookingRepository, reference, actor);
         BigDecimal fee = cancellationFeePolicy.feeFor(booking);
-        transitionService.transition(booking, BookingStatus.CANCELLED, actor, reason);
         booking.setCancellationFee(fee);
+        transitionService.transition(booking, BookingStatus.CANCELLED, actor, reason);
         log.info("Cancelled booking {} with fee={}", booking.getReference(), fee);
         return booking;
     }
@@ -212,7 +216,7 @@ public class BookingService {
         try {
             return pricingClient.estimate(new PriceEstimateRequest(
                     cmd.categoryId(), cmd.subcategoryId(), cmd.customerId(),
-                    cmd.emergency(), scheduledAt));
+                    cmd.emergency(), scheduledAt, cmd.couponCode()));
         } catch (PricingUnavailableException ex) {
             log.warn("Pricing Engine unavailable; booking not created: {}", ex.getMessage());
             throw BookingException.pricingUnavailable();
@@ -241,7 +245,7 @@ public class BookingService {
     }
 
     private Booking requireBooking(String reference) {
-        return bookingRepository.findByReference(reference)
+        return bookingRepository.findByKey(reference)
                 .orElseThrow(() -> BookingException.notFound(reference));
     }
 

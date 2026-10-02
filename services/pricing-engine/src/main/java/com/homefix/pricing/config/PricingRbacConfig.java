@@ -93,7 +93,8 @@ public class PricingRbacConfig {
     @PostConstruct
     public void registerEndpointRoles() {
         var rules = rbacProperties.getEndpointRoles();
-        // Admin pricing-parameter configuration (AdminPricingController, Requirement 6.11).
+        // Admin pricing-parameter configuration (AdminPricingController, Requirement 6.11): the
+        // /admin/pricing/parameters API and the Admin Portal's /admin/pricing/config API.
         rules.put("GET /admin/**", ADMIN_TIER);
         rules.put("POST /admin/**", ADMIN_TIER);
         rules.put("PUT /admin/**", ADMIN_TIER);

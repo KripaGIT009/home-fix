@@ -131,6 +131,68 @@ class VerificationRbacConfigTest {
         verify(chain, never()).doFilter(any(), any());
     }
 
+    // ------------------------------------------------------------------ Admin Portal verification queue
+
+    @Test
+    void adminTierPassesThroughOnEveryVerificationQueueEndpoint() throws Exception {
+        for (String role : List.of("ADMIN", "SUPER_ADMIN")) {
+            SecurityContextHolder.clearContext();
+            authenticateAs(role);
+            for (String[] call : List.of(
+                    new String[] {"GET", "/admin/verification/queue"},
+                    new String[] {"GET", "/admin/verification/" + providerId + "/documents"},
+                    new String[] {"POST", "/admin/verification/" + providerId + "/decision"})) {
+                FilterChain chain = mock(FilterChain.class);
+
+                MockHttpServletResponse response = invoke(call[0], call[1], chain);
+
+                assertThat(response.getStatus()).as(role + " " + call[0] + " " + call[1])
+                        .isEqualTo(HttpStatus.OK.value());
+                verify(chain, times(1)).doFilter(any(), any());
+            }
+        }
+    }
+
+    @Test
+    void nonAdminRolesAreForbiddenOnTheVerificationQueue() throws Exception {
+        for (String role : List.of("CUSTOMER", "SERVICE_PROVIDER", "SUPPORT_AGENT", "DISPATCHER",
+                "FINANCE_ADMIN")) {
+            SecurityContextHolder.clearContext();
+            authenticateAs(role);
+            for (String[] call : List.of(
+                    new String[] {"GET", "/admin/verification/queue"},
+                    new String[] {"GET", "/admin/verification/" + providerId + "/documents"},
+                    new String[] {"POST", "/admin/verification/" + providerId + "/decision"})) {
+                FilterChain chain = mock(FilterChain.class);
+
+                assertThat(invoke(call[0], call[1], chain).getStatus())
+                        .as(role + " " + call[0] + " " + call[1])
+                        .isEqualTo(HttpStatus.FORBIDDEN.value());
+                verify(chain, never()).doFilter(any(), any());
+            }
+        }
+    }
+
+    @Test
+    void unauthenticatedVerificationQueueIsUnauthorized() throws Exception {
+        assertThat(invoke("GET", "/admin/verification/queue", mock(FilterChain.class)).getStatus())
+                .isEqualTo(HttpStatus.UNAUTHORIZED.value());
+    }
+
+    @Test
+    void patchOnTheAdminSurfaceIsAdminOnly() throws Exception {
+        authenticateAs("SERVICE_PROVIDER");
+        assertThat(invoke("PATCH", "/admin/verification/" + providerId, mock(FilterChain.class)).getStatus())
+                .isEqualTo(HttpStatus.FORBIDDEN.value());
+
+        SecurityContextHolder.clearContext();
+        authenticateAs("ADMIN");
+        FilterChain chain = mock(FilterChain.class);
+        assertThat(invoke("PATCH", "/admin/verification/" + providerId, chain).getStatus())
+                .isEqualTo(HttpStatus.OK.value());
+        verify(chain, times(1)).doFilter(any(), any());
+    }
+
     // ------------------------------------------------------------------ document submission
 
     @Test

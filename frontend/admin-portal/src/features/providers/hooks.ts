@@ -1,7 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { UseMutationResult, UseQueryResult } from '@tanstack/react-query';
 import type { ApiError } from '@api/client';
-import { fetchProviders, updateProviderStatus, type AdminProvider } from './api';
+import {
+  fetchProviders,
+  updateProviderStatus,
+  type AdminProvider,
+  type ProviderStatusChange,
+} from './api';
 
 export const providerKeys = {
   list: (search: string) => ['admin', 'providers', { search }] as const,
@@ -19,10 +24,10 @@ export function useProviders(search: string): UseQueryResult<AdminProvider[], Ap
 export function useUpdateProviderStatus(): UseMutationResult<
   AdminProvider,
   ApiError,
-  { id: string; status: AdminProvider['status'] }
+  { id: string; status: ProviderStatusChange }
 > {
   const queryClient = useQueryClient();
-  return useMutation<AdminProvider, ApiError, { id: string; status: AdminProvider['status'] }>({
+  return useMutation<AdminProvider, ApiError, { id: string; status: ProviderStatusChange }>({
     mutationFn: ({ id, status }) => updateProviderStatus(id, status),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['admin', 'providers'] });

@@ -43,6 +43,9 @@ import net.jqwik.api.constraints.IntRange;
  */
 class NotificationDeliveryPropertiesTest {
 
+    /** One recipient across redeliveries, as a real redelivery of the same event would have. */
+    private static final UUID RECIPIENT = UUID.randomUUID();
+
     private static final Clock FIXED_CLOCK =
             Clock.fixed(Instant.parse("2024-01-01T00:00:00Z"), ZoneOffset.UTC);
 
@@ -104,7 +107,8 @@ class NotificationDeliveryPropertiesTest {
 
     private NotificationEvent event(NotificationEventType type, UUID kafkaEventId) {
         return new NotificationEvent(
-                type, kafkaEventId, UUID.randomUUID(),
+                type, kafkaEventId, RECIPIENT,
+                new com.homefix.notification.domain.RecipientPolicy().audiencesFor(type).iterator().next(),
                 new NotificationContact("+919876543210", "user@example.com", "device-token"),
                 Map.of("bookingReference", "BR-42"));
     }

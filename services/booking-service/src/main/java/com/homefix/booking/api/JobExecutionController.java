@@ -19,7 +19,6 @@ import com.homefix.booking.api.dto.AddPartsRequest;
 import com.homefix.booking.api.dto.BookingResponse;
 import com.homefix.booking.api.dto.PauseJobRequest;
 import com.homefix.booking.domain.Booking;
-import com.homefix.booking.domain.BookingRepository;
 import com.homefix.booking.media.MediaFile;
 import com.homefix.booking.service.Actor;
 import com.homefix.booking.service.AddPartsCommand;
@@ -43,14 +42,10 @@ public class JobExecutionController {
 
     private final JobExecutionService jobExecution;
     private final MediaService mediaService;
-    private final BookingRepository bookingRepository;
 
-    public JobExecutionController(JobExecutionService jobExecution,
-                                  MediaService mediaService,
-                                  BookingRepository bookingRepository) {
+    public JobExecutionController(JobExecutionService jobExecution, MediaService mediaService) {
         this.jobExecution = jobExecution;
         this.mediaService = mediaService;
-        this.bookingRepository = bookingRepository;
     }
 
     /** {@code POST /bookings/{reference}/on-the-way} — PROVIDER_ON_THE_WAY (Requirement 9.3). */
@@ -74,10 +69,10 @@ public class JobExecutionController {
     @PostMapping(path = "/photos", consumes = "multipart/form-data")
     public ResponseEntity<Void> attachPhoto(@PathVariable("reference") String reference,
                                             @RequestParam("type") String type,
-                                            @RequestParam("file") MultipartFile file) {
+                                            @RequestParam("file") MultipartFile file,
+                                            Authentication auth) {
         String normalized = normalizePhotoType(type);
-        Booking booking = bookingRepository.findByReference(reference)
-                .orElseThrow(() -> BookingException.notFound(reference));
+        Booking booking = jobExecution.requireForProvider(reference, actor(auth));
         mediaService.attach(booking.getId(), normalized, java.util.List.of(toMediaFile(file)));
         return ResponseEntity.noContent().build();
     }

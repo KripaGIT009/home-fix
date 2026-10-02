@@ -20,6 +20,7 @@ import org.junit.jupiter.api.Test;
 
 import com.homefix.promotion.config.PromotionProperties;
 import com.homefix.promotion.domain.Coupon;
+import com.homefix.promotion.domain.CouponStatus;
 import com.homefix.promotion.domain.DiscountType;
 import com.homefix.promotion.service.CouponException.ConstraintCode;
 import com.homefix.promotion.support.InMemoryCouponRepository;
@@ -134,6 +135,25 @@ class CouponServiceTest {
 
         assertThat(result.code()).isEqualTo("SAVE50");
         assertThat(result.discountAmount()).isEqualByComparingTo("50.00");
+    }
+
+    /**
+     * The Pricing Engine may quote before a customer is known. Without a user the per-user limit
+     * cannot be evaluated and is left to redemption; every other constraint still applies.
+     */
+    @Test
+    void validationWithoutAUserSkipsOnlyThePerUserLimit() {
+        CouponService service = service();
+        service.createCoupon(flatCommand("SAVE50")); // per-user limit 2
+        service.redeem("SAVE50", USER);
+        service.redeem("SAVE50", USER);
+
+        assertThat(service.validate("SAVE50", null, new BigDecimal("200")).discountAmount())
+                .isEqualByComparingTo("50.00");
+        assertThatThrownBy(() -> service.validate("SAVE50", null, new BigDecimal("40")))
+                .isInstanceOf(CouponException.class)
+                .satisfies(e -> assertThat(((CouponException) e).getErrorCode())
+                        .isEqualTo(ConstraintCode.MIN_ORDER_VALUE_NOT_MET.name()));
     }
 
     @Test
@@ -333,5 +353,42 @@ class CouponServiceTest {
         Coupon after = service.getCoupon(coupon.getId());
         assertThat(after.getTotalUsed()).isZero();
         assertThat(service.currentUserUsage(coupon.getId(), USER)).isZero();
+    }
+
+    // ===================== Admin Portal (Requirement 19.2) =====================
+
+    @Test
+    void adminListIsNewestFirst() throws InterruptedException {
+        CouponService service = service();
+        Coupon older = service.createCoupon(flatCommand("OLDER1"));
+        Thread.sleep(5); // createdAt comes from the wall clock; keep the two apart
+        Coupon newer = service.createCoupon(flatCommand("NEWER1"));
+
+        assertThat(service.listForAdmin()).extracting(Coupon::getId)
+                .containsExactly(newer.getId(), older.getId());
+    }
+
+    @Test
+    void adminListIsBounded() {
+        CouponService service = service();
+        for (int i = 0; i < CouponService.ADMIN_LIST_LIMIT + 2; i++) {
+            service.createCoupon(flatCommand("BULK" + i));
+        }
+
+        assertThat(service.listForAdmin()).hasSize(CouponService.ADMIN_LIST_LIMIT);
+    }
+
+    @Test
+    void statusIsDerivedOnTheServiceClock() {
+        CouponService service = service();
+        Coupon active = service.createCoupon(flatCommand("LIVE1"));
+        Coupon inactive = service.deactivateCoupon(service.createCoupon(flatCommand("OFF1")).getId());
+        // Expires today: still usable today (inclusive), so still ACTIVE.
+        Coupon lastDay = service.createCoupon(new CreateCouponCommand("LASTDAY", DiscountType.FLAT,
+                new BigDecimal("50"), new BigDecimal("100"), null, TODAY.minusDays(5), TODAY, 1, 1));
+
+        assertThat(service.statusOf(active)).isEqualTo(CouponStatus.ACTIVE);
+        assertThat(service.statusOf(inactive)).isEqualTo(CouponStatus.INACTIVE);
+        assertThat(service.statusOf(lastDay)).isEqualTo(CouponStatus.ACTIVE);
     }
 }

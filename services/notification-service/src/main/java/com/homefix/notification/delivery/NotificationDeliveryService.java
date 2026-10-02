@@ -20,21 +20,25 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 /**
- * Orchestrates multi-channel notification delivery for a single lifecycle event (Requirement 17).
+ * Orchestrates multi-channel notification delivery for one event addressed to one recipient
+ * (Requirement 17).
  *
- * <p>For each event the service:
+ * <p>For each addressed event the service:
  * <ol>
- *   <li>Resolves the candidate channels and channel-safe content from the
- *       {@link EventTemplateResolver} (Requirement 17.5).</li>
+ *   <li>Resolves the candidate channels and channel-safe content for the recipient's audience
+ *       from the {@link EventTemplateResolver} (Requirement 17.5).</li>
  *   <li>Loads the user's preferences, defaulting to all channels enabled when preference data is
  *       unavailable (Requirement 17.6).</li>
- *   <li>For each candidate channel that is enabled and not already delivered
- *       ({@code (kafkaEventId, channel)} dedup), attempts delivery with up to
- *       {@code maxAttempts} tries and 1 s / 2 s / 4 s exponential backoff, then records the
- *       outcome in the delivery log (Requirements 17.7, 17.8, Property 22).</li>
+ *   <li>For each candidate channel that is not already delivered
+ *       ({@code (kafkaEventId, recipient, channel)} dedup), is enabled, and that the recipient
+ *       has an address for, attempts delivery with up to {@code maxAttempts} tries and
+ *       1 s / 2 s / 4 s exponential backoff, then records the outcome in the delivery log
+ *       (Requirements 17.7, 17.8, Property 22).</li>
  * </ol>
  *
  * <p>A channel disabled by preference is skipped and recorded as {@code SKIPPED_PREFERENCE}; a
+ * channel the recipient has no address on (no phone, email or push token on record) is skipped
+ * and recorded as {@code SKIPPED_NO_CONTACT} without burning retries that cannot succeed; a
  * channel already present in the delivery log is silently discarded with no dispatch. No PII is
  * logged (Requirement 26.4).
  */
@@ -96,11 +100,11 @@ public class NotificationDeliveryService {
 
     private void dispatchChannel(NotificationEvent event, RenderedMessage message,
                                  NotificationPreferences preferences, NotificationChannel channel) {
-        // Deduplicate on (kafkaEventId, channel): a redelivery already recorded is discarded
-        // silently with no dispatch (Property 22).
-        if (deliveryLogStore.alreadyDelivered(event.kafkaEventId(), channel)) {
-            log.debug("Skipping already-processed delivery for event {} on channel {}",
-                    event.kafkaEventId(), channel);
+        // Deduplicate on (kafkaEventId, recipient, channel): a redelivery already recorded is
+        // discarded silently with no dispatch (Property 22).
+        if (deliveryLogStore.alreadyDelivered(event.kafkaEventId(), event.recipientUserId(), channel)) {
+            log.debug("Skipping already-processed delivery for event {} to user {} on channel {}",
+                    event.kafkaEventId(), event.recipientUserId(), channel);
             return;
         }
 
@@ -108,6 +112,14 @@ public class NotificationDeliveryService {
         if (!preferences.isEnabled(channel)) {
             log.debug("Channel {} disabled by preference for event {}", channel, event.kafkaEventId());
             record(event, channel, DeliveryStatus.SKIPPED_PREFERENCE, 0, null);
+            return;
+        }
+
+        // No address on this channel: retrying cannot succeed, so record the skip and move on.
+        if (!channelDispatcher.canAddress(channel, event.contact())) {
+            log.debug("No {} address on record for user {}; skipping that channel for event {}",
+                    channel, event.recipientUserId(), event.kafkaEventId());
+            record(event, channel, DeliveryStatus.SKIPPED_NO_CONTACT, 0, "no " + channel + " address on record");
             return;
         }
 

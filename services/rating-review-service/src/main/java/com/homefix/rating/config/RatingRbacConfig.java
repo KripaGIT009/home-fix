@@ -67,6 +67,10 @@ public class RatingRbacConfig {
     @PostConstruct
     public void registerEndpointRoles() {
         var rules = rbacProperties.getEndpointRoles();
+        // Admin Portal moderation (19.2): the review list and publish/remove decisions. "/**" also
+        // matches the bare "/admin/reviews" list path.
+        rules.put("GET /admin/reviews/**", MODERATION_TIER);
+        rules.put("POST /admin/reviews/**", MODERATION_TIER);
         // Most specific first: Admin/Support moderation of flagged or offending reviews (15.5, 15.9).
         rules.put("POST /reviews/*/approval", MODERATION_TIER);
         rules.put("POST /reviews/*/removal", MODERATION_TIER);

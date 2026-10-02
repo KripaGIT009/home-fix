@@ -2,19 +2,27 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Alert, Box, Button, InputAdornment, Stack, TextField, Typography } from '@mui/material';
 import ArrowForwardRoundedIcon from '@mui/icons-material/ArrowForwardRounded';
+import { brand } from '@lib/theme';
 import { mobileSchema, type MobileFormValues } from './schemas';
 
 interface MobileStepProps {
   onSubmit: (values: MobileFormValues) => void;
   isSubmitting: boolean;
   errorMessage: string | null;
+  /** `warning` for "can't reach us" problems, `error` for a rejected request. */
+  errorSeverity?: 'warning' | 'error';
 }
 
 /**
  * Step 1 of the login flow: collect and validate a mobile number, then request
  * an OTP (Requirement 1.1).
  */
-export function MobileStep({ onSubmit, isSubmitting, errorMessage }: MobileStepProps) {
+export function MobileStep({
+  onSubmit,
+  isSubmitting,
+  errorMessage,
+  errorSeverity = 'error',
+}: MobileStepProps) {
   const {
     register,
     handleSubmit,
@@ -28,40 +36,61 @@ export function MobileStep({ onSubmit, isSubmitting, errorMessage }: MobileStepP
   return (
     <Stack
       component="form"
-      spacing={2}
+      spacing={2.5}
       onSubmit={(event) => void handleSubmit(onSubmit)(event)}
       noValidate
     >
-      {errorMessage ? <Alert severity="error">{errorMessage}</Alert> : null}
+      {errorMessage ? (
+        <Alert severity={errorSeverity} role="alert">
+          {errorMessage}
+        </Alert>
+      ) : null}
 
       <Box>
-        <Typography variant="subtitle2" sx={{ mb: 0.75, color: 'text.primary' }}>
+        <Typography
+          component="label"
+          htmlFor="login-mobile"
+          variant="subtitle2"
+          sx={{ display: 'block', mb: 1, color: 'text.primary' }}
+        >
           Mobile number
         </Typography>
         <TextField
+          id="login-mobile"
           type="tel"
-          autoComplete="tel"
+          autoComplete="tel-national"
           fullWidth
           placeholder="98765 43210"
           error={Boolean(errors.mobileNumber)}
-          helperText={errors.mobileNumber?.message ?? 'We will text you a verification code.'}
+          helperText={errors.mobileNumber?.message ?? 'We’ll text you a 6-digit code to verify it.'}
           InputProps={{
             startAdornment: (
-              <InputAdornment position="start">
-                <Typography
-                  variant="body1"
-                  fontWeight={600}
-                  sx={{ pr: 1.25, mr: 1.25, borderRight: 1, borderColor: 'divider' }}
+              <InputAdornment position="start" sx={{ mr: 0, height: 'auto', maxHeight: 'none' }}>
+                <Box
+                  sx={{
+                    pr: 1.5,
+                    mr: 1.5,
+                    py: 0.5,
+                    borderRight: `1px solid ${brand.line}`,
+                    fontWeight: 700,
+                    color: 'text.primary',
+                    fontSize: '1.0625rem',
+                  }}
                 >
                   +91
-                </Typography>
+                </Box>
               </InputAdornment>
             ),
           }}
           inputProps={{
             inputMode: 'tel',
-            'aria-label': 'Mobile number',
-            style: { fontSize: '1.0625rem', letterSpacing: '0.02em' },
+            maxLength: 14,
+            style: {
+              fontSize: '1.125rem',
+              letterSpacing: '0.03em',
+              paddingTop: 16,
+              paddingBottom: 16,
+            },
           }}
           {...register('mobileNumber')}
         />
@@ -75,7 +104,7 @@ export function MobileStep({ onSubmit, isSubmitting, errorMessage }: MobileStepP
         disabled={isSubmitting}
         endIcon={isSubmitting ? undefined : <ArrowForwardRoundedIcon />}
       >
-        {isSubmitting ? 'Sending code…' : 'Send OTP'}
+        {isSubmitting ? 'Sending code…' : 'Continue'}
       </Button>
     </Stack>
   );

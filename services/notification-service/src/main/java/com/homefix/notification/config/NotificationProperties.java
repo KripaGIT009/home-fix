@@ -94,7 +94,10 @@ public class NotificationProperties {
         this.clients = clients;
     }
 
-    /** Kafka topic names this service consumes (one per lifecycle event, Requirement 17.5). */
+    /**
+     * Kafka topic names this service consumes: one per lifecycle event (Requirement 17.5) plus
+     * the two complaint events (Requirements 16.2, 16.3).
+     */
     public static class Topics {
         private String bookingCreated = "BookingCreated";
         private String providerAssigned = "ProviderAssigned";
@@ -107,6 +110,8 @@ public class NotificationProperties {
         private String paymentCompleted = "PaymentCompleted";
         private String bookingCancelled = "BookingCancelled";
         private String reviewSubmitted = "ReviewSubmitted";
+        private String complaintCreated = "ComplaintCreated";
+        private String complaintStatusChanged = "ComplaintStatusChanged";
 
         public String getBookingCreated() {
             return bookingCreated;
@@ -195,11 +200,36 @@ public class NotificationProperties {
         public void setReviewSubmitted(String reviewSubmitted) {
             this.reviewSubmitted = reviewSubmitted;
         }
+
+        public String getComplaintCreated() {
+            return complaintCreated;
+        }
+
+        public void setComplaintCreated(String complaintCreated) {
+            this.complaintCreated = complaintCreated;
+        }
+
+        public String getComplaintStatusChanged() {
+            return complaintStatusChanged;
+        }
+
+        public void setComplaintStatusChanged(String complaintStatusChanged) {
+            this.complaintStatusChanged = complaintStatusChanged;
+        }
     }
 
-    /** Downstream service base URLs. */
+    /** Downstream service base URLs and client limits. */
     public static class Clients {
         private String preferenceServiceBaseUrl = "http://customer-service";
+
+        /** Auth Service base URL; recipient contact details are resolved from its internal API. */
+        private String authServiceBaseUrl = "http://auth-service:8081";
+
+        /**
+         * Connect and read timeout for one contact lookup. Bounded well inside the 10-second
+         * delivery budget (Requirement 17.4); a lookup that times out is retried by the consumer.
+         */
+        private Duration contactLookupTimeout = Duration.ofSeconds(2);
 
         public String getPreferenceServiceBaseUrl() {
             return preferenceServiceBaseUrl;
@@ -207,6 +237,22 @@ public class NotificationProperties {
 
         public void setPreferenceServiceBaseUrl(String preferenceServiceBaseUrl) {
             this.preferenceServiceBaseUrl = preferenceServiceBaseUrl;
+        }
+
+        public String getAuthServiceBaseUrl() {
+            return authServiceBaseUrl;
+        }
+
+        public void setAuthServiceBaseUrl(String authServiceBaseUrl) {
+            this.authServiceBaseUrl = authServiceBaseUrl;
+        }
+
+        public Duration getContactLookupTimeout() {
+            return contactLookupTimeout;
+        }
+
+        public void setContactLookupTimeout(Duration contactLookupTimeout) {
+            this.contactLookupTimeout = contactLookupTimeout;
         }
     }
 }

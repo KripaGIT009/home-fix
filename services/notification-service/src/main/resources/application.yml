@@ -13,6 +13,14 @@ spring:
       hibernate:
         default_schema: notification
     open-in-view: false
+  # Schema migrations own the DDL; Hibernate only validates against it. V1 is the baseline
+  # schema, so on a database Hibernate already populated (ddl-auto=update, the old local default)
+  # Flyway records V1 as applied instead of re-creating tables that exist.
+  flyway:
+    schemas: notification
+    default-schema: notification
+    baseline-on-migrate: true
+    baseline-version: 1
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     consumer:
@@ -61,8 +69,20 @@ homefix:
       payment-completed: ${NOTIFICATION_TOPIC_PAYMENT_COMPLETED:PaymentCompleted}
       booking-cancelled: ${NOTIFICATION_TOPIC_BOOKING_CANCELLED:BookingCancelled}
       review-submitted: ${NOTIFICATION_TOPIC_REVIEW_SUBMITTED:ReviewSubmitted}
+      # Complaint acknowledgement and status updates to the customer (Requirements 16.2, 16.3).
+      complaint-created: ${NOTIFICATION_TOPIC_COMPLAINT_CREATED:ComplaintCreated}
+      complaint-status-changed: ${NOTIFICATION_TOPIC_COMPLAINT_STATUS_CHANGED:ComplaintStatusChanged}
+    # Shared service credential presented to the Auth Service on /internal/** (X-Internal-Api-Key)
+    # to resolve a recipient's contact details by user id. Same INTERNAL_API_KEY the Booking
+    # Service uses. Required: the service refuses to start without it, since every notification
+    # would otherwise be dead-lettered.
+    internal-api-key: ${INTERNAL_API_KEY:}
     clients:
       preference-service-base-url: ${PREFERENCE_SERVICE_URL:http://customer-service}
+      # Auth Service base URL for the internal contact lookup.
+      auth-service-base-url: ${AUTH_SERVICE_URL:http://auth-service:8081}
+      # Connect/read timeout per contact lookup; a timed-out lookup is retried by the consumer.
+      contact-lookup-timeout: ${NOTIFICATION_CONTACT_LOOKUP_TIMEOUT:2s}
 
 management:
   endpoints:

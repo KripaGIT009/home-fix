@@ -23,7 +23,9 @@ import jakarta.persistence.Version;
 @Entity
 @Table(name = "booking", indexes = {
         @Index(name = "idx_booking_reference", columnList = "reference", unique = true),
-        @Index(name = "idx_booking_customer", columnList = "customer_id")
+        @Index(name = "idx_booking_customer", columnList = "customer_id"),
+        // Customer service history: newest-first page by customer (migration V2).
+        @Index(name = "idx_booking_customer_created", columnList = "customer_id, created_at DESC")
 })
 public class Booking {
 

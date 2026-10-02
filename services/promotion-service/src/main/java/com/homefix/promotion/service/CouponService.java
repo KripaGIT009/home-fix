@@ -3,18 +3,21 @@ package com.homefix.promotion.service;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.homefix.promotion.config.PromotionProperties;
 import com.homefix.promotion.domain.Coupon;
 import com.homefix.promotion.domain.CouponRepository;
+import com.homefix.promotion.domain.CouponStatus;
 import com.homefix.promotion.domain.CouponUsage;
 import com.homefix.promotion.domain.CouponUsageRepository;
 import com.homefix.promotion.domain.DiscountCalculator;
@@ -41,6 +44,12 @@ import com.homefix.promotion.service.CouponException.ConstraintCode;
 public class CouponService {
 
     private static final Logger log = LoggerFactory.getLogger(CouponService.class);
+
+    /**
+     * Upper bound on the Admin Portal coupon list (Requirement 19.2). The portal's table takes a
+     * bare array with no paging, so the newest {@value} coupons are returned.
+     */
+    static final int ADMIN_LIST_LIMIT = 200;
 
     private final CouponRepository couponRepository;
     private final CouponUsageRepository usageRepository;
@@ -108,6 +117,22 @@ public class CouponService {
         return couponRepository.save(coupon);
     }
 
+    // ===================== Admin Portal (Requirement 19.2) =====================
+
+    /** The Admin Portal coupon list: newest first, bounded by {@link #ADMIN_LIST_LIMIT}. */
+    @Transactional(readOnly = true)
+    public List<Coupon> listForAdmin() {
+        return couponRepository.findAllByOrderByCreatedAtDesc(PageRequest.of(0, ADMIN_LIST_LIMIT));
+    }
+
+    /**
+     * The coupon's Admin Portal status today, on the same clock the checkout validity-window check
+     * uses (Requirement 21.2), so the portal never shows ACTIVE for a coupon checkout calls expired.
+     */
+    public CouponStatus statusOf(Coupon coupon) {
+        return coupon.statusOn(LocalDate.now(clock));
+    }
+
     // ===================== Validation (Requirement 21.2) =====================
 
     /**
@@ -115,12 +140,17 @@ public class CouponService {
      * value, per-user usage limit, total usage limit) and returns the applicable discount amount
      * (Requirement 21.2). No counter is mutated here.
      *
+     * <p>{@code userId} may be {@code null} only on the service-to-service quote path
+     * ({@code InternalCouponController}), for an estimate requested before the customer is known.
+     * The per-user limit is then not evaluated; it is still enforced when the coupon is redeemed.
+     * The customer-facing {@code POST /coupons/validate} always requires a user.
+     *
      * @throws CouponException 422 with a constraint-specific error code on the first violation.
      */
     @Transactional(readOnly = true)
     public CouponValidationResult validate(String code, UUID userId, BigDecimal orderValue) {
         Coupon coupon = getCouponByCode(code);
-        int userUsage = currentUserUsage(coupon.getId(), userId);
+        int userUsage = userId == null ? 0 : currentUserUsage(coupon.getId(), userId);
         LocalDate today = LocalDate.now(clock);
 
         Optional<ConstraintCode> violation = coupon.checkApplicability(orderValue, userUsage, today);

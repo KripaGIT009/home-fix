@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.catchThrowable;
 
 import java.math.BigDecimal;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -26,8 +27,10 @@ import com.homefix.payment.service.GatewayCallback;
 import com.homefix.payment.service.InitiatePaymentCommand;
 import com.homefix.payment.service.PaymentException;
 import com.homefix.payment.service.PaymentService;
+import com.homefix.payment.support.InMemoryPaymentRefundRepository;
 import com.homefix.payment.support.InMemoryPaymentTransactionRepository;
 import com.homefix.payment.support.InMemorySettlementRepository;
+import com.homefix.payment.support.MarkingTransactionOperations;
 import com.homefix.payment.support.RecordingPaymentCompletedPublisher;
 import com.homefix.payment.wallet.ProviderWalletClientPort;
 
@@ -157,10 +160,15 @@ class PaymentPropertiesTest {
 
         // Drive the transaction to SUCCESS via a valid gateway callback; wallet credit happens
         // synchronously within the callback handling (well within the 60s bound).
-        String payload = "ok:" + tx.getId();
+        String payload = "{\"eventId\":\"evt_" + UUID.randomUUID() + "\","
+                + "\"transactionId\":\"" + tx.getId() + "\","
+                + "\"gatewayId\":\"" + RazorpayGatewayAdapter.GATEWAY_ID + "\","
+                + "\"status\":\"SUCCEEDED\","
+                + "\"amount\":\"" + amt.toPlainString() + "\","
+                + "\"timestamp\":\"" + Instant.now() + "\"}";
         f.service.handleGatewayCallback(tx.getId(), new GatewayCallback(
                 RazorpayGatewayAdapter.GATEWAY_ID, payload,
-                HmacSignatures.hmacSha256Hex(RAZORPAY_SECRET, payload), true, null));
+                HmacSignatures.hmacSha256Hex(RAZORPAY_SECRET, payload)));
 
         BigDecimal expectedCredit = amt.subtract(fee);
         BigDecimal balanceAfter = f.wallet.balanceOf(providerId);
@@ -250,9 +258,11 @@ class PaymentPropertiesTest {
             PaymentProperties props = new PaymentProperties();
             props.setRetryBackoff(Duration.ZERO);
 
-            this.service = new PaymentService(transactionRepository, settlementRepository,
+            this.service = new PaymentService(transactionRepository,
+                    new InMemoryPaymentRefundRepository(), settlementRepository,
                     gatewayRegistry, idempotencyStore, kms, wallet, invoiceTrigger, publisher,
-                    new NoopFinanceAlert(), providerNotification, props);
+                    new NoopFinanceAlert(), providerNotification, props,
+                    new MarkingTransactionOperations());
         }
     }
 

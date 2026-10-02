@@ -1,0 +1,247 @@
+name: Deploy services (reusable)
+
+# Deploys already-built images to one environment with helm/homefix-service.
+# Called by ci.yml (staging) and cd-production.yml (production).
+#
+# Everything below must exist before this can succeed; none of it is created by
+# this repository (see the header of cd-production.yml for the full list):
+#   - an EKS cluster per environment, a namespace in it, and an IAM role GitHub
+#     can assume through OIDC that may describe ECR images and deploy there;
+#   - ECR repositories named after each service, holding the image for the tag;
+#   - a Secret "<service>-secrets" per service in the namespace, with the keys
+#     helm/services/<service>.yaml lists (checked below before anything deploys);
+#   - a database schema: the services validate against tables nothing creates yet.
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: GitHub environment to deploy to (staging or production).
+        type: string
+        required: true
+      services:
+        description: JSON array of service names to deploy.
+        type: string
+        required: true
+      image-tag:
+        description: Image tag to deploy (the full commit SHA CI built).
+        type: string
+        required: true
+
+# No permissions key: jobs inherit the caller's, which must include
+# id-token: write (OIDC role assumption) and contents: read.
+
+env:
+  HELM_VERSION: v3.16.2
+
+jobs:
+  # ─────────────────────────────────────────────
+  # All-or-nothing checks before any release is touched
+  # ─────────────────────────────────────────────
+  preflight:
+    name: Preflight (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Needed for the environment-scoped vars below. With required reviewers this means
+    # production asks for approval twice (here and on deploy); approve preflight only once
+    # its checks are what you want to gate on.
+    environment: ${{ inputs.environment }}
+    env:
+      TARGET_ENV: ${{ inputs.environment }}
+      SERVICES_JSON: ${{ inputs.services }}
+      IMAGE_TAG: ${{ inputs.image-tag }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+      ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+      EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME }}
+      K8S_NAMESPACE: ${{ vars.K8S_NAMESPACE }}
+      REDIS_HOST: ${{ vars.REDIS_HOST }}
+      KAFKA_BOOTSTRAP_SERVERS: ${{ vars.KAFKA_BOOTSTRAP_SERVERS }}
+    steps:
+      # Chart and values from the same commit the images were built from.
+      - name: Checkout the deployed commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.image-tag }}
+
+      - name: Check inputs and environment variables
+        run: |
+          case "${TARGET_ENV}" in
+            staging|production) ;;
+            *) echo "::error::environment must be staging or production, got '${TARGET_ENV}'."; exit 1 ;;
+          esac
+          if ! [[ "${IMAGE_TAG}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::image-tag must be a full 40-character commit SHA, got '${IMAGE_TAG}'."
+            exit 1
+          fi
+          mapfile -t services < <(jq -r '.[]' <<< "${SERVICES_JSON}")
+          need_redis=false; need_kafka=false
+          for svc in "${services[@]}"; do
+            values="helm/services/${svc}.yaml"
+            [ -f "${values}" ] || { echo "::error::No ${values}."; exit 1; }
+            [ "$(yq '.dependencies.redis' "${values}")" = true ] && need_redis=true
+            [ "$(yq '.dependencies.kafka' "${values}")" = true ] && need_kafka=true
+          done
+          required=(AWS_REGION AWS_DEPLOY_ROLE_ARN ECR_REGISTRY EKS_CLUSTER_NAME K8S_NAMESPACE)
+          [ "${need_redis}" = true ] && required+=(REDIS_HOST)
+          [ "${need_kafka}" = true ] && required+=(KAFKA_BOOTSTRAP_SERVERS)
+          missing=()
+          for v in "${required[@]}"; do [ -n "${!v}" ] || missing+=("$v"); done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Set these variables on the '${TARGET_ENV}' GitHub environment: ${missing[*]}"
+            exit 1
+          fi
+          echo "Deploying ${#services[@]} service(s) at ${IMAGE_TAG} to ${TARGET_ENV} (${EKS_CLUSTER_NAME}/${K8S_NAMESPACE})"
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Every image exists in ECR
+        run: |
+          status=0
+          for svc in $(jq -r '.[]' <<< "${SERVICES_JSON}"); do
+            if aws ecr describe-images --repository-name "${svc}" \
+                 --image-ids imageTag="${IMAGE_TAG}" --output text > /dev/null; then
+              echo "${ECR_REGISTRY}/${svc}:${IMAGE_TAG} found"
+            else
+              echo "::error::No image ${svc}:${IMAGE_TAG} in ECR. Was it built and pushed by CI?"
+              status=1
+            fi
+          done
+          exit "${status}"
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --name "${EKS_CLUSTER_NAME}" --region "${AWS_REGION}"
+
+      - name: Namespace and every service Secret exist with the keys the chart reads
+        run: |
+          # Without pipefail a missing Secret feeds jq empty input, jq exits 0, and the
+          # "does not exist" branch below never fires.
+          set -o pipefail
+          kubectl get namespace "${K8S_NAMESPACE}" > /dev/null
+          status=0
+          for svc in $(jq -r '.[]' <<< "${SERVICES_JSON}"); do
+            values="helm/services/${svc}.yaml"
+            mapfile -t keys < <(yq '.secrets.env // {} | .[]' "${values}")
+            if [ "$(yq '.dependencies.postgres' "${values}")" = true ]; then
+              keys+=(db_host db_port db_name db_username db_password)
+            fi
+            [ "${#keys[@]}" -gt 0 ] || { echo "${svc}: reads no secrets"; continue; }
+            secret="$(yq '.secrets.name // ""' "${values}")"
+            secret="${secret:-${svc}-secrets}"
+            if ! present=$(kubectl -n "${K8S_NAMESPACE}" get secret "${secret}" -o json 2>/dev/null | jq -r '.data // {} | keys[]'); then
+              echo "::error::Secret ${K8S_NAMESPACE}/${secret} does not exist (needs: ${keys[*]})."
+              status=1
+              continue
+            fi
+            for key in "${keys[@]}"; do
+              if ! grep -qx "${key}" <<< "${present}"; then
+                echo "::error::Secret ${K8S_NAMESPACE}/${secret} has no key '${key}'."
+                status=1
+              fi
+            done
+            echo "${svc}: ${secret} has ${keys[*]}"
+          done
+          exit "${status}"
+
+  # ─────────────────────────────────────────────
+  # helm upgrade --install per service, then a health check through the Service
+  # ─────────────────────────────────────────────
+  deploy:
+    name: Deploy ${{ matrix.service }} (${{ inputs.environment }})
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: ${{ inputs.environment }}
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        service: ${{ fromJSON(inputs.services) }}
+    env:
+      SERVICE: ${{ matrix.service }}
+      RELEASE: homefix-${{ matrix.service }}
+      TARGET_ENV: ${{ inputs.environment }}
+      IMAGE_TAG: ${{ inputs.image-tag }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+      EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME }}
+      K8S_NAMESPACE: ${{ vars.K8S_NAMESPACE }}
+      REDIS_HOST: ${{ vars.REDIS_HOST }}
+      REDIS_PORT: ${{ vars.REDIS_PORT || '6379' }}
+      KAFKA_BOOTSTRAP_SERVERS: ${{ vars.KAFKA_BOOTSTRAP_SERVERS }}
+    steps:
+      # Chart and values from the same commit the images were built from.
+      - name: Checkout the deployed commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.image-tag }}
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --name "${EKS_CLUSTER_NAME}" --region "${AWS_REGION}"
+
+      - name: helm upgrade --install
+        run: |
+          # Platform endpoints go through a values file, not --set: a Kafka
+          # bootstrap list contains commas, which --set would split.
+          jq -n --arg redis "${REDIS_HOST}" --argjson port "${REDIS_PORT}" --arg kafka "${KAFKA_BOOTSTRAP_SERVERS}" \
+            '{platform: {redis: {host: $redis, port: $port}, kafka: {bootstrapServers: $kafka}}}' \
+            > "${RUNNER_TEMP}/platform-values.json"
+          # --atomic rolls the release back (or removes a first install) if the
+          # pods do not become ready within the timeout.
+          helm upgrade --install "${RELEASE}" helm/homefix-service \
+            --namespace "${K8S_NAMESPACE}" \
+            -f "helm/homefix-service/values-${TARGET_ENV}.yaml" \
+            -f "helm/services/${SERVICE}.yaml" \
+            -f "${RUNNER_TEMP}/platform-values.json" \
+            --set-string image.repository="${ECR_REGISTRY}/${SERVICE}" \
+            --set-string image.tag="${IMAGE_TAG}" \
+            --atomic --wait --timeout 15m \
+            --history-max 10
+
+      - name: Health check through the Service
+        id: smoke
+        run: |
+          port=$(yq '.containerPort' "helm/services/${SERVICE}.yaml")
+          kubectl -n "${K8S_NAMESPACE}" port-forward "svc/${SERVICE}" "18080:${port}" > "${RUNNER_TEMP}/port-forward.log" 2>&1 &
+          pf=$!
+          trap 'kill ${pf} 2>/dev/null || true' EXIT
+          for _ in $(seq 1 15); do
+            curl --silent --output /dev/null http://127.0.0.1:18080/health/liveness && break
+            sleep 2
+          done
+          for probe in liveness readiness; do
+            body=$(curl --fail --silent --show-error --max-time 10 "http://127.0.0.1:18080/health/${probe}")
+            echo "/health/${probe}: ${body}"
+            if ! jq -e '.status == "UP"' <<< "${body}" > /dev/null; then
+              echo "::error::${SERVICE} /health/${probe} did not report UP."
+              exit 1
+            fi
+          done
+
+      - name: Roll back after a failed health check
+        if: failure() && steps.smoke.outcome == 'failure'
+        run: |
+          if [ "$(helm history "${RELEASE}" -n "${K8S_NAMESPACE}" -o json | jq length)" -gt 1 ]; then
+            helm rollback "${RELEASE}" 0 -n "${K8S_NAMESPACE}" --wait --timeout 10m
+            echo "::warning::${SERVICE} rolled back to its previous revision."
+          else
+            echo "::warning::${SERVICE} has no previous revision to roll back to; the failing first install is left in place for inspection."
+          fi
+
+      - name: Record deployment
+        run: echo "| ${SERVICE} | ${IMAGE_TAG} | ${TARGET_ENV} |" >> "$GITHUB_STEP_SUMMARY"

@@ -1,21 +1,23 @@
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Box, Stack, Typography } from '@mui/material';
-import VerifiedRoundedIcon from '@mui/icons-material/VerifiedRounded';
-import ScheduleRoundedIcon from '@mui/icons-material/ScheduleRounded';
-import PlaceRoundedIcon from '@mui/icons-material/PlaceRounded';
+import { keyframes } from '@mui/material/styles';
 import { BrandLogo } from '@components/BrandLogo';
 import { useAuthStore } from '@stores/authStore';
+import { brandGradient } from '@lib/theme';
 
 /** How long the branded splash is shown before navigating away (ms). */
 const SPLASH_DURATION_MS = 1500;
 
-/** The three promises in the brand line, shown as a row of proof points. */
-const PROMISES = [
-  { icon: <VerifiedRoundedIcon fontSize="small" />, label: 'Verified' },
-  { icon: <ScheduleRoundedIcon fontSize="small" />, label: 'Anytime' },
-  { icon: <PlaceRoundedIcon fontSize="small" />, label: 'Anywhere' },
-] as const;
+const rise = keyframes`
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+`;
+
+const progress = keyframes`
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+`;
 
 /**
  * Splash screen (Requirement 28.7): shows HomeFix branding briefly, then
@@ -42,58 +44,48 @@ export function SplashScreen() {
         justifyContent: 'center',
         px: 4,
         color: 'common.white',
-        background: 'linear-gradient(160deg, #2563EB 0%, #1D4ED8 55%, #172554 100%)',
-        // Soft radial bloom behind the mark so the flat gradient gains depth.
-        '&::before': {
-          content: '""',
-          position: 'absolute',
-          inset: 0,
-          background:
-            'radial-gradient(60% 40% at 50% 30%, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0) 70%)',
-          pointerEvents: 'none',
-        },
+        background: brandGradient,
         position: 'relative',
       }}
     >
-      <Stack spacing={2.5} alignItems="center" textAlign="center" sx={{ zIndex: 1 }}>
-        <BrandLogo size={76} inverted />
+      <Stack
+        spacing={3}
+        alignItems="center"
+        textAlign="center"
+        sx={{ animation: `${rise} .5s ease-out both` }}
+      >
+        <BrandLogo size={72} inverted markOnly />
         <Box>
-          <Typography variant="h3" component="h1" fontWeight={800}>
+          <Typography variant="h1" component="h1" sx={{ fontSize: { xs: '2.5rem', md: '3rem' } }}>
             HomeFix
           </Typography>
-          <Typography variant="subtitle1" sx={{ opacity: 0.85, mt: 0.5 }}>
+          <Typography variant="h6" component="p" sx={{ opacity: 0.85, mt: 1, fontWeight: 500 }}>
             Verified Help. Anytime. Anywhere.
           </Typography>
         </Box>
-
-        <Stack direction="row" spacing={1} sx={{ pt: 1 }}>
-          {PROMISES.map((promise) => (
-            <Stack
-              key={promise.label}
-              direction="row"
-              spacing={0.75}
-              alignItems="center"
-              sx={{
-                px: 1.5,
-                py: 0.75,
-                borderRadius: 999,
-                bgcolor: 'rgba(255, 255, 255, 0.14)',
-                border: '1px solid rgba(255, 255, 255, 0.18)',
-              }}
-            >
-              {promise.icon}
-              <Typography variant="caption" fontWeight={700}>
-                {promise.label}
-              </Typography>
-            </Stack>
-          ))}
-        </Stack>
+        <Box
+          role="progressbar"
+          aria-label="Loading HomeFix"
+          sx={{
+            width: 120,
+            height: 4,
+            borderRadius: 2,
+            bgcolor: 'rgba(255,255,255,0.2)',
+            overflow: 'hidden',
+          }}
+        >
+          <Box
+            sx={{
+              height: '100%',
+              bgcolor: 'common.white',
+              transformOrigin: 'left',
+              animation: `${progress} ${SPLASH_DURATION_MS}ms ease-out both`,
+            }}
+          />
+        </Box>
       </Stack>
 
-      <Typography
-        variant="caption"
-        sx={{ position: 'absolute', bottom: 32, opacity: 0.7, zIndex: 1 }}
-      >
+      <Typography variant="body2" sx={{ position: 'absolute', bottom: 32, opacity: 0.7 }}>
         A safer, happier home is just a tap away.
       </Typography>
     </Box>

@@ -26,6 +26,8 @@ export class ApiError extends Error {
 }
 
 interface BackendErrorBody {
+  /** The shared ErrorResponseDto envelope's code field. */
+  errorCode?: string;
   code?: string;
   message?: string;
   error?: string;
@@ -38,7 +40,7 @@ function toApiError(error: AxiosError<BackendErrorBody>): ApiError {
 
   return new ApiError({
     status,
-    code: body?.code ?? (status === 0 ? 'NETWORK_ERROR' : 'UNKNOWN_ERROR'),
+    code: body?.errorCode ?? body?.code ?? (status === 0 ? 'NETWORK_ERROR' : 'UNKNOWN_ERROR'),
     message:
       body?.message ??
       body?.error ??

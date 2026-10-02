@@ -1,5 +1,6 @@
 # Staging overrides for the shared homefix-service chart.
-# Applied by the CI workflow: --values helm/homefix-service/values-staging.yaml
+# Applied by .github/workflows/deploy-services.yml for environment=staging,
+# before helm/services/<service>.yaml.
 
 environment: staging
 
@@ -8,24 +9,22 @@ replicaCount: 1
 resources:
   requests:
     cpu: 100m
-    memory: 256Mi
+    memory: 384Mi
   limits:
-    cpu: 500m
-    memory: 512Mi
+    cpu: "1"
+    memory: 640Mi
 
 autoscaling:
   enabled: true
   minReplicas: 1
-  maxReplicas: 4
+  maxReplicas: 3
   targetCPUUtilizationPercentage: 75
-  targetMemoryUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 85
 
 config:
+  # No application-<profile>.yml exists yet; set so profile-specific config can be
+  # added without touching the chart.
   SPRING_PROFILES_ACTIVE: staging
-  JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70.0"
-  OTEL_TRACES_EXPORTER: otlp
-  OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector.monitoring:4317"
-  LOG_LEVEL: DEBUG
 
 podDisruptionBudget:
   enabled: false

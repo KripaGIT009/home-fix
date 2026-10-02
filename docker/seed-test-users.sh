@@ -18,9 +18,8 @@
 set -uo pipefail
 
 AUTH="${AUTH:-http://localhost:8081}"
-PG_CONTAINER="${PG_CONTAINER:-homefix-core-postgres-1}"
-PG_USER="${PG_USER:-homefix}"
-PG_DB="${PG_DB:-homefix}"
+# psql_q and the Postgres connection settings for the locally installed server.
+. "$(dirname "$0")/local-infra.sh"
 SMS_LOG="${SMS_LOG:-$(dirname "$0")/dev-sms/dev-sms.log}"
 OUT_FILE="${OUT_FILE:-$(dirname "$0")/test-users.generated.txt}"
 
@@ -39,10 +38,6 @@ USERS=(
 
 # Roles the public registration endpoint is allowed to assign.
 SELF_SERVICE_ROLES="CUSTOMER SERVICE_PROVIDER"
-
-psql_q() {
-  docker exec -i "${PG_CONTAINER}" psql -qAt -U "${PG_USER}" -d "${PG_DB}" -c "$1"
-}
 
 # register <mobile> <role-for-registration>  → echoes the verify response body
 register() {

@@ -40,6 +40,11 @@ public class InMemoryLock implements DistributedLockPort {
         held.add(providerId);
     }
 
+    /** Test helper: the concurrent flow that {@link #forceHold} simulated lets go. */
+    public synchronized void forceRelease(UUID providerId) {
+        held.remove(providerId);
+    }
+
     public synchronized boolean isHeld(UUID providerId) {
         return held.contains(providerId);
     }

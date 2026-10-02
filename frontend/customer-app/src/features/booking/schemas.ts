@@ -14,7 +14,11 @@ import {
  * as a controlled File[] outside the resolver.
  */
 
-/** Address sub-schema — either GPS-detected or manually entered. */
+/** Shown when the address has no coordinates to save it with. */
+export const ADDRESS_LOCATION_REQUIRED_MESSAGE =
+  'We need your exact location to send a pro. Tap "Use my location" or pick a saved address.';
+
+/** Address sub-schema — GPS-detected or a saved address, with the lines filled in. */
 export const addressSchema = z.object({
   line1: z.string().trim().min(1, 'Address is required').max(200),
   line2: z.string().trim().max(200).optional().or(z.literal('')),
@@ -59,6 +63,17 @@ export const serviceRequestSchema = z
     isEmergency: z.boolean(),
   })
   .superRefine((values, ctx) => {
+    // Dispatch can only locate a job through a saved address, and one cannot
+    // be saved without coordinates (there is no forward geocoder), so typed
+    // address lines alone are not enough to book.
+    if (values.address.latitude === undefined || values.address.longitude === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['address', 'latitude'],
+        message: ADDRESS_LOCATION_REQUIRED_MESSAGE,
+      });
+    }
+
     // Scheduled bookings must satisfy the lead-time / horizon window
     // (Requirements 7.7 and 7.8). Emergency bookings dispatch now, so the
     // scheduled time is not required.

@@ -70,6 +70,12 @@ public class ChatService {
      * Activates the chat channel for a booking on transition to PROVIDER_ACCEPTED
      * (Requirement 18.1). Idempotent: if a channel already exists for the booking it is returned
      * unchanged, so a redelivered {@code ProviderAccepted} event does not create a duplicate.
+     *
+     * <p>"Unchanged" includes a DEACTIVATED channel: the booking has already ended (its terminal
+     * event was consumed first and left a tombstone, or the channel was closed after a genuine
+     * activation), and a late or replayed acceptance must not reopen it. If a tombstone is written
+     * concurrently, the insert here fails on the primary key (see {@link ChatChannel}) and the
+     * consumer's retry finds the tombstone.
      */
     @Transactional
     public ChatChannel activateChannel(UUID bookingId, UUID customerId, UUID providerId,
@@ -85,17 +91,34 @@ public class ChatService {
 
     /**
      * Deactivates the chat channel for a booking on transition to PAYMENT_COMPLETED or CANCELLED
-     * (Requirement 18.5). Idempotent and a no-op if the channel is absent or already deactivated,
-     * so a redelivered terminal event is harmless.
+     * (Requirement 18.5). Idempotent: an already deactivated channel keeps its original
+     * {@code deactivatedAt}, so a redelivered terminal event is harmless.
+     *
+     * <p>If no channel exists yet, a DEACTIVATED tombstone is recorded in its place, built from
+     * what the terminal event carries, so a {@code ProviderAccepted} consumed after it (the topics
+     * are not ordered with respect to each other) cannot open a channel on an ended booking. Missing
+     * participant ids are stored as {@link ChatChannel#UNKNOWN_PARTICIPANT}; a missing creation
+     * time falls back to now.
+     *
+     * @param customerId       the booking's customer, if the event carried it
+     * @param providerId       the booking's provider, if one was assigned and the event carried it
+     * @param bookingCreatedAt the booking's creation time, if the event carried it
      */
     @Transactional
-    public void deactivateChannel(UUID bookingId) {
-        store.findChannel(bookingId).ifPresent(channel -> {
+    public void deactivateChannel(UUID bookingId, UUID customerId, UUID providerId,
+                                  Instant bookingCreatedAt) {
+        Instant now = clock.instant();
+        store.findChannel(bookingId).ifPresentOrElse(channel -> {
             if (channel.isActive()) {
-                channel.deactivate(clock.instant());
+                channel.deactivate(now);
                 store.saveChannel(channel);
                 log.info("Deactivated chat channel for booking {}", bookingId);
             }
+        }, () -> {
+            store.saveChannel(ChatChannel.tombstone(
+                    bookingId, customerId, providerId, bookingCreatedAt, now));
+            log.info("Recorded a deactivated chat channel for booking {}, which ended before its "
+                    + "channel was activated", bookingId);
         });
     }
 

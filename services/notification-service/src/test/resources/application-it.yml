@@ -12,7 +12,9 @@ spring:
     # the effective repository bean is identical either way.
     allow-bean-definition-overriding: true
   datasource:
-    url: jdbc:h2:mem:notification_it;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    # The shared outbox entities (processed_event) are pinned to the 'outbox' schema, which must
+    # exist before Hibernate creates the tables.
+    url: jdbc:h2:mem:notification_it;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;INIT=CREATE SCHEMA IF NOT EXISTS OUTBOX
     username: sa
     password: ""
     driver-class-name: org.h2.Driver
@@ -48,6 +50,8 @@ homefix:
   notification:
     # Fast backoff so the delivery-retry path does not slow the test.
     retry-initial-backoff: PT0.001S
+    # The contact directory is mocked in the IT; the key only satisfies the adapter's startup check.
+    internal-api-key: it-internal-key
 
 logging:
   level:

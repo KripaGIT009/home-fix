@@ -1,0 +1,18 @@
+# outbox-processor - per-service values for helm/homefix-service.
+# Mirrors the service's entry in docker-compose.core.yml, minus dev-only settings
+# (inline secrets, ddl-auto=update, debug logging, dev seeding/OTP echo).
+# The port must equal the Dockerfile EXPOSE and compose SERVER_PORT.
+
+serviceName: outbox-processor
+containerPort: 8099
+
+dependencies:
+  postgres: true
+  redis: false
+  kafka: true
+
+# Only the DB_* keys (from dependencies.postgres) are read from "outbox-processor-secrets".
+secrets:
+  env: {}
+
+config: {}

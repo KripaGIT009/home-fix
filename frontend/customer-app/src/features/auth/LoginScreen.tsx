@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Alert, Box, Card, CardContent, Link, Stack, Typography } from '@mui/material';
-import VerifiedRoundedIcon from '@mui/icons-material/VerifiedRounded';
-import PaymentsRoundedIcon from '@mui/icons-material/PaymentsRounded';
-import BoltRoundedIcon from '@mui/icons-material/BoltRounded';
+import { Alert, Box, Button, Link, Stack, Typography } from '@mui/material';
+import VerifiedUserRoundedIcon from '@mui/icons-material/VerifiedUserRounded';
+import ReceiptLongRoundedIcon from '@mui/icons-material/ReceiptLongRounded';
+import NearMeRoundedIcon from '@mui/icons-material/NearMeRounded';
+import ArrowBackRoundedIcon from '@mui/icons-material/ArrowBackRounded';
 import { BrandLogo } from '@components/BrandLogo';
 import { useAuthStore } from '@stores/authStore';
-import { isApiError } from '@api/client';
+import { isApiError, isUnreachableError } from '@api/client';
+import { brand, brandGradient, radius, shadows } from '@lib/theme';
 import { OTP_EXPIRY_SECONDS } from './constants';
 import { getLockoutInfo } from './lockout';
 import { formatMobileNumber, toE164 } from './phone';
@@ -19,22 +21,22 @@ import { SocialLoginButtons } from './SocialLoginButtons';
 import type { SocialProvider } from './api';
 import type { MobileFormValues } from './schemas';
 
-/** Proof points shown beside the form on desktop. */
+/** Proof points shown on the brand panel. */
 const VALUE_PROPS = [
   {
-    icon: <VerifiedRoundedIcon fontSize="small" />,
+    icon: <VerifiedUserRoundedIcon />,
     label: 'Verified professionals',
-    caption: 'Document and background checks before any job',
+    caption: 'Document and background checks before any job.',
   },
   {
-    icon: <PaymentsRoundedIcon fontSize="small" />,
+    icon: <ReceiptLongRoundedIcon />,
     label: 'Upfront pricing',
-    caption: 'A full itemised estimate before you confirm',
+    caption: 'A full itemised estimate before you confirm.',
   },
   {
-    icon: <BoltRoundedIcon fontSize="small" />,
-    label: 'Emergency service',
-    caption: 'A pro dispatched to you, around the clock',
+    icon: <NearMeRoundedIcon />,
+    label: 'Live tracking',
+    caption: 'Follow your pro to the door, around the clock.',
   },
 ] as const;
 
@@ -48,7 +50,10 @@ interface RedirectState {
  * Two steps: (1) enter mobile number and request an OTP, (2) enter the
  * 6-digit code within the expiry window. On successful verification the auth
  * store holds the session and we navigate to the originally requested route
- * (or Home). Social login (Google, Apple) is offered on the first step.
+ * (or Home). Social login is offered on the first step when configured.
+ *
+ * Desktop is a split layout — brand panel and form — and mobile a single
+ * column under a compact brand band.
  */
 export function LoginScreen() {
   const navigate = useNavigate();
@@ -135,7 +140,10 @@ export function LoginScreen() {
     [socialLogin],
   );
 
-  const lockout = verifyOtp.isError ? getLockoutInfo(verifyOtp.error) : null;
+  // Memoised on the error itself: the parent re-renders every second for the
+  // countdown, and a fresh object each time would restart the lockout timer.
+  const verifyError = verifyOtp.isError ? verifyOtp.error : null;
+  const lockout = useMemo(() => (verifyError ? getLockoutInfo(verifyError) : null), [verifyError]);
   const requestErrorMessage =
     requestOtp.isError && isApiError(requestOtp.error) ? requestOtp.error.message : null;
   const socialErrorMessage =
@@ -147,163 +155,263 @@ export function LoginScreen() {
       sx={{
         minHeight: '100dvh',
         display: 'grid',
-        // Mobile keeps the branded band above the card; from md up it becomes a
-        // two-column split so the page fills a desktop viewport instead of
-        // stranding a narrow card in the middle of an empty screen.
-        gridTemplateColumns: { xs: '1fr', md: '1.05fr 0.95fr' },
+        gridTemplateColumns: { xs: '1fr', md: 'minmax(0, 1fr) minmax(0, 1fr)' },
+        bgcolor: 'background.default',
       }}
     >
+      <BrandPanel />
+
+      <Box
+        component="main"
+        sx={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: { xs: 'flex-start', md: 'center' },
+          px: { xs: 2, sm: 3 },
+          pb: { xs: 4, md: 6 },
+          pt: { md: 6 },
+          mt: { xs: -5, md: 0 },
+          position: 'relative',
+        }}
+      >
+        <Box
+          sx={{
+            width: '100%',
+            maxWidth: 440,
+            p: { xs: 3, sm: 4 },
+            bgcolor: 'background.paper',
+            borderRadius: `${radius.xl}px`,
+            border: `1px solid ${brand.line}`,
+            boxShadow: { xs: shadows.raised, md: shadows.card },
+          }}
+        >
+          {step === 'otp' ? (
+            <Button
+              size="small"
+              startIcon={<ArrowBackRoundedIcon />}
+              onClick={handleChangeNumber}
+              disabled={verifyOtp.isPending}
+              sx={{ ml: -1, mb: 1.5, color: 'text.secondary' }}
+            >
+              Back
+            </Button>
+          ) : null}
+
+          <Typography variant="h3" component="h1">
+            {step === 'mobile' ? 'Sign in to HomeFix' : 'Enter the code'}
+          </Typography>
+          <Typography variant="body1" color="text.secondary" sx={{ mt: 1, mb: 3 }}>
+            {step === 'mobile' ? (
+              'New here? Same steps — we’ll set up your account.'
+            ) : (
+              <>
+                We sent a 6-digit code to{' '}
+                <Box
+                  component="span"
+                  sx={{ color: 'text.primary', fontWeight: 700, whiteSpace: 'nowrap' }}
+                >
+                  {formatMobileNumber(mobileNumber)}
+                </Box>
+                .
+              </>
+            )}
+          </Typography>
+
+          {socialErrorMessage ? (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              {socialErrorMessage}
+            </Alert>
+          ) : null}
+
+          {step === 'mobile' ? (
+            <Stack spacing={3}>
+              <MobileStep
+                onSubmit={handleRequestOtp}
+                isSubmitting={requestOtp.isPending}
+                errorMessage={requestErrorMessage}
+                errorSeverity={isUnreachableError(requestOtp.error) ? 'warning' : 'error'}
+              />
+              <SocialLoginButtons
+                onSelect={(provider) => void handleSocial(provider)}
+                disabled={socialLogin.isPending || requestOtp.isPending}
+              />
+            </Stack>
+          ) : (
+            <Stack spacing={2}>
+              {requestErrorMessage ? (
+                <Alert severity={isUnreachableError(requestOtp.error) ? 'warning' : 'error'}>
+                  {requestErrorMessage}
+                </Alert>
+              ) : null}
+              <OtpStep
+                onVerify={handleVerifyOtp}
+                onResend={handleResend}
+                onChangeNumber={handleChangeNumber}
+                isVerifying={verifyOtp.isPending}
+                isResending={requestOtp.isPending}
+                secondsLeft={expiry.secondsLeft}
+                lockout={lockout}
+              />
+            </Stack>
+          )}
+        </Box>
+
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          align="center"
+          sx={{ mt: 3, display: 'block', maxWidth: 360 }}
+        >
+          By continuing, you agree to our{' '}
+          <Link href="#" underline="hover" fontWeight={600}>
+            Terms
+          </Link>{' '}
+          and{' '}
+          <Link href="#" underline="hover" fontWeight={600}>
+            Privacy Policy
+          </Link>
+          .
+        </Typography>
+      </Box>
+    </Box>
+  );
+}
+
+/** The brand side of the split: full-height panel on desktop, a band on mobile. */
+function BrandPanel() {
+  return (
+    <Box
+      component="aside"
+      aria-label="About HomeFix"
+      sx={{
+        position: 'relative',
+        overflow: 'hidden',
+        color: 'common.white',
+        background: brandGradient,
+        px: { xs: 3, md: 7, lg: 10 },
+        pt: { xs: 3, md: 6 },
+        pb: { xs: 9, md: 6 },
+        display: 'flex',
+        flexDirection: 'column',
+      }}
+    >
+      <PatternDecoration />
+      <Box sx={{ position: 'relative' }}>
+        <BrandLogo size={40} inverted />
+      </Box>
+
       <Box
         sx={{
           position: 'relative',
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: { xs: 'flex-start', md: 'center' },
-          px: { xs: 3, md: 8, lg: 12 },
-          py: { xs: 4, md: 8 },
-          color: 'common.white',
-          background: 'linear-gradient(150deg, #2563EB 0%, #1D4ED8 55%, #172554 100%)',
-          '&::before': {
-            content: '""',
-            position: 'absolute',
-            inset: 0,
-            background:
-              'radial-gradient(70% 50% at 20% 20%, rgba(255,255,255,0.16) 0%, rgba(255,255,255,0) 70%)',
-            pointerEvents: 'none',
-          },
-        }}
-      >
-        <Stack spacing={{ xs: 2, md: 4 }} sx={{ position: 'relative', maxWidth: 520 }}>
-          <BrandLogo size={44} inverted />
-
-          <Box>
-            <Typography
-              component="h1"
-              sx={{
-                fontSize: { xs: '1.75rem', md: '2.75rem' },
-                fontWeight: 800,
-                letterSpacing: '-0.03em',
-                lineHeight: 1.1,
-              }}
-            >
-              Home services at your doorstep
-            </Typography>
-            <Typography
-              sx={{ opacity: 0.85, mt: 1.5, fontSize: { xs: '0.9375rem', md: '1.0625rem' } }}
-            >
-              Background-checked professionals, upfront pricing, and live tracking from booking to
-              doorstep.
-            </Typography>
-          </Box>
-
-          {/* The proof points only earn their space once the column is tall. */}
-          <Stack spacing={1.5} sx={{ display: { xs: 'none', md: 'flex' }, pt: 1 }}>
-            {VALUE_PROPS.map((prop) => (
-              <Stack key={prop.label} direction="row" spacing={1.5} alignItems="center">
-                <Box
-                  sx={{
-                    width: 38,
-                    height: 38,
-                    borderRadius: 2,
-                    display: 'grid',
-                    placeItems: 'center',
-                    bgcolor: 'rgba(255,255,255,0.14)',
-                    border: '1px solid rgba(255,255,255,0.18)',
-                    flexShrink: 0,
-                  }}
-                >
-                  {prop.icon}
-                </Box>
-                <Box>
-                  <Typography variant="subtitle1" fontWeight={700}>
-                    {prop.label}
-                  </Typography>
-                  <Typography variant="body2" sx={{ opacity: 0.8 }}>
-                    {prop.caption}
-                  </Typography>
-                </Box>
-              </Stack>
-            ))}
-          </Stack>
-        </Stack>
-      </Box>
-
-      <Box
-        sx={{
+          flexGrow: 1,
           display: 'flex',
           flexDirection: 'column',
           justifyContent: 'center',
-          alignItems: 'center',
-          px: { xs: 2, sm: 3 },
-          py: { xs: 0, md: 6 },
-          bgcolor: 'background.default',
-          // On mobile the card lifts into the band above it.
-          mt: { xs: -6, md: 0 },
+          maxWidth: 520,
+          mt: { xs: 3, md: 0 },
         }}
       >
-        <Box sx={{ width: '100%', maxWidth: 440 }}>
-          <Stack spacing={0.5} sx={{ mb: 2, display: { xs: 'none', md: 'block' } }}>
-            <Typography variant="h5" component="p">
-              {step === 'mobile' ? 'Sign in to continue' : 'Verify your number'}
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              {step === 'mobile'
-                ? 'We will text you a verification code.'
-                : `We sent a 6-digit code to ${formatMobileNumber(mobileNumber)}.`}
-            </Typography>
-          </Stack>
+        <Typography
+          component="p"
+          sx={{
+            fontSize: { xs: '1.625rem', md: '2.75rem' },
+            fontWeight: 800,
+            letterSpacing: '-0.03em',
+            lineHeight: 1.12,
+          }}
+        >
+          Verified help for every home.
+        </Typography>
+        <Typography
+          sx={{
+            opacity: 0.85,
+            mt: { xs: 1, md: 2 },
+            fontSize: { xs: '0.9375rem', md: '1.125rem' },
+          }}
+        >
+          Book trusted pros for repairs, cleaning and more — with the price upfront and live
+          tracking to your door.
+        </Typography>
 
-          <Card>
-            <CardContent sx={{ p: { xs: 2.5, sm: 3 } }}>
-              {socialErrorMessage ? (
-                <Alert severity="error" sx={{ mb: 2 }}>
-                  {socialErrorMessage}
-                </Alert>
-              ) : null}
-
-              {step === 'mobile' ? (
-                <Stack spacing={3}>
-                  <MobileStep
-                    onSubmit={handleRequestOtp}
-                    isSubmitting={requestOtp.isPending}
-                    errorMessage={requestErrorMessage}
-                  />
-                  <SocialLoginButtons
-                    onSelect={(provider) => void handleSocial(provider)}
-                    disabled={socialLogin.isPending || requestOtp.isPending}
-                  />
-                </Stack>
-              ) : (
-                <OtpStep
-                  onVerify={handleVerifyOtp}
-                  onResend={handleResend}
-                  onChangeNumber={handleChangeNumber}
-                  isVerifying={verifyOtp.isPending}
-                  secondsLeft={expiry.secondsLeft}
-                  lockout={lockout}
-                />
-              )}
-            </CardContent>
-          </Card>
-
-          <Typography
-            variant="caption"
-            color="text.secondary"
-            align="center"
-            sx={{ mt: 3, display: 'block' }}
-          >
-            By continuing, you agree to our{' '}
-            <Link href="#" underline="hover" fontWeight={600}>
-              Terms
-            </Link>{' '}
-            &amp;{' '}
-            <Link href="#" underline="hover" fontWeight={600}>
-              Privacy Policy
-            </Link>
-            .
-          </Typography>
-        </Box>
+        <Stack spacing={2.5} sx={{ display: { xs: 'none', md: 'flex' }, mt: 6 }}>
+          {VALUE_PROPS.map((prop) => (
+            <Stack key={prop.label} direction="row" spacing={2} alignItems="center">
+              <Box
+                aria-hidden
+                sx={{
+                  width: 44,
+                  height: 44,
+                  borderRadius: `${radius.md}px`,
+                  display: 'grid',
+                  placeItems: 'center',
+                  bgcolor: 'rgba(255,255,255,0.12)',
+                  border: '1px solid rgba(255,255,255,0.16)',
+                  color: brand.warm,
+                  flexShrink: 0,
+                }}
+              >
+                {prop.icon}
+              </Box>
+              <Box>
+                <Typography variant="subtitle1" fontWeight={700}>
+                  {prop.label}
+                </Typography>
+                <Typography variant="body2" sx={{ opacity: 0.78 }}>
+                  {prop.caption}
+                </Typography>
+              </Box>
+            </Stack>
+          ))}
+        </Stack>
       </Box>
+
+      <Typography
+        variant="caption"
+        sx={{ position: 'relative', opacity: 0.6, display: { xs: 'none', md: 'block' } }}
+      >
+        © {new Date().getFullYear()} HomeFix · Verified Help. Anytime. Anywhere.
+      </Typography>
+    </Box>
+  );
+}
+
+/** Soft concentric rings and a house outline, drawn in SVG — no images. */
+function PatternDecoration() {
+  return (
+    <Box
+      component="svg"
+      aria-hidden
+      viewBox="0 0 600 600"
+      sx={{
+        position: 'absolute',
+        right: { xs: -180, md: -140 },
+        bottom: { xs: -260, md: -120 },
+        width: { xs: 420, md: 620 },
+        height: 'auto',
+        opacity: 0.5,
+        pointerEvents: 'none',
+      }}
+    >
+      {[120, 190, 260].map((r) => (
+        <circle
+          key={r}
+          cx="300"
+          cy="300"
+          r={r}
+          fill="none"
+          stroke="rgba(255,255,255,0.16)"
+          strokeWidth="1.5"
+        />
+      ))}
+      <path
+        d="M220 320 300 250l80 70M238 306v84h124v-84"
+        fill="none"
+        stroke="rgba(255,255,255,0.35)"
+        strokeWidth="8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </Box>
   );
 }

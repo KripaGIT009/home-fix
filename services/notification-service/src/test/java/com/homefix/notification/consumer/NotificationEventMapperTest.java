@@ -7,7 +7,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.homefix.notification.domain.NotificationEvent;
 import com.homefix.notification.domain.NotificationEventType;
 import com.homefix.shared.outbox.kafka.KafkaProducerTemplate;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -15,9 +14,9 @@ import org.apache.kafka.common.header.internals.RecordHeader;
 import org.junit.jupiter.api.Test;
 
 /**
- * Verifies the mapper reads the stable {@code eventId} header, resolves the recipient, and treats
- * a missing header or unparseable body as a poison message (routed to the DLQ by the base
- * consumer).
+ * Verifies the mapper reads the stable {@code eventId} header, extracts the user ids and non-PII
+ * attributes under the field names producers actually use, and treats a missing header or
+ * unparseable body as a poison message (routed to the DLQ by the base consumer).
  */
 class NotificationEventMapperTest {
 
@@ -34,28 +33,63 @@ class NotificationEventMapperTest {
     }
 
     @Test
-    void mapsEventIdRecipientAndAttributes() {
+    void mapsEventIdParticipantsAndBookingReferenceFromProducerFieldName() {
         UUID eventId = UUID.randomUUID();
         UUID customerId = UUID.randomUUID();
-        String json = "{\"bookingId\":\"" + UUID.randomUUID() + "\",\"bookingReference\":\"BR-9\","
-                + "\"customerId\":\"" + customerId + "\",\"mobileNumber\":\"+911\"}";
+        UUID providerId = UUID.randomUUID();
+        // booking-service names the field "reference".
+        String json = "{\"bookingId\":\"" + UUID.randomUUID() + "\",\"reference\":\"BR-9\","
+                + "\"customerId\":\"" + customerId + "\",\"providerId\":\"" + providerId + "\"}";
 
-        NotificationEvent event = mapper.map(NotificationEventType.BOOKING_CREATED, record(json, eventId));
+        InboundEvent event = mapper.map(NotificationEventType.BOOKING_CREATED, record(json, eventId));
 
+        assertThat(event.eventType()).isEqualTo(NotificationEventType.BOOKING_CREATED);
         assertThat(event.kafkaEventId()).isEqualTo(eventId);
-        assertThat(event.recipientUserId()).isEqualTo(customerId);
+        assertThat(event.participants().customerId()).isEqualTo(customerId);
+        assertThat(event.participants().providerId()).isEqualTo(providerId);
         assertThat(event.attributes()).containsEntry("bookingReference", "BR-9");
-        assertThat(event.contact().mobileNumber()).isEqualTo("+911");
     }
 
     @Test
-    void explicitRecipientOverridesCustomerId() {
-        UUID recipient = UUID.randomUUID();
-        String json = "{\"recipientUserId\":\"" + recipient + "\",\"customerId\":\"" + UUID.randomUUID() + "\"}";
+    void legacyBookingReferenceSpellingIsStillAccepted() {
+        String json = "{\"bookingReference\":\"BR-10\",\"customerId\":\"" + UUID.randomUUID() + "\"}";
 
-        NotificationEvent event = mapper.map(NotificationEventType.JOB_STARTED, record(json, UUID.randomUUID()));
+        InboundEvent event = mapper.map(NotificationEventType.JOB_STARTED, record(json, UUID.randomUUID()));
 
-        assertThat(event.recipientUserId()).isEqualTo(recipient);
+        assertThat(event.attributes()).containsEntry("bookingReference", "BR-10");
+    }
+
+    @Test
+    void mapsReviewParticipantsAndComplaintStatus() {
+        UUID reviewer = UUID.randomUUID();
+        UUID reviewee = UUID.randomUUID();
+        String review = "{\"reviewerId\":\"" + reviewer + "\",\"revieweeId\":\"" + reviewee + "\"}";
+        InboundEvent reviewEvent = mapper.map(NotificationEventType.REVIEW_SUBMITTED,
+                record(review, UUID.randomUUID()));
+        assertThat(reviewEvent.participants().reviewerId()).isEqualTo(reviewer);
+        assertThat(reviewEvent.participants().revieweeId()).isEqualTo(reviewee);
+
+        String complaint = "{\"customerId\":\"" + UUID.randomUUID() + "\",\"newStatus\":\"RESOLVED\"}";
+        InboundEvent complaintEvent = mapper.map(NotificationEventType.COMPLAINT_STATUS_CHANGED,
+                record(complaint, UUID.randomUUID()));
+        assertThat(complaintEvent.attributes()).containsEntry("complaintStatus", "RESOLVED");
+
+        String cancelled = "{\"customerId\":\"" + UUID.randomUUID() + "\",\"status\":\"SEARCHING_FAILED\"}";
+        InboundEvent cancelledEvent = mapper.map(NotificationEventType.BOOKING_CANCELLED,
+                record(cancelled, UUID.randomUUID()));
+        assertThat(cancelledEvent.attributes()).containsEntry("bookingStatus", "SEARCHING_FAILED");
+    }
+
+    @Test
+    void contactFieldsOnTheEventAreIgnored() {
+        // Contact details come from the Auth Service, never from the event body.
+        String json = "{\"customerId\":\"" + UUID.randomUUID() + "\",\"mobileNumber\":\"+911\","
+                + "\"emailAddress\":\"a@b.c\"}";
+
+        InboundEvent event = mapper.map(NotificationEventType.BOOKING_CREATED, record(json, UUID.randomUUID()));
+
+        assertThat(event.attributes()).doesNotContainKeys("mobileNumber", "emailAddress");
+        assertThat(event.attributes().values()).doesNotContain("+911", "a@b.c");
     }
 
     @Test
@@ -69,13 +103,6 @@ class NotificationEventMapperTest {
     void unparseableBodyIsPoison() {
         assertThatThrownBy(() -> mapper.map(NotificationEventType.BOOKING_CREATED,
                 record("not-json", UUID.randomUUID())))
-                .isInstanceOf(IllegalStateException.class);
-    }
-
-    @Test
-    void missingRecipientIsPoison() {
-        assertThatThrownBy(() -> mapper.map(NotificationEventType.BOOKING_CREATED,
-                record("{}", UUID.randomUUID())))
                 .isInstanceOf(IllegalStateException.class);
     }
 }

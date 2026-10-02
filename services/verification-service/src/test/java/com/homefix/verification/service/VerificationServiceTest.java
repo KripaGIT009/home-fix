@@ -11,6 +11,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -27,6 +28,8 @@ import com.homefix.verification.dispatch.DispatchPoolPort;
 import com.homefix.verification.domain.DocumentType;
 import com.homefix.verification.domain.Verification;
 import com.homefix.verification.domain.VerificationAuditEntry;
+import com.homefix.verification.domain.VerificationDocument;
+import com.homefix.verification.domain.VerificationQueueRow;
 import com.homefix.verification.domain.VerificationStatus;
 import com.homefix.verification.notification.ProviderNotificationPort;
 import com.homefix.verification.storage.DocumentStoragePort;
@@ -411,6 +414,113 @@ class VerificationServiceTest {
 
             int after = repository.findByProviderId(providerId).orElseThrow().getAuditTrail().size();
             assertThat(after).isEqualTo(before);
+        }
+    }
+
+    // ============================= Admin Portal views (Req 19.2, 19.3) ===========
+
+    @Nested
+    class AdminPortalViews {
+
+        @Test
+        void reinstate_returnsASuspendedProviderToApprovedWithAnAuditEntry() {
+            UUID providerId = seedApprovedProvider();
+            UUID admin = UUID.randomUUID();
+            service.suspend(providerId, admin, "complaint upheld");
+
+            Verification v = service.reinstate(providerId, admin, null);
+
+            assertThat(v.getStatus()).isEqualTo(VerificationStatus.APPROVED);
+            VerificationAuditEntry last = v.getAuditTrail().get(v.getAuditTrail().size() - 1);
+            assertThat(last.getFromState()).isEqualTo(VerificationStatus.SUSPENDED);
+            assertThat(last.getActorId()).isEqualTo(admin);
+            assertThat(last.getReason()).isEqualTo("Admin reinstated provider");
+        }
+
+        @Test
+        void reinstate_neverPerformsAFirstTimeApproval() {
+            // BACKGROUND_CHECK_COMPLETED -> APPROVED is a legal transition, but it is an approval,
+            // not a reinstatement: reinstate must refuse it.
+            stubStorage();
+            UUID providerId = UUID.randomUUID();
+            UUID admin = UUID.randomUUID();
+            service.submitDocuments(providerId, allRequiredDocuments(), providerId);
+            service.markDocumentsVerified(providerId, admin, null);
+            service.completeBackgroundCheck(providerId, admin, "clear");
+
+            assertThatThrownBy(() -> service.reinstate(providerId, admin, null))
+                    .isInstanceOf(VerificationException.class)
+                    .satisfies(e -> {
+                        VerificationException ve = (VerificationException) e;
+                        assertThat(ve.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                        assertThat(ve.getErrorCode()).isEqualTo("INVALID_STATE_TRANSITION");
+                        assertThat(ve.getDetails()).contains("currentState=BACKGROUND_CHECK_COMPLETED");
+                    });
+            assertThat(repository.findByProviderId(providerId).orElseThrow().getStatus())
+                    .isEqualTo(VerificationStatus.BACKGROUND_CHECK_COMPLETED);
+        }
+
+        @Test
+        void reviewQueue_listsOnlySubmittedProvidersWithTheirDocumentCount() {
+            stubStorage();
+            UUID waiting = UUID.randomUUID();
+            service.submitDocuments(waiting, allRequiredDocuments(), waiting);
+            UUID approved = seedApprovedProvider();
+
+            List<VerificationQueueRow> queue = service.reviewQueue(200);
+
+            assertThat(queue).extracting(VerificationQueueRow::providerId).containsExactly(waiting);
+            assertThat(queue.get(0).documentCount()).isEqualTo(3L);
+            assertThat(queue.get(0).submittedAt()).isNotNull();
+            assertThat(queue).extracting(VerificationQueueRow::providerId).doesNotContain(approved);
+        }
+
+        @Test
+        void reviewQueue_honoursTheLimit() {
+            stubStorage();
+            for (int i = 0; i < 3; i++) {
+                UUID providerId = UUID.randomUUID();
+                service.submitDocuments(providerId, allRequiredDocuments(), providerId);
+            }
+
+            assertThat(service.reviewQueue(2)).hasSize(2);
+        }
+
+        @Test
+        void documentsOf_returnsTheDocumentsOnFile() {
+            stubStorage();
+            UUID providerId = UUID.randomUUID();
+            service.submitDocuments(providerId, allRequiredDocuments(), providerId);
+
+            List<VerificationDocument> documents = service.documentsOf(providerId);
+
+            assertThat(documents).extracting(VerificationDocument::getDocumentType)
+                    .containsExactlyInAnyOrder(DocumentType.GOVERNMENT_ID, DocumentType.ADDRESS_PROOF,
+                            DocumentType.SKILL_CERTIFICATION);
+        }
+
+        @Test
+        void documentsOf_unknownProvider_isNotFound() {
+            assertThatThrownBy(() -> service.documentsOf(UUID.randomUUID()))
+                    .isInstanceOf(VerificationException.class)
+                    .satisfies(e -> assertThat(((VerificationException) e).getErrorCode())
+                            .isEqualTo("VERIFICATION_NOT_FOUND"));
+        }
+
+        @Test
+        void statusesAmong_reportsKnownProvidersAndOmitsUnknownOnes() {
+            stubStorage();
+            UUID submitted = UUID.randomUUID();
+            service.submitDocuments(submitted, allRequiredDocuments(), submitted);
+            UUID approved = seedApprovedProvider();
+            UUID unknown = UUID.randomUUID();
+
+            Map<UUID, VerificationStatus> statuses = service.statusesAmong(List.of(submitted, approved, unknown));
+
+            assertThat(statuses).containsOnly(
+                    Map.entry(submitted, VerificationStatus.DOCUMENT_SUBMITTED),
+                    Map.entry(approved, VerificationStatus.APPROVED));
+            assertThat(service.statusesAmong(List.of())).isEmpty();
         }
     }
 }

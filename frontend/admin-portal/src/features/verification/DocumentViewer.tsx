@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Box, Stack, Tab, Tabs, Typography } from '@mui/material';
+import { Box, Link, Stack, Tab, Tabs, Typography } from '@mui/material';
 import type { VerificationDocument } from './api';
 
 interface DocumentViewerProps {
@@ -7,13 +7,13 @@ interface DocumentViewerProps {
 }
 
 /** True when the content type is a PDF the browser can render in an iframe. */
-function isPdf(contentType: string): boolean {
-  return contentType.toLowerCase().includes('pdf');
+function isPdf(contentType: string | null | undefined): boolean {
+  return (contentType ?? '').toLowerCase().includes('pdf');
 }
 
 /** True when the content type is a browser-renderable image. */
-function isImage(contentType: string): boolean {
-  return contentType.toLowerCase().startsWith('image/');
+function isImage(contentType: string | null | undefined): boolean {
+  return (contentType ?? '').toLowerCase().startsWith('image/');
 }
 
 /**
@@ -32,7 +32,8 @@ const DOCUMENT_SANDBOX = 'allow-same-origin allow-scripts';
  * inside the dashboard without a separate download: PDFs are embedded in an
  * <iframe> (which uses the browser's native PDF renderer) and images in an
  * <img>. A tab strip switches between documents when a provider submitted more
- * than one.
+ * than one. A document without a URL (storage could not sign one) is named but
+ * not previewed, so the reviewer knows it exists and why it is not shown.
  */
 export function DocumentViewer({ documents }: DocumentViewerProps) {
   const [active, setActive] = useState(0);
@@ -47,6 +48,8 @@ export function DocumentViewer({ documents }: DocumentViewerProps) {
 
   const current = documents[Math.min(active, documents.length - 1)];
   if (!current) return null;
+  const url = current.url ?? null;
+  const label = current.fileName ? `${current.type} — ${current.fileName}` : current.type;
 
   return (
     <Stack spacing={1.5}>
@@ -78,34 +81,46 @@ export function DocumentViewer({ documents }: DocumentViewerProps) {
           justifyContent: 'center',
         }}
       >
-        {isPdf(current.contentType) ? (
+        {!url ? (
+          <Typography variant="body2" color="text.secondary" sx={{ p: 3, textAlign: 'center' }}>
+            Preview isn&apos;t available for this document.
+          </Typography>
+        ) : isPdf(current.contentType) ? (
           <Box
             component="iframe"
-            src={current.url}
-            title={`${current.type} — ${current.fileName}`}
+            src={url}
+            title={label}
             sandbox={DOCUMENT_SANDBOX}
             sx={{ width: '100%', height: 560, border: 0 }}
           />
         ) : isImage(current.contentType) ? (
           <Box
             component="img"
-            src={current.url}
-            alt={`${current.type} — ${current.fileName}`}
+            src={url}
+            alt={label}
             sx={{ maxWidth: '100%', maxHeight: 560, objectFit: 'contain' }}
           />
         ) : (
           <Box
             component="iframe"
-            src={current.url}
-            title={`${current.type} — ${current.fileName}`}
+            src={url}
+            title={label}
             sandbox={DOCUMENT_SANDBOX}
             sx={{ width: '100%', height: 560, border: 0 }}
           />
         )}
       </Box>
-      <Typography variant="caption" color="text.secondary">
-        {current.fileName}
-      </Typography>
+      {current.fileName ? (
+        <Typography variant="caption" color="text.secondary">
+          {url ? (
+            <Link href={url} target="_blank" rel="noopener noreferrer">
+              {current.fileName}
+            </Link>
+          ) : (
+            current.fileName
+          )}
+        </Typography>
+      ) : null}
     </Stack>
   );
 }

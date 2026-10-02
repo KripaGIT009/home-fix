@@ -15,6 +15,9 @@ import java.util.UUID;
  *   JOB_STARTED         -> JobStarted
  *   JOB_COMPLETED       -> JobCompleted
  * </pre>
+ *
+ * <p>Every payload carries {@code customerId}: notification-service addresses all four events to
+ * the booking's customer and dead-letters any that lack it (Requirement 17.4, 17.5).
  */
 public final class JobExecutionEvents {
 
@@ -24,17 +27,19 @@ public final class JobExecutionEvents {
     }
 
     /** Published when the provider marks themselves on the way (PROVIDER_ON_THE_WAY). */
-    public record ProviderArriving(UUID bookingId, String reference, UUID providerId, Instant occurredAt) {
+    public record ProviderArriving(UUID bookingId, String reference, UUID customerId, UUID providerId,
+                                   Instant occurredAt) {
         public static final String EVENT_TYPE = "ProviderArriving";
     }
 
     /** Published when the provider confirms arrival (PROVIDER_ARRIVED). */
-    public record ProviderArrived(UUID bookingId, String reference, UUID providerId, Instant occurredAt) {
+    public record ProviderArrived(UUID bookingId, String reference, UUID customerId, UUID providerId,
+                                  Instant occurredAt) {
         public static final String EVENT_TYPE = "ProviderArrived";
     }
 
     /** Published when the provider starts work (JOB_STARTED), carrying the job start timestamp. */
-    public record JobStarted(UUID bookingId, String reference, UUID providerId,
+    public record JobStarted(UUID bookingId, String reference, UUID customerId, UUID providerId,
                              Instant startedAt, Instant occurredAt) {
         public static final String EVENT_TYPE = "JobStarted";
     }
@@ -43,7 +48,7 @@ public final class JobExecutionEvents {
      * Published when the job completes (JOB_COMPLETED), carrying the net working duration and
      * the final total (Requirement 11.6).
      */
-    public record JobCompleted(UUID bookingId, String reference, UUID providerId,
+    public record JobCompleted(UUID bookingId, String reference, UUID customerId, UUID providerId,
                                Instant completedAt, long netDurationSeconds,
                                java.math.BigDecimal finalTotal, Instant occurredAt) {
         public static final String EVENT_TYPE = "JobCompleted";

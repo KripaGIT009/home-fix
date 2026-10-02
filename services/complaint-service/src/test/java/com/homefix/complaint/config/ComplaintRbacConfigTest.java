@@ -212,6 +212,48 @@ class ComplaintRbacConfigTest {
                 .isEqualTo(HttpStatus.FORBIDDEN.value());
     }
 
+    // ------------------------------------------------------------------ Admin Portal surface
+
+    private static String adminComplaintPath() {
+        return "/admin/complaints/" + UUID.randomUUID();
+    }
+
+    @Test
+    void supportTierPassesThroughOnTheAdminComplaintListAndUpdate() throws Exception {
+        for (String role : List.of("ADMIN", "SUPER_ADMIN", "SUPPORT_AGENT")) {
+            authenticateAs(role);
+            for (String[] call : new String[][] {
+                    {"GET", "/admin/complaints"}, {"PATCH", adminComplaintPath()}}) {
+                FilterChain chain = mock(FilterChain.class);
+
+                MockHttpServletResponse response = invoke(call[0], call[1], chain);
+
+                assertThat(response.getStatus()).as(role + " " + call[0] + " " + call[1])
+                        .isEqualTo(HttpStatus.OK.value());
+                verify(chain, times(1)).doFilter(any(), any());
+            }
+        }
+    }
+
+    @Test
+    void otherRolesAreForbiddenOnTheAdminComplaintSurface() throws Exception {
+        for (String role : List.of("CUSTOMER", "SERVICE_PROVIDER", "FINANCE_ADMIN", "DISPATCHER")) {
+            authenticateAs(role);
+            for (String[] call : new String[][] {
+                    {"GET", "/admin/complaints"}, {"PATCH", adminComplaintPath()}}) {
+                assertThat(invoke(call[0], call[1], mock(FilterChain.class)).getStatus())
+                        .as(role + " " + call[0] + " " + call[1])
+                        .isEqualTo(HttpStatus.FORBIDDEN.value());
+            }
+        }
+    }
+
+    @Test
+    void unauthenticatedAdminComplaintListIsUnauthorized() throws Exception {
+        assertThat(invoke("GET", "/admin/complaints", mock(FilterChain.class)).getStatus())
+                .isEqualTo(HttpStatus.UNAUTHORIZED.value());
+    }
+
     // ------------------------------------------------------------------ public surface
 
     @Test

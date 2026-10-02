@@ -12,7 +12,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.math.BigDecimal;
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -30,7 +29,6 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import com.homefix.booking.domain.Booking;
-import com.homefix.booking.domain.BookingRepository;
 import com.homefix.booking.domain.BookingStatus;
 import com.homefix.booking.service.Actor;
 import com.homefix.booking.service.AddPartsCommand;
@@ -41,7 +39,8 @@ import com.homefix.booking.service.MediaService;
  * Web-layer tests for {@link JobExecutionController} (Task 15; Requirements 9.3-9.11,
  * 11.2-11.6). Each milestone endpoint must delegate to {@link JobExecutionService} with the
  * provider actor derived from the authentication, and the photo endpoint must resolve the
- * booking and store the media via {@link MediaService}.
+ * booking (with the same ownership rule as the milestones) and store the media via
+ * {@link MediaService}.
  */
 @ExtendWith(MockitoExtension.class)
 class JobExecutionControllerTest {
@@ -50,14 +49,13 @@ class JobExecutionControllerTest {
 
     @Mock private JobExecutionService jobExecution;
     @Mock private MediaService mediaService;
-    @Mock private BookingRepository bookingRepository;
 
     private MockMvc mvc;
 
     @BeforeEach
     void setUp() {
         mvc = MockMvcBuilders.standaloneSetup(
-                        new JobExecutionController(jobExecution, mediaService, bookingRepository))
+                        new JobExecutionController(jobExecution, mediaService))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }
@@ -203,7 +201,7 @@ class JobExecutionControllerTest {
     @Test
     void attachPhotoResolvesBookingAndStoresMedia() throws Exception {
         Booking b = booking(BookingStatus.PROVIDER_ARRIVED);
-        when(bookingRepository.findByReference("HFX-200")).thenReturn(Optional.of(b));
+        when(jobExecution.requireForProvider(eq("HFX-200"), any(Actor.class))).thenReturn(b);
 
         MockMultipartFile file = new MockMultipartFile("file", "before.jpg", "image/jpeg",
                 new byte[]{1, 2, 3});

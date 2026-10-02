@@ -53,14 +53,19 @@ export function JobDetailsScreen() {
 function DetailContent({ job }: { job: JobDetail }) {
   const navigate = useNavigate();
   const status = describeBookingStatus(job.status);
-  const navLink = buildNavigationDeepLink(job.coordinates.latitude, job.coordinates.longitude);
+  const navLink = job.coordinates
+    ? buildNavigationDeepLink(job.coordinates.latitude, job.coordinates.longitude)
+    : null;
 
   const showActiveCta =
+    job.status === 'PROVIDER_ASSIGNED' ||
     job.status === 'PROVIDER_ACCEPTED' ||
     job.status === 'PROVIDER_ON_THE_WAY' ||
     job.status === 'PROVIDER_ARRIVED' ||
     job.status === 'JOB_STARTED' ||
-    job.status === 'JOB_PAUSED';
+    job.status === 'JOB_PAUSED' ||
+    job.status === 'ADDITIONAL_QUOTE_REQUIRED' ||
+    job.status === 'CUSTOMER_APPROVAL_PENDING';
   const showCompleteCta = job.status === 'JOB_COMPLETED';
 
   return (
@@ -91,13 +96,20 @@ function DetailContent({ job }: { job: JobDetail }) {
           </Stack>
 
           <Stack spacing={1} sx={{ mt: 2 }}>
-            <Stack direction="row" spacing={1} alignItems="center">
-              <PersonRoundedIcon fontSize="small" color="action" aria-hidden />
-              <Typography variant="body2">{job.customerDisplayName}</Typography>
-            </Stack>
+            {job.customerDisplayName ? (
+              <Stack direction="row" spacing={1} alignItems="center">
+                <PersonRoundedIcon fontSize="small" color="action" aria-hidden />
+                <Typography variant="body2">{job.customerDisplayName}</Typography>
+              </Stack>
+            ) : null}
             <Stack direction="row" spacing={1} alignItems="flex-start">
               <PlaceRoundedIcon fontSize="small" color="action" aria-hidden />
-              <Typography variant="body2">{job.serviceAddress}</Typography>
+              <Typography
+                variant="body2"
+                color={job.serviceAddress ? 'text.primary' : 'text.secondary'}
+              >
+                {job.serviceAddress ?? 'Service address not available yet'}
+              </Typography>
             </Stack>
             <Stack direction="row" spacing={1} alignItems="center">
               <ScheduleRoundedIcon fontSize="small" color="action" aria-hidden />
@@ -105,18 +117,20 @@ function DetailContent({ job }: { job: JobDetail }) {
             </Stack>
           </Stack>
 
-          <Button
-            component={Link}
-            href={navLink}
-            target="_blank"
-            rel="noopener"
-            variant="outlined"
-            startIcon={<DirectionsRoundedIcon />}
-            sx={{ mt: 2 }}
-            fullWidth
-          >
-            Navigate to location
-          </Button>
+          {navLink ? (
+            <Button
+              component={Link}
+              href={navLink}
+              target="_blank"
+              rel="noopener"
+              variant="outlined"
+              startIcon={<DirectionsRoundedIcon />}
+              sx={{ mt: 2 }}
+              fullWidth
+            >
+              Navigate to location
+            </Button>
+          ) : null}
         </CardContent>
       </Card>
 

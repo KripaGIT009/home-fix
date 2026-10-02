@@ -28,15 +28,19 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.homefix.booking.domain.Booking;
 import com.homefix.booking.domain.BookingAudit;
 import com.homefix.booking.domain.BookingRepository;
 import com.homefix.booking.domain.BookingStatus;
 import com.homefix.booking.service.Actor;
 import com.homefix.booking.service.BookingService;
+import com.homefix.booking.service.DispatchOutcomeService;
 import com.homefix.shared.outbox.OutboxEventEntity;
 import com.homefix.shared.outbox.OutboxEventRepository;
 
@@ -66,7 +70,8 @@ import io.jsonwebtoken.security.Keys;
  *   <li><b>Dispatch Engine, Payment, Invoice, Notification</b> — asynchronous, event-driven
  *       consumers. The Booking Service integrates with them by writing to the transactional
  *       outbox; these tests assert the exact outbox rows the Outbox Processor would relay to
- *       Kafka (BookingCreated, ProviderArriving, ProviderArrived, JobStarted, JobCompleted).
+ *       Kafka (BookingCreated, ProviderAssigned, ProviderArriving, ProviderArrived, JobStarted,
+ *       JobCompleted, BookingCancelled).
  *       The provider-acceptance / dispatch-outcome and payment transitions that the Dispatch
  *       Engine and Payment Service drive in staging are simulated here via the Booking
  *       Service's own guarded transition API, since those services own those transitions.</li>
@@ -97,6 +102,15 @@ class EndToEndBookingFlowsIT {
 
     @Autowired
     private BookingService bookingService;
+
+    @Autowired
+    private DispatchOutcomeService dispatchOutcomeService;
+
+    @Autowired
+    private TransactionTemplate transactionTemplate;
+
+    @Autowired
+    private ObjectMapper objectMapper;
 
     private final UUID customerId = UUID.randomUUID();
     private final UUID providerId = UUID.randomUUID();
@@ -170,8 +184,26 @@ class EndToEndBookingFlowsIT {
         assertThat(finalBooking.getStatus()).isEqualTo(BookingStatus.PAYMENT_COMPLETED);
         assertThat(finalBooking.getNetDurationSeconds()).isNotNull();
         assertContiguousAudit(reference);
-        assertOutboxHasAll(reference, "BookingCreated", "ProviderArriving", "ProviderArrived",
-                "JobStarted", "JobCompleted");
+        assertOutboxHasAll(reference, "BookingCreated", "ProviderAssigned", "ProviderArriving",
+                "ProviderArrived", "JobStarted", "JobCompleted");
+        // This flow rests in PROVIDER_ASSIGNED (assigned via the guarded transition, accepted in a
+        // later call), so the assignment is announced exactly once.
+        JsonNode assigned = singleOutboxPayload(reference, "ProviderAssigned");
+        assertThat(assigned.get("customerId").asText()).isEqualTo(customerId.toString());
+        assertThat(assigned.get("providerId").asText()).isEqualTo(providerId.toString());
+        assertThat(outboxRows(reference, "BookingCancelled")).isEmpty();
+
+        // Every provider milestone names the customer, whom notification-service addresses
+        // (Requirement 17.4); without customerId these were dead-lettered.
+        for (String milestone : List.of("ProviderArriving", "ProviderArrived", "JobStarted", "JobCompleted")) {
+            JsonNode event = singleOutboxPayload(reference, milestone);
+            assertThat(event.get("customerId").asText()).as("%s customerId", milestone)
+                    .isEqualTo(customerId.toString());
+            assertThat(event.get("providerId").asText()).as("%s providerId", milestone)
+                    .isEqualTo(providerId.toString());
+            assertThat(event.get("reference").asText()).as("%s reference", milestone)
+                    .isEqualTo(reference);
+        }
     }
 
     // ---------------------------------------------------------------------
@@ -260,7 +292,52 @@ class EndToEndBookingFlowsIT {
             // intent that the Notification Service acts on (Requirement 8.9).
             assertContiguousAudit(reference);
             assertThat(auditReasons(reference)).anyMatch(r -> r != null && r.toLowerCase().contains("customer notified"));
+
+            // The customer is told through BookingCancelled, flagged as a dispatch failure.
+            JsonNode event = singleOutboxPayload(reference, "BookingCancelled");
+            assertThat(event.get("status").asText()).isEqualTo("SEARCHING_FAILED");
+            assertThat(event.get("customerId").asText()).isEqualTo(customerId.toString());
         }
+
+        @Test
+        @DisplayName("the Dispatch Engine's searching-failed callback writes exactly one BookingCancelled")
+        void searchingFailedCallbackPublishesBookingCancelledOnce() {
+            String reference = createAndConfirmScheduled();
+            UUID bookingId = requireBooking(reference).getId();
+
+            dispatchOutcomeService.markSearchingFailed(bookingId);
+            dispatchOutcomeService.markSearchingFailed(bookingId); // redelivered callback
+
+            JsonNode event = singleOutboxPayload(reference, "BookingCancelled");
+            assertThat(event.get("bookingId").asText()).isEqualTo(bookingId.toString());
+            assertThat(event.get("previousStatus").asText()).isEqualTo("SEARCHING_PROVIDER");
+            assertThat(event.get("status").asText()).isEqualTo("SEARCHING_FAILED");
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Flow 3b — Dispatch acceptance callback does not announce the transient assignment
+    // ---------------------------------------------------------------------
+
+    @Test
+    @DisplayName("Dispatch acceptance walks through PROVIDER_ASSIGNED to PROVIDER_ACCEPTED, audits both "
+            + "steps, and writes no ProviderAssigned")
+    void dispatchAcceptancePublishesNoProviderAssigned() {
+        String reference = createAndConfirmScheduled();
+        UUID bookingId = requireBooking(reference).getId();
+
+        dispatchOutcomeService.markProviderAccepted(bookingId, providerId);
+        dispatchOutcomeService.markProviderAccepted(bookingId, providerId); // redelivered callback
+
+        assertThat(requireBooking(reference).getStatus()).isEqualTo(BookingStatus.PROVIDER_ACCEPTED);
+        assertThat(requireBooking(reference).getProviderId()).isEqualTo(providerId);
+        // The customer hears about the acceptance from the Dispatch Engine's ProviderAccepted; a
+        // ProviderAssigned committed alongside it would only be noise.
+        assertThat(outboxRows(reference, "ProviderAssigned")).isEmpty();
+        // The intermediate step is still in the contiguous audit trail (Property 9).
+        assertContiguousAudit(reference);
+        assertThat(auditTrail(bookingId)).extracting(BookingAudit::getToState)
+                .contains(BookingStatus.PROVIDER_ASSIGNED, BookingStatus.PROVIDER_ACCEPTED);
     }
 
     // ---------------------------------------------------------------------
@@ -325,6 +402,19 @@ class EndToEndBookingFlowsIT {
         // remainder-refund is initiated by the Payment Service in staging (Requirement 9.17).
         assertThat(booking.getCancellationFee()).isNotNull();
         assertThat(booking.getCancellationFee()).isBetween(new BigDecimal("0.00"), new BigDecimal("999.99"));
+
+        // Exactly one BookingCancelled, carrying everything chat needs to close the channel and
+        // notification needs to address both participants (Requirement 18.5, 22.1).
+        JsonNode event = singleOutboxPayload(reference, "BookingCancelled");
+        assertThat(event.get("bookingId").asText()).isEqualTo(booking.getId().toString());
+        assertThat(event.get("customerId").asText()).isEqualTo(customerId.toString());
+        assertThat(event.get("providerId").asText()).isEqualTo(providerId.toString());
+        assertThat(event.get("previousStatus").asText()).isEqualTo("PROVIDER_ON_THE_WAY");
+        assertThat(event.get("status").asText()).isEqualTo("CANCELLED");
+        assertThat(event.get("cancelledByRole").asText()).isEqualTo("CUSTOMER");
+        assertThat(event.get("reason").asText()).isEqualTo("customer no longer available");
+        assertThat(event.get("cancellationFee").decimalValue())
+                .isEqualByComparingTo(booking.getCancellationFee());
     }
 
     @Test
@@ -339,6 +429,113 @@ class EndToEndBookingFlowsIT {
         Booking booking = requireBooking(reference);
         assertThat(booking.getStatus()).isEqualTo(BookingStatus.CANCELLED);
         assertThat(booking.getCancellationFee()).isEqualByComparingTo(new BigDecimal("0.00"));
+
+        JsonNode event = singleOutboxPayload(reference, "BookingCancelled");
+        assertThat(event.get("previousStatus").asText()).isEqualTo("SEARCHING_PROVIDER");
+        // Cancelled before dispatch: no provider yet.
+        assertThat(event.get("providerId").isNull()).isTrue();
+    }
+
+    @Test
+    @DisplayName("A cancellation by the assigned provider writes exactly one BookingCancelled")
+    void cancellationByProviderPublishesBookingCancelled() {
+        String reference = createAndConfirmScheduled();
+        dispatchOutcomeService.markProviderAccepted(requireBooking(reference).getId(), providerId);
+
+        ResponseEntity<Map> cancelled = rest.exchange(url("/bookings/" + reference + "/cancellation"),
+                HttpMethod.POST, jsonEntity(providerToken(), "{\"reason\":\"vehicle broke down\"}"),
+                Map.class);
+        assertThat(cancelled.getStatusCode()).isEqualTo(HttpStatus.OK);
+
+        JsonNode event = singleOutboxPayload(reference, "BookingCancelled");
+        assertThat(event.get("cancelledByRole").asText()).isEqualTo("SERVICE_PROVIDER");
+        assertThat(event.get("cancelledBy").asText()).isEqualTo(providerId.toString());
+        assertThat(event.get("providerId").asText()).isEqualTo(providerId.toString());
+    }
+
+    @Test
+    @DisplayName("A rejected cancellation writes no BookingCancelled")
+    void rejectedCancellationPublishesNothing() {
+        String reference = driveToJobStarted();
+
+        ResponseEntity<Map> rejected = rest.exchange(url("/bookings/" + reference + "/cancellation"),
+                HttpMethod.POST, jsonEntity(customerToken(), "{\"reason\":\"too late\"}"), Map.class);
+        assertThat(rejected.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+
+        assertThat(requireBooking(reference).getStatus()).isEqualTo(BookingStatus.JOB_STARTED);
+        assertThat(outboxRows(reference, "BookingCancelled")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("BookingCancelled shares the cancellation's transaction: a rollback discards both")
+    void bookingCancelledRollsBackWithTheStatusChange() {
+        String reference = createAndConfirmScheduled();
+
+        transactionTemplate.executeWithoutResult(tx -> {
+            bookingService.cancel(reference, Actor.user(customerId, "CUSTOMER"), "rolled back");
+            // Inside the transaction both writes are visible...
+            assertThat(outboxRows(reference, "BookingCancelled")).hasSize(1);
+            tx.setRollbackOnly();
+        });
+
+        // ...and after the rollback neither the status change nor the event survives.
+        assertThat(requireBooking(reference).getStatus()).isEqualTo(BookingStatus.SEARCHING_PROVIDER);
+        assertThat(outboxRows(reference, "BookingCancelled")).isEmpty();
+    }
+
+    // ---------------------------------------------------------------------
+    // Flow 6 — Read endpoints through the real security chain
+    // ---------------------------------------------------------------------
+
+    @Test
+    @DisplayName("History and detail reach the customer, the assigned provider once assigned, and "
+            + "nobody else: RBAC refuses a provider-only history, ownership answers strangers 404")
+    void readEndpointsHonourRolesAndOwnership() {
+        String reference = createAndConfirmScheduled();
+        UUID bookingId = requireBooking(reference).getId();
+
+        // Literal /history wins over /{bookingKey}; the page is 1-based and the caller's own.
+        ResponseEntity<Map> history = get("/bookings/history?page=1&pageSize=5", customerToken());
+        assertThat(history.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(history.getBody().get("page")).isEqualTo(1);
+        assertThat(history.getBody().get("totalItems")).isEqualTo(1);
+        Map<?, ?> row = (Map<?, ?>) ((List<?>) history.getBody().get("items")).get(0);
+        assertThat(row.get("referenceNumber")).isEqualTo(reference);
+        assertThat(row.get("status")).isEqualTo("SEARCHING_PROVIDER");
+        assertThat(row.get("currency")).isEqualTo("INR");
+        // Boot's mapper writes the date as an ISO-8601 string, which the app parses.
+        assertThat(Instant.parse((String) row.get("date"))).isNotNull();
+
+        // Detail by id and by reference, for the customer.
+        ResponseEntity<Map> detail = get("/bookings/" + bookingId, customerToken());
+        assertThat(detail.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(detail.getBody().get("referenceNumber")).isEqualTo(reference);
+        assertThat(detail.getBody()).doesNotContainKey("providerId");
+        assertThat(get("/bookings/" + reference, customerToken()).getStatusCode()).isEqualTo(HttpStatus.OK);
+
+        // A stranger and a not-yet-assigned provider see no such booking.
+        assertThat(get("/bookings/" + bookingId, token(UUID.randomUUID(), "CUSTOMER")).getStatusCode())
+                .isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(get("/bookings/" + bookingId, providerToken()).getStatusCode())
+                .isEqualTo(HttpStatus.NOT_FOUND);
+        // History is a customer feature: RBAC refuses a provider-only caller outright.
+        assertThat(get("/bookings/history", providerToken()).getStatusCode())
+                .isEqualTo(HttpStatus.FORBIDDEN);
+
+        assignProvider(reference);
+        ResponseEntity<Map> asProvider = get("/bookings/" + bookingId, providerToken());
+        assertThat(asProvider.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(asProvider.getBody().get("providerId")).isEqualTo(providerId.toString());
+        assertThat(asProvider.getBody().get("status")).isEqualTo("PROVIDER_ASSIGNED");
+
+        // Staff read any booking.
+        assertThat(get("/bookings/" + bookingId, token(UUID.randomUUID(), "SUPPORT_AGENT")).getStatusCode())
+                .isEqualTo(HttpStatus.OK);
+
+        // Bad paging is a 400 in the service's envelope, not Spring's bare error.
+        ResponseEntity<Map> bad = get("/bookings/history?pageSize=51", customerToken());
+        assertThat(bad.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(bad.getBody().get("errorCode")).isEqualTo("VALIDATION_ERROR");
     }
 
     // =====================================================================
@@ -368,14 +565,15 @@ class EndToEndBookingFlowsIT {
     }
 
     /**
-     * Simulates the Dispatch Engine assigning a provider: PROVIDER_ASSIGNED and stamping the
-     * provider id onto the booking (as the ProviderAccepted consumer would in staging).
+     * Simulates the Dispatch Engine assigning a provider: stamps the provider id onto the booking,
+     * then transitions to PROVIDER_ASSIGNED, in the same order as {@code DispatchOutcomeService}
+     * so the ProviderAssigned event names the provider.
      */
     void assignProvider(String reference) {
-        transitionAsSystem(reference, BookingStatus.PROVIDER_ASSIGNED, "Dispatch assigned provider");
         Booking booking = requireBooking(reference);
         booking.setProviderId(providerId);
         bookingRepository.save(booking);
+        transitionAsSystem(reference, BookingStatus.PROVIDER_ASSIGNED, "Dispatch assigned provider");
     }
 
     /** Applies a guarded transition through the service layer as the system actor. */
@@ -407,6 +605,10 @@ class EndToEndBookingFlowsIT {
 
     private String url(String path) {
         return "http://localhost:" + port + path;
+    }
+
+    private ResponseEntity<Map> get(String path, String token) {
+        return rest.exchange(url(path), HttpMethod.GET, new HttpEntity<>(authHeaders(token)), Map.class);
     }
 
     private ResponseEntity<Map> post(String pathSuffix, String token) {
@@ -490,6 +692,25 @@ class EndToEndBookingFlowsIT {
                 .map(OutboxEventEntity::getEventType)
                 .toList();
         assertThat(published).contains(eventTypes);
+    }
+
+    private List<OutboxEventEntity> outboxRows(String reference, String eventType) {
+        UUID bookingId = requireBooking(reference).getId();
+        return outboxRepository.findAll().stream()
+                .filter(e -> e.getAggregateId().equals(bookingId) && e.getEventType().equals(eventType))
+                .toList();
+    }
+
+    /** Asserts exactly one {@code eventType} row (aggregate "Booking") for the booking and parses it. */
+    private JsonNode singleOutboxPayload(String reference, String eventType) {
+        List<OutboxEventEntity> rows = outboxRows(reference, eventType);
+        assertThat(rows).as("%s outbox rows for %s", eventType, reference).hasSize(1);
+        assertThat(rows.get(0).getAggregateType()).isEqualTo("Booking");
+        try {
+            return objectMapper.readTree(rows.get(0).getPayload());
+        } catch (Exception e) {
+            throw new AssertionError("Unparseable " + eventType + " payload", e);
+        }
     }
 
     /**

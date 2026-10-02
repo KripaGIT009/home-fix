@@ -1,7 +1,16 @@
-import { createBrowserRouter, Navigate } from 'react-router-dom';
+import { createBrowserRouter } from 'react-router-dom';
 import { PlaceholderScreen } from '@components/PlaceholderScreen';
+import { HomeRedirect } from '@components/HomeRedirect';
 import { RequireAuth } from '@components/RequireAuth';
-import { ADMIN_ROLES, REPORT_ROLES, SUPER_ADMIN_ROLES } from '@config/roles';
+import {
+  ADMIN_ROLES,
+  BOOKING_ROLES,
+  DISPATCH_VIEW_ROLES,
+  PAYMENT_ROLES,
+  REPORT_ROLES,
+  SUPER_ADMIN_ROLES,
+  SUPPORT_ROLES,
+} from '@config/roles';
 import { LoginScreen } from '@features/auth/LoginScreen';
 import { DashboardScreen } from '@features/dashboard/DashboardScreen';
 import { UserManagementScreen } from '@features/users/UserManagementScreen';
@@ -28,17 +37,26 @@ import { SystemConfigScreen } from '@features/system/SystemConfigScreen';
  * is not the same as being staff, and a CUSTOMER or SERVICE_PROVIDER token is a
  * perfectly valid session. The role sets live in @config/roles and mirror the
  * sidebar's, so a user never sees a link to a module the guard will refuse:
- * - general modules: ADMIN + SUPER_ADMIN
- * - Report Generation: ADMIN + SUPER_ADMIN + FINANCE_ADMIN
+ * - general modules (incl. the Dashboard): ADMIN + SUPER_ADMIN
+ * - Booking Management: + SUPPORT_AGENT + DISPATCHER
+ * - Payments & Refunds, Report Generation: + FINANCE_ADMIN
+ * - Complaints, Review Moderation: + SUPPORT_AGENT
+ * - Dispatch Rules: + DISPATCHER to view; saving is SUPER_ADMIN-only (in-screen)
  * - System Configuration: SUPER_ADMIN only (Requirement 19.6/19.7)
  *
- * Unauthorized-but-authenticated users get a Forbidden screen, mirroring the
- * backend's 403, rather than being bounced to login.
+ * `/` resolves to the user's landing module (HomeRedirect), so staff without
+ * the Dashboard never start on a Forbidden screen. Unauthorized-but-
+ * authenticated users get a Forbidden screen, mirroring the backend's 403,
+ * rather than being bounced to login.
  */
 export const router = createBrowserRouter([
   {
     path: '/',
-    element: <Navigate to="/dashboard" replace />,
+    element: (
+      <RequireAuth>
+        <HomeRedirect />
+      </RequireAuth>
+    ),
   },
   {
     path: '/login',
@@ -95,7 +113,7 @@ export const router = createBrowserRouter([
   {
     path: '/dispatch',
     element: (
-      <RequireAuth roles={ADMIN_ROLES}>
+      <RequireAuth roles={DISPATCH_VIEW_ROLES}>
         <DispatchRuleScreen />
       </RequireAuth>
     ),
@@ -103,7 +121,7 @@ export const router = createBrowserRouter([
   {
     path: '/bookings',
     element: (
-      <RequireAuth roles={ADMIN_ROLES}>
+      <RequireAuth roles={BOOKING_ROLES}>
         <BookingManagementScreen />
       </RequireAuth>
     ),
@@ -111,7 +129,7 @@ export const router = createBrowserRouter([
   {
     path: '/payments',
     element: (
-      <RequireAuth roles={ADMIN_ROLES}>
+      <RequireAuth roles={PAYMENT_ROLES}>
         <PaymentManagementScreen />
       </RequireAuth>
     ),
@@ -119,7 +137,7 @@ export const router = createBrowserRouter([
   {
     path: '/complaints',
     element: (
-      <RequireAuth roles={ADMIN_ROLES}>
+      <RequireAuth roles={SUPPORT_ROLES}>
         <ComplaintManagementScreen />
       </RequireAuth>
     ),
@@ -127,7 +145,7 @@ export const router = createBrowserRouter([
   {
     path: '/reviews',
     element: (
-      <RequireAuth roles={ADMIN_ROLES}>
+      <RequireAuth roles={SUPPORT_ROLES}>
         <ReviewModerationScreen />
       </RequireAuth>
     ),

@@ -16,7 +16,15 @@ import AssessmentRoundedIcon from '@mui/icons-material/AssessmentRounded';
 import HistoryRoundedIcon from '@mui/icons-material/HistoryRounded';
 import SettingsRoundedIcon from '@mui/icons-material/SettingsRounded';
 import type { UserRole } from '@stores/authStore';
-import { ADMIN_ROLES, REPORT_ROLES, SUPER_ADMIN_ROLES } from './roles';
+import {
+  ADMIN_ROLES,
+  BOOKING_ROLES,
+  DISPATCH_VIEW_ROLES,
+  PAYMENT_ROLES,
+  REPORT_ROLES,
+  SUPER_ADMIN_ROLES,
+  SUPPORT_ROLES,
+} from './roles';
 
 /** A single sidebar navigation entry / operational module (Requirement 19.2). */
 export interface NavItem {
@@ -35,6 +43,11 @@ export interface NavItem {
  * The 15 operational modules from Requirement 19.2, plus the Dashboard. This
  * list is the single source of truth for both the sidebar (AppShell) and the
  * router, so navigation and routing never drift apart.
+ *
+ * Order matters beyond looks: within a sidebar section items appear in this
+ * order, and a user's landing module is the first one they can see (see
+ * homePathFor), which is why Bookings precedes Dispatch Rules — a dispatcher
+ * should land on the live booking list, not on a read-only settings page.
  */
 export const NAV_ITEMS: readonly NavItem[] = [
   { label: 'Dashboard', path: '/dashboard', icon: <DashboardRoundedIcon />, roles: ADMIN_ROLES },
@@ -63,30 +76,35 @@ export const NAV_ITEMS: readonly NavItem[] = [
     icon: <PriceChangeRoundedIcon />,
     roles: ADMIN_ROLES,
   },
-  { label: 'Dispatch Rules', path: '/dispatch', icon: <TuneRoundedIcon />, roles: ADMIN_ROLES },
   {
     label: 'Booking Management',
     path: '/bookings',
     icon: <EventNoteRoundedIcon />,
-    roles: ADMIN_ROLES,
+    roles: BOOKING_ROLES,
+  },
+  {
+    label: 'Dispatch Rules',
+    path: '/dispatch',
+    icon: <TuneRoundedIcon />,
+    roles: DISPATCH_VIEW_ROLES,
   },
   {
     label: 'Payments & Refunds',
     path: '/payments',
     icon: <PaymentsRoundedIcon />,
-    roles: ADMIN_ROLES,
+    roles: PAYMENT_ROLES,
   },
   {
     label: 'Complaints',
     path: '/complaints',
     icon: <ReportProblemRoundedIcon />,
-    roles: ADMIN_ROLES,
+    roles: SUPPORT_ROLES,
   },
   {
     label: 'Review Moderation',
     path: '/reviews',
     icon: <RateReviewRoundedIcon />,
-    roles: ADMIN_ROLES,
+    roles: SUPPORT_ROLES,
   },
   {
     label: 'Coupon Management',

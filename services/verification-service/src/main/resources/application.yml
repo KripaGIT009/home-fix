@@ -14,6 +14,14 @@ spring:
         default_schema: verification
     open-in-view: false
 
+  # Schema migrations own the DDL; Hibernate only validates against it. V1 is the baseline
+  # schema, so on a database Hibernate already populated (ddl-auto=update, the old local default)
+  # Flyway records V1 as applied instead of re-creating tables that exist.
+  flyway:
+    schemas: verification
+    default-schema: verification
+    baseline-on-migrate: true
+    baseline-version: 1
 server:
   port: ${SERVER_PORT:8084}
 
@@ -25,12 +33,23 @@ homefix:
     # Required: no default, so the service fails fast when JWT_SECRET is not set.
     jwt-secret: ${JWT_SECRET}
   verification:
+    # Shared service credential other services present on /internal/** (X-Internal-Api-Key),
+    # i.e. the Provider Service's batch APPROVED lookup. Same INTERNAL_API_KEY as the other
+    # services. No usable default: when unset every /internal/** request is refused (fail closed).
+    internal-api-key: ${INTERNAL_API_KEY:}
     # S3 bucket for uploaded verification documents; stored with SSE-KMS (Requirement 5.3).
     documents-bucket: ${DOCUMENTS_BUCKET:homefix-documents}
     required-document-types:
       - GOVERNMENT_ID
       - ADDRESS_PROOF
       - SKILL_CERTIFICATION
+  provider:
+    # Provider Service directory lookup (display name, primary skill) for the Admin review queue
+    # (Requirement 19.3). Cosmetic: when unreachable or unauthorised the queue is still served,
+    # without names.
+    base-url: ${PROVIDER_SERVICE_URL:http://provider-service:8083}
+    # Must match the Provider Service's homefix.provider.internal-api-key (the same INTERNAL_API_KEY).
+    internal-api-key: ${INTERNAL_API_KEY:}
 
 management:
   endpoints:

@@ -13,6 +13,14 @@ spring:
       hibernate:
         default_schema: dispatch
     open-in-view: false
+  # Schema migrations own the DDL; Hibernate only validates against it. V1 is the baseline
+  # schema, so on a database Hibernate already populated (ddl-auto=update, the old local default)
+  # Flyway records V1 as applied instead of re-creating tables that exist.
+  flyway:
+    schemas: dispatch
+    default-schema: dispatch
+    baseline-on-migrate: true
+    baseline-version: 1
   data:
     redis:
       host: ${REDIS_HOST:localhost}
@@ -43,20 +51,30 @@ homefix:
     # Required: no default, so the service fails fast when JWT_SECRET is not set.
     jwt-secret: ${JWT_SECRET}
   dispatch:
-    # Must match the Booking Service's homefix.booking.internal-api-key.
-    # Required: no default; the adapter fails fast at startup when it is absent.
+    # Shared service credential presented on /internal/** (X-Internal-Api-Key): to the Booking
+    # Service's transition endpoints, the Customer Service's address lookup and the Provider
+    # Service's eligible-provider query. Must match the key each of those services expects.
+    # Required: no default; the adapters fail fast at startup when it is absent.
     internal-api-key: ${INTERNAL_API_KEY}
     # Provider matching / offer / radius-expansion tuning (Requirements 8.2, 8.5, 8.8).
     initial-radius-km: ${DISPATCH_INITIAL_RADIUS_KM:10.0}
     radius-increment-km: ${DISPATCH_RADIUS_INCREMENT_KM:5.0}
     max-expansion-cycles: ${DISPATCH_MAX_EXPANSION_CYCLES:3}
     offer-timeout-seconds: ${DISPATCH_OFFER_TIMEOUT_SECONDS:60}
+    # How often a waiting offer re-reads the provider's decision from Redis.
+    offer-poll-interval-millis: ${DISPATCH_OFFER_POLL_INTERVAL_MILLIS:500}
     topics:
       booking-created: ${DISPATCH_TOPIC_BOOKING_CREATED:BookingCreated}
+      # Cancellation stops an in-flight search and withdraws its pending offer.
+      booking-cancelled: ${DISPATCH_TOPIC_BOOKING_CANCELLED:BookingCancelled}
     clients:
       provider-service-base-url: ${PROVIDER_SERVICE_URL:http://provider-service}
       booking-service-base-url: ${BOOKING_SERVICE_URL:http://booking-service}
       notification-service-base-url: ${NOTIFICATION_SERVICE_URL:http://notification-service}
+      # Booking enrichment before matching (Requirement 8.2): addressId -> coordinates, and
+      # subcategoryId -> required skill tags.
+      customer-service-base-url: ${CUSTOMER_SERVICE_URL:http://customer-service}
+      catalog-service-base-url: ${CATALOG_SERVICE_URL:http://catalog-service}
     bulkhead:
       # Dedicated, non-shared pools so scheduled load cannot starve emergency dispatch (Req 24.5).
       emergency-core-threads: ${DISPATCH_EMERGENCY_CORE_THREADS:8}

@@ -14,6 +14,14 @@ spring:
         default_schema: booking
     open-in-view: false
 
+  # Schema migrations own the DDL; Hibernate only validates against it. V1 is the baseline
+  # schema, so on a database Hibernate already populated (ddl-auto=update, the old local default)
+  # Flyway records V1 as applied instead of re-creating tables that exist.
+  flyway:
+    schemas: booking
+    default-schema: booking
+    baseline-on-migrate: true
+    baseline-version: 1
 server:
   port: ${SERVER_PORT:8085}
 
@@ -50,6 +58,11 @@ homefix:
     # Selects the active CatalogClientPort adapter: 'http' (production) or 'stub' (dev/test).
     client: ${CATALOG_CLIENT:stub}
     base-url: ${CATALOG_SERVICE_URL:http://catalog-service:8085}
+  customer:
+    # Selects the active CustomerAddressPort adapter: 'http' (production) or 'stub' (dev/test).
+    # Resolves a booking's saved address for the provider's job screen (Requirement 11.1).
+    client: ${CUSTOMER_CLIENT:stub}
+    base-url: ${CUSTOMER_SERVICE_URL:http://customer-service:8082}
   pricing:
     # Selects the active PricingClientPort adapter: 'http' (production) or 'stub' (dev/test).
     client: ${PRICING_CLIENT:stub}

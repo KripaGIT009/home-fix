@@ -89,6 +89,57 @@ class KafkaProducerTemplateTest {
         assertThat(new String(header.value(), StandardCharsets.UTF_8)).isEqualTo(eventId.toString());
     }
 
+    @Test
+    void sendWithTimeoutFailsWhenTheAckDoesNotArriveInTime() {
+        KafkaTemplate<String, String> template = templateWith(KafkaProducerTemplate.idempotentProducerConfig());
+        when(template.send(org.mockito.ArgumentMatchers.<ProducerRecord<String, String>>any()))
+                .thenReturn(new CompletableFuture<>()); // never completes
+        KafkaProducerTemplate producer = new KafkaProducerTemplate(template);
+        UUID eventId = UUID.randomUUID();
+
+        assertThatThrownBy(() -> producer.send(TOPIC, "booking-1", eventId, "{}", java.time.Duration.ofMillis(50)))
+                .isInstanceOf(KafkaProducerTemplate.KafkaPublishException.class)
+                .hasMessageContaining("Timed out")
+                .hasMessageContaining(eventId.toString())
+                .hasCauseInstanceOf(java.util.concurrent.TimeoutException.class);
+    }
+
+    @Test
+    void sendWithTimeoutReturnsTheAckWhenItArrives() {
+        KafkaTemplate<String, String> template = templateWith(KafkaProducerTemplate.idempotentProducerConfig());
+        @SuppressWarnings("unchecked")
+        SendResult<String, String> result = mock(SendResult.class);
+        when(result.getRecordMetadata()).thenReturn(
+                new RecordMetadata(new TopicPartition(TOPIC, 0), 0L, 0, 0L, 0, 0));
+        when(template.send(org.mockito.ArgumentMatchers.<ProducerRecord<String, String>>any()))
+                .thenReturn(CompletableFuture.completedFuture(result));
+
+        KafkaProducerTemplate producer = new KafkaProducerTemplate(template);
+
+        assertThat(producer.send(TOPIC, "booking-1", UUID.randomUUID(), "{}", java.time.Duration.ofSeconds(5)))
+                .isSameAs(result);
+    }
+
+    @Test
+    void exposesTheProducersMaxBlockTimeWhateverTypeItIsConfiguredAs() {
+        Map<String, Object> config = new HashMap<>(KafkaProducerTemplate.idempotentProducerConfig());
+        config.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, "10000");
+        assertThat(new KafkaProducerTemplate(templateWith(config)).maxBlockTime())
+                .isEqualTo(java.time.Duration.ofSeconds(10));
+
+        config.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, 2_500);
+        assertThat(new KafkaProducerTemplate(templateWith(config)).maxBlockTime())
+                .isEqualTo(java.time.Duration.ofMillis(2_500));
+    }
+
+    @Test
+    void maxBlockTimeDefaultsToKafkasOwnDefaultWhenUnset() {
+        KafkaProducerTemplate producer =
+                new KafkaProducerTemplate(templateWith(KafkaProducerTemplate.idempotentProducerConfig()));
+
+        assertThat(producer.maxBlockTime()).isEqualTo(java.time.Duration.ofSeconds(60));
+    }
+
     @SuppressWarnings("unchecked")
     private static KafkaTemplate<String, String> templateWith(Map<String, Object> producerConfig) {
         KafkaTemplate<String, String> template = mock(KafkaTemplate.class);

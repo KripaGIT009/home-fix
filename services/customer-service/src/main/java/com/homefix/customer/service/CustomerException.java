@@ -1,5 +1,7 @@
 package com.homefix.customer.service;
 
+import java.util.UUID;
+
 import org.springframework.http.HttpStatus;
 
 /**
@@ -28,6 +30,12 @@ public class CustomerException extends RuntimeException {
 
     public static CustomerException notFound(String message) {
         return new CustomerException(HttpStatus.NOT_FOUND, "CUSTOMER_NOT_FOUND", message);
+    }
+
+    /** No saved address has this id (never created, or deleted by its customer). */
+    public static CustomerException addressNotFound(UUID addressId) {
+        return new CustomerException(HttpStatus.NOT_FOUND, "ADDRESS_NOT_FOUND",
+                "Address " + addressId + " not found");
     }
 
     public static CustomerException addressLimitReached(int max) {

@@ -1,0 +1,23 @@
+# promotion-service - per-service values for helm/homefix-service.
+# Mirrors the service's entry in docker-compose.core.yml, minus dev-only settings
+# (inline secrets, ddl-auto=update, debug logging, dev seeding/OTP echo).
+# The port must equal the Dockerfile EXPOSE and compose SERVER_PORT.
+
+serviceName: promotion-service
+containerPort: 8098
+
+dependencies:
+  postgres: true
+  redis: true
+  kafka: false
+
+# Keys read from the existing Secret "promotion-service-secrets". DB_* keys are added
+# automatically by dependencies.postgres (db_host, db_port, db_name, db_username,
+# db_password).
+secrets:
+  env:
+    JWT_SECRET: jwt_secret
+    # Guards /internal/coupons (pricing-engine's coupon quote).
+    INTERNAL_API_KEY: internal_api_key
+
+config: {}

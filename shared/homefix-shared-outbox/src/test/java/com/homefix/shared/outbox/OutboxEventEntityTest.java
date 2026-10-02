@@ -63,6 +63,19 @@ class OutboxEventEntityTest {
     }
 
     @Test
+    void transientFailureRecordsTheErrorWithoutSpendingAnAttempt() {
+        OutboxEventEntity event =
+                OutboxEventEntity.newEvent("Booking", AGG, "BookingCreated", "{}");
+        event.markFailedAttempt("record too large");
+
+        event.recordTransientFailure("broker unreachable");
+
+        assertThat(event.getRetryCount()).isEqualTo(1);
+        assertThat(event.getLastError()).isEqualTo("broker unreachable");
+        assertThat(event.getStatus()).isEqualTo(OutboxEventStatus.PENDING);
+    }
+
+    @Test
     void markFailedIsTerminal() {
         OutboxEventEntity event =
                 OutboxEventEntity.newEvent("Booking", AGG, "BookingCreated", "{}");
@@ -81,6 +94,32 @@ class OutboxEventEntityTest {
         event.markFailed("x".repeat(5000));
 
         assertThat(event.getLastError()).hasSize(2000);
+    }
+
+    @Test
+    void newRowIsDueImmediately() {
+        OutboxEventEntity event =
+                OutboxEventEntity.newEvent("Booking", AGG, "BookingCreated", "{}");
+
+        assertThat(event.getNextAttemptAt()).isNull();
+    }
+
+    @Test
+    void scheduledAttemptIsClearedOnceTheRowLeavesPending() {
+        Instant later = Instant.parse("2024-07-15T10:00:05Z");
+
+        OutboxEventEntity published =
+                OutboxEventEntity.newEvent("Booking", AGG, "BookingCreated", "{}");
+        published.scheduleNextAttempt(later);
+        assertThat(published.getNextAttemptAt()).isEqualTo(later);
+        published.markPublished(later);
+        assertThat(published.getNextAttemptAt()).isNull();
+
+        OutboxEventEntity failed =
+                OutboxEventEntity.newEvent("Booking", AGG, "BookingCreated", "{}");
+        failed.scheduleNextAttempt(later);
+        failed.markFailed("exhausted");
+        assertThat(failed.getNextAttemptAt()).isNull();
     }
 
     @Test

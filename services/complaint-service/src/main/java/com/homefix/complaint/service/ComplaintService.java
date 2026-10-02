@@ -4,19 +4,29 @@ import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionOperations;
 
 import com.homefix.complaint.agent.SupportAgentDirectoryPort;
 import com.homefix.complaint.alert.FinanceAlertPort;
 import com.homefix.complaint.config.ComplaintProperties;
 import com.homefix.complaint.domain.Complaint;
+import com.homefix.complaint.domain.ComplaintRefund;
+import com.homefix.complaint.domain.ComplaintRefundRepository;
+import com.homefix.complaint.domain.ComplaintRefundStatus;
 import com.homefix.complaint.domain.ComplaintRepository;
 import com.homefix.complaint.domain.ComplaintStatus;
 import com.homefix.complaint.domain.ServicePriority;
@@ -37,7 +47,8 @@ import com.homefix.complaint.settlement.SettlementHoldPort;
  *       minutes (16.3).</li>
  *   <li>Sweeps for SLA breaches: escalates to a Senior_Support_Agent and notifies the customer of
  *       the delay (16.4).</li>
- *   <li>Coordinates refunds with the Payment Service; on rejection sets REFUND_FAILED, notifies the
+ *   <li>Coordinates refunds with the Payment Service: at most one recorded refund per complaint,
+ *       never inside a database transaction; on rejection sets REFUND_FAILED, notifies the
  *       customer, and alerts Finance_Admin (16.5, 16.6).</li>
  *   <li>Places a provider settlement hold on DISPUTED and releases it on resolution/closure
  *       (16.7, 16.8).</li>
@@ -49,7 +60,32 @@ public class ComplaintService {
 
     private static final Logger log = LoggerFactory.getLogger(ComplaintService.class);
 
+    /**
+     * Complaint states from which a Support_Agent may approve a refund (Requirement 16.5): the
+     * complaint is still being worked. Terminal complaints have had their settlement hold released
+     * (16.8); REFUND_FAILED complaints are with Finance_Admin for manual processing (16.6).
+     */
+    static final Set<ComplaintStatus> REFUNDABLE_STATES = EnumSet.of(ComplaintStatus.OPEN,
+            ComplaintStatus.IN_PROGRESS, ComplaintStatus.ESCALATED, ComplaintStatus.DISPUTED);
+
+    /**
+     * Upper bound on the Admin Portal complaint list (Requirement 19.2). The portal's table takes a
+     * bare array with no paging, so the newest {@value} matches are returned and the search box is
+     * how staff reach older ones.
+     */
+    static final int ADMIN_LIST_LIMIT = 200;
+
+    /**
+     * States only the system enters, never staff by hand: ESCALATED is the SLA sweep's reassignment
+     * to a Senior_Support_Agent (16.4) and REFUND_FAILED is the Payment Service's rejection of a
+     * refund (16.6). Setting either from the Admin Portal would show the state without its side
+     * effects (no senior agent assigned, no refund on record), so {@link #adminUpdate} refuses them.
+     */
+    static final Set<ComplaintStatus> SYSTEM_ONLY_STATES =
+            EnumSet.of(ComplaintStatus.ESCALATED, ComplaintStatus.REFUND_FAILED);
+
     private final ComplaintRepository complaintRepository;
+    private final ComplaintRefundRepository refundRepository;
     private final SupportAgentDirectoryPort agentDirectory;
     private final CustomerNotificationPort notificationPort;
     private final RefundPort refundPort;
@@ -58,6 +94,7 @@ public class ComplaintService {
     private final ComplaintEventPublisher eventPublisher;
     private final ComplaintProperties properties;
     private final ComplaintStatsCalculator statsCalculator;
+    private final TransactionOperations transactions;
     private final Clock clock;
 
     // These classes keep a second, package-private constructor so tests can pin the Clock.
@@ -65,19 +102,23 @@ public class ComplaintService {
     // to a no-arg constructor that does not exist and the bean fails to instantiate.
     @Autowired
     public ComplaintService(ComplaintRepository complaintRepository,
+                            ComplaintRefundRepository refundRepository,
                             SupportAgentDirectoryPort agentDirectory,
                             CustomerNotificationPort notificationPort,
                             RefundPort refundPort,
                             SettlementHoldPort settlementHoldPort,
                             FinanceAlertPort financeAlertPort,
                             ComplaintEventPublisher eventPublisher,
-                            ComplaintProperties properties) {
-        this(complaintRepository, agentDirectory, notificationPort, refundPort, settlementHoldPort,
-                financeAlertPort, eventPublisher, properties, Clock.systemUTC());
+                            ComplaintProperties properties,
+                            TransactionOperations transactions) {
+        this(complaintRepository, refundRepository, agentDirectory, notificationPort, refundPort,
+                settlementHoldPort, financeAlertPort, eventPublisher, properties, transactions,
+                Clock.systemUTC());
     }
 
     // Visible for testing so unit tests can pin the clock.
     ComplaintService(ComplaintRepository complaintRepository,
+                     ComplaintRefundRepository refundRepository,
                      SupportAgentDirectoryPort agentDirectory,
                      CustomerNotificationPort notificationPort,
                      RefundPort refundPort,
@@ -85,8 +126,10 @@ public class ComplaintService {
                      FinanceAlertPort financeAlertPort,
                      ComplaintEventPublisher eventPublisher,
                      ComplaintProperties properties,
+                     TransactionOperations transactions,
                      Clock clock) {
         this.complaintRepository = complaintRepository;
+        this.refundRepository = refundRepository;
         this.agentDirectory = agentDirectory;
         this.notificationPort = notificationPort;
         this.refundPort = refundPort;
@@ -95,6 +138,7 @@ public class ComplaintService {
         this.eventPublisher = eventPublisher;
         this.properties = properties;
         this.statsCalculator = new ComplaintStatsCalculator();
+        this.transactions = transactions;
         this.clock = clock;
     }
 
@@ -143,6 +187,12 @@ public class ComplaintService {
     @Transactional
     public Complaint changeStatus(UUID complaintId, ComplaintStatus newStatus) {
         Complaint complaint = requireComplaint(complaintId);
+        // RESOLVED and CLOSED are terminal: the settlement hold has been released (16.8), so the
+        // complaint cannot be moved back into the working states (or re-resolved) from here.
+        if (complaint.getStatus().isTerminal()) {
+            throw ComplaintException.invalidTransition("cannot change a complaint that is already "
+                    + complaint.getStatus() + " to " + newStatus);
+        }
         if (newStatus == ComplaintStatus.DISPUTED) {
             return markDisputed(complaintId);
         }
@@ -196,39 +246,245 @@ public class ComplaintService {
     // ---- Refund coordination (Requirement 16.5, 16.6) ------------------------------------------
 
     /**
-     * Submits a refund request to the Payment Service for an approved complaint (Requirement 16.5).
+     * Approves a refund on a complaint and submits it to the Payment Service (Requirement 16.5).
      * On rejection, sets the complaint to REFUND_FAILED, notifies the customer, and alerts
      * Finance_Admin for manual processing (Requirement 16.6).
      *
-     * @return the {@link RefundResult} from the Payment Service
+     * <p><strong>Rules.</strong> A complaint is refunded <em>at most once</em>: the refund is
+     * recorded as a {@link ComplaintRefund} whose {@code complaint_id} is unique, and any later
+     * approval is refused with 409 {@code REFUND_ALREADY_REQUESTED}, whatever the earlier refund's
+     * outcome (a failed refund belongs to Finance_Admin's manual process, 16.6). Only a complaint
+     * that is still being worked ({@link #REFUNDABLE_STATES}) can be refunded; a RESOLVED or CLOSED
+     * complaint has already had its settlement hold released (16.8), and a REFUND_FAILED one is with
+     * Finance_Admin, so both are refused with 409 {@code REFUND_NOT_ALLOWED}. The amount cap against
+     * what the customer paid is enforced by the Payment Service, which holds the transaction.
+     *
+     * <p><strong>Order of operations</strong>, each step in its own short transaction, matching the
+     * Payment Service refund flow:
+     * <ol>
+     *   <li><strong>Validate and reserve</strong> under a row lock on the complaint: an existing
+     *       refund is replayed or refused, the state precondition is checked, and a PENDING refund
+     *       record is committed. Nothing has been sent to the Payment Service yet.</li>
+     *   <li><strong>Call the Payment Service</strong> with no transaction open, passing the record's
+     *       stable {@link ComplaintRefund#paymentIdempotencyKey()}.</li>
+     *   <li><strong>Record the outcome</strong>: SUCCEEDED with the Payment Service reference, or
+     *       FAILED with the reason plus the REFUND_FAILED flow. Customer notification and the
+     *       Finance_Admin alert run after that transaction commits.</li>
+     * </ol>
+     *
+     * <p><strong>Idempotency.</strong> A retry carrying the same client {@code idempotencyKey} and
+     * amount returns the recorded refund without calling the Payment Service again (409
+     * {@code REFUND_IN_PROGRESS} while it is still PENDING); the same key with a different amount is
+     * 409 {@code IDEMPOTENCY_KEY_REUSED}. A retry without a key is refused like any second approval,
+     * so it can never refund twice either.
+     *
+     * <p>If the Payment Service call throws, its outcome is unknown: the refund stays PENDING (which
+     * keeps blocking further refunds), Finance_Admin is alerted to reconcile it using the idempotency
+     * key, and the caller gets 502 {@code REFUND_OUTCOME_UNKNOWN}.
+     *
+     * @return the recorded refund, SUCCEEDED or FAILED (or the replayed earlier refund)
      */
-    @Transactional
-    public RefundResult approveRefund(UUID complaintId, BigDecimal amount) {
+    public ComplaintRefund approveRefund(ApproveRefundCommand command) {
+        validate(command);
+        String reason = blankToNull(command.reason());
+        String clientKey = blankToNull(command.idempotencyKey());
+
+        // Phase 1: validate and reserve. Any refusal here happens before money moves.
+        RefundReservation reservation;
+        try {
+            reservation = transactions.execute(status -> reserveRefund(command, reason, clientKey));
+        } catch (DataIntegrityViolationException e) {
+            // The unique complaint_id constraint is the last line of defence behind the row lock.
+            throw ComplaintException.refundAlreadyRequested(
+                    "complaint " + command.complaintId() + " already has a refund");
+        }
+        ComplaintRefund refund = reservation.refund();
+        if (reservation.replayed()) {
+            log.info("Idempotent refund replay for complaint {}: refund {} is {}",
+                    refund.getComplaintId(), refund.getId(), refund.getStatus());
+            return refund;
+        }
+
+        // Phase 2: call the Payment Service with no transaction open.
+        String paymentKey = refund.paymentIdempotencyKey();
+        RefundResult result;
+        try {
+            result = refundPort.requestRefund(refund.getBookingId(), refund.getComplaintId(),
+                    refund.getAmount(), paymentKey);
+        } catch (RuntimeException e) {
+            log.error("Refund call for complaint {} (refund {}) threw; outcome unknown: {}",
+                    refund.getComplaintId(), refund.getId(), e.getMessage());
+            financeAlertPort.refundRequiresManualProcessing(refund.getComplaintId(),
+                    refund.getBookingId(), refund.getAmount(),
+                    "refund call to the Payment Service failed with an unknown outcome; reconcile "
+                            + "using idempotency key " + paymentKey + ": " + e.getMessage());
+            throw ComplaintException.refundOutcomeUnknown("refund " + refund.getId()
+                    + " was submitted but its outcome is unknown; Finance_Admin has been alerted");
+        }
+        if (result == null) {
+            result = RefundResult.rejected("the Payment Service returned no result");
+        }
+
+        // Phase 3: record the outcome.
+        return result.approved()
+                ? recordRefundSucceeded(refund, result)
+                : recordRefundFailed(refund, result);
+    }
+
+    /** Phase 1 of {@link #approveRefund}: runs in a transaction holding the complaint's row lock. */
+    private RefundReservation reserveRefund(ApproveRefundCommand command, String reason,
+                                            String clientKey) {
+        Complaint complaint = complaintRepository.findByIdForUpdate(command.complaintId())
+                .orElseThrow(() -> ComplaintException.notFound(
+                        "complaint not found: " + command.complaintId()));
+
+        // Checked under the lock, so a concurrent approval sees the committed record. Checked before
+        // the state precondition so a retry still replays after the complaint has moved on.
+        Optional<ComplaintRefund> prior = refundRepository.findByComplaintId(complaint.getId());
+        if (prior.isPresent()) {
+            return replayRefund(prior.get(), command.amount(), clientKey);
+        }
+
+        if (!REFUNDABLE_STATES.contains(complaint.getStatus())) {
+            throw ComplaintException.refundNotAllowed("a complaint in status "
+                    + complaint.getStatus() + " cannot be refunded; refundable states are "
+                    + REFUNDABLE_STATES);
+        }
+
+        ComplaintRefund refund = refundRepository.save(ComplaintRefund.reserve(complaint.getId(),
+                complaint.getBookingId(), command.amount(), reason, command.approvedBy(), clientKey,
+                clock.instant()));
+        return new RefundReservation(refund, false);
+    }
+
+    private RefundReservation replayRefund(ComplaintRefund prior, BigDecimal amount, String clientKey) {
+        if (clientKey == null || !clientKey.equals(prior.getClientIdempotencyKey())) {
+            throw ComplaintException.refundAlreadyRequested("complaint " + prior.getComplaintId()
+                    + " already has a " + prior.getStatus() + " refund (" + prior.getId()
+                    + "); a complaint is refunded at most once");
+        }
+        if (prior.getAmount().compareTo(amount) != 0) {
+            throw ComplaintException.idempotencyKeyReused(
+                    "refund idempotency key was already used for amount " + prior.getAmount());
+        }
+        if (prior.getStatus() == ComplaintRefundStatus.PENDING) {
+            throw ComplaintException.refundInProgress(
+                    "refund " + prior.getId() + " is still awaiting its Payment Service outcome");
+        }
+        return new RefundReservation(prior, true);
+    }
+
+    /** Phase 3, success: records the Payment Service reference (Requirement 16.5). */
+    private ComplaintRefund recordRefundSucceeded(ComplaintRefund reserved, RefundResult result) {
+        try {
+            ComplaintRefund refund = transactions.execute(status -> {
+                ComplaintRefund fresh = requireRefund(reserved.getId());
+                fresh.markSucceeded(result.transactionRef(), clock.instant());
+                return refundRepository.save(fresh);
+            });
+            log.info("Refund {} approved for complaint {} ({})", refund.getId(),
+                    refund.getComplaintId(), refund.getExternalReference());
+            return refund;
+        } catch (RuntimeException e) {
+            // Money has moved but the record could not be written. It stays PENDING (blocking further
+            // refunds) and Finance_Admin must reconcile it by hand.
+            log.error("CRITICAL refund {} executed by the Payment Service ({}) but could not be "
+                    + "recorded for complaint {}: {}", reserved.getId(), result.transactionRef(),
+                    reserved.getComplaintId(), e.getMessage());
+            financeAlertPort.refundRequiresManualProcessing(reserved.getComplaintId(),
+                    reserved.getBookingId(), reserved.getAmount(),
+                    "refund executed by the Payment Service (" + result.transactionRef()
+                            + ") but not recorded: " + e.getMessage());
+            throw e;
+        }
+    }
+
+    /**
+     * Phase 3, rejection: records FAILED, sets the complaint to REFUND_FAILED, then (after commit)
+     * notifies the customer and alerts Finance_Admin for manual processing (Requirement 16.6).
+     */
+    private ComplaintRefund recordRefundFailed(ComplaintRefund reserved, RefundResult result) {
+        String reason = result.failureReason() == null || result.failureReason().isBlank()
+                ? "rejected by the Payment Service" : result.failureReason();
+        FailedRefund failed;
+        try {
+            failed = transactions.execute(status -> {
+                Instant now = clock.instant();
+                ComplaintRefund fresh = requireRefund(reserved.getId());
+                fresh.markFailed(reason, now);
+                refundRepository.save(fresh);
+
+                Complaint complaint = requireComplaint(fresh.getComplaintId());
+                // A complaint closed while the refund was in flight stays closed (16.8).
+                if (!complaint.getStatus().isTerminal()) {
+                    ComplaintStatus previous = complaint.getStatus();
+                    complaint.markRefundFailed();
+                    complaintRepository.save(complaint);
+                    eventPublisher.publishStatusChanged(complaint, previous, now);
+                }
+                return new FailedRefund(fresh, complaint.getCustomerId());
+            });
+        } catch (RuntimeException e) {
+            // No money moved, but the refund stays PENDING; Finance_Admin still owns it (16.6).
+            log.error("Refund {} was rejected but the rejection could not be recorded for complaint "
+                    + "{}: {}", reserved.getId(), reserved.getComplaintId(), e.getMessage());
+            financeAlertPort.refundRequiresManualProcessing(reserved.getComplaintId(),
+                    reserved.getBookingId(), reserved.getAmount(),
+                    reason + " (rejection not recorded: " + e.getMessage() + ")");
+            throw e;
+        }
+
+        notificationPort.notifyRefundFailed(failed.customerId(), reserved.getComplaintId());
+        financeAlertPort.refundRequiresManualProcessing(reserved.getComplaintId(),
+                reserved.getBookingId(), reserved.getAmount(), reason);
+        log.warn("Refund {} rejected for complaint {}; recorded FAILED and alerted Finance_Admin",
+                reserved.getId(), reserved.getComplaintId());
+        return failed.refund();
+    }
+
+    private ComplaintRefund requireRefund(UUID refundId) {
+        return refundRepository.findById(refundId)
+                .orElseThrow(() -> new IllegalStateException("refund " + refundId + " disappeared"));
+    }
+
+    private void validate(ApproveRefundCommand command) {
+        List<String> errors = new ArrayList<>();
+        if (command.complaintId() == null) {
+            errors.add("complaintId is required");
+        }
+        if (command.approvedBy() == null) {
+            errors.add("the approving agent is required");
+        }
+        BigDecimal amount = command.amount();
         if (amount == null || amount.signum() <= 0) {
-            throw ComplaintException.validation("refund amount must be positive");
+            errors.add("refund amount must be positive");
+        } else if (amount.stripTrailingZeros().scale() > 2) {
+            errors.add("refund amount must have at most 2 decimal places");
         }
-        Complaint complaint = requireComplaint(complaintId);
-
-        RefundResult result = refundPort.requestRefund(
-                complaint.getBookingId(), complaint.getId(), amount);
-
-        Instant now = clock.instant();
-        if (result.approved()) {
-            log.info("Refund approved for complaint {}", complaintId);
-            return result;
+        if (command.reason() != null
+                && command.reason().length() > ComplaintRefund.REASON_MAX_LENGTH) {
+            errors.add("reason exceeds " + ComplaintRefund.REASON_MAX_LENGTH + " characters");
         }
+        if (command.idempotencyKey() != null
+                && command.idempotencyKey().length() > ComplaintRefund.CLIENT_KEY_MAX_LENGTH) {
+            errors.add("idempotencyKey exceeds " + ComplaintRefund.CLIENT_KEY_MAX_LENGTH
+                    + " characters");
+        }
+        if (!errors.isEmpty()) {
+            throw ComplaintException.validation("refund request is invalid", errors);
+        }
+    }
 
-        ComplaintStatus previous = complaint.getStatus();
-        complaint.markRefundFailed();
-        complaintRepository.save(complaint);
-        eventPublisher.publishStatusChanged(complaint, previous, now);
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.strip();
+    }
 
-        notificationPort.notifyRefundFailed(complaint.getCustomerId(), complaint.getId());
-        financeAlertPort.refundRequiresManualProcessing(
-                complaint.getId(), complaint.getBookingId(), amount, result.failureReason());
-        log.warn("Refund rejected for complaint {}; marked REFUND_FAILED and alerted Finance_Admin",
-                complaintId);
-        return result;
+    /** Phase-1 outcome of a refund approval: a fresh reservation, or a replay of a finished one. */
+    private record RefundReservation(ComplaintRefund refund, boolean replayed) {
+    }
+
+    /** Phase-3 outcome of a rejected refund, carrying what the post-commit notifications need. */
+    private record FailedRefund(ComplaintRefund refund, UUID customerId) {
     }
 
     // ---- Dispute hold lifecycle (Requirement 16.7, 16.8) ---------------------------------------
@@ -236,7 +492,8 @@ public class ComplaintService {
     /**
      * Sets the complaint (and its booking) to DISPUTED and places a hold on the provider settlement
      * until the complaint is closed (Requirement 16.7). Idempotent: a complaint already holding a
-     * settlement is unaffected.
+     * settlement is never held twice; if it had been moved back to a working state while the hold
+     * stayed in place, only its status returns to DISPUTED.
      */
     @Transactional
     public Complaint markDisputed(UUID complaintId) {
@@ -246,7 +503,10 @@ public class ComplaintService {
                     "cannot dispute a complaint that is already " + complaint.getStatus());
         }
         if (complaint.isSettlementHeld()) {
-            return complaint;
+            // The hold outlives a move back to a working state (it is only released on closure,
+            // 16.8), so re-disputing such a complaint restores the status without a second hold.
+            return complaint.getStatus() == ComplaintStatus.DISPUTED ? complaint
+                    : applyStatusChange(complaint, ComplaintStatus.DISPUTED, clock.instant());
         }
         ComplaintStatus previous = complaint.getStatus();
         complaint.placeSettlementHold();
@@ -297,6 +557,79 @@ public class ComplaintService {
         log.info("Complaint {} {}; settlement hold {}", complaintId, terminalStatus,
                 releaseNeeded ? "released" : "not held");
         return complaint;
+    }
+
+    // ---- Admin Portal (Requirement 19.2) -------------------------------------------------------
+
+    /**
+     * The Admin Portal complaint list: newest first, optionally narrowed to one {@code status}
+     * and to complaints whose description or complaint, booking or customer id contains
+     * {@code search} (case-insensitive). Bounded by {@link #ADMIN_LIST_LIMIT}; the portal does not
+     * page.
+     */
+    @Transactional(readOnly = true)
+    public List<Complaint> searchForAdmin(String search, ComplaintStatus status) {
+        Set<ComplaintStatus> statuses = status == null
+                ? EnumSet.allOf(ComplaintStatus.class) : EnumSet.of(status);
+        String term = blankToNull(search);
+        String pattern = term == null ? "%" : "%" + escapeLike(term.toLowerCase(Locale.ROOT)) + "%";
+        return complaintRepository.searchForAdmin(statuses, pattern,
+                PageRequest.of(0, ADMIN_LIST_LIMIT));
+    }
+
+    /**
+     * Applies a staff update from the Admin Portal: a status change and/or a resolution note.
+     *
+     * <p>A status that differs from the current one goes through {@link #changeStatus}, so it gets
+     * exactly the transitions, settlement-hold handling (16.7, 16.8), event and customer
+     * notification (16.3) of the Support_Agent endpoint, and the same 409
+     * {@code INVALID_COMPLAINT_TRANSITION} for an illegal move. Re-sending the current status is
+     * not a transition: only the note is recorded, with no event or notification. A note is
+     * required when the complaint ends up RESOLVED, and replaces any earlier one.
+     *
+     * <p>The system-driven states ({@link #SYSTEM_ONLY_STATES}) cannot be chosen here: ESCALATED
+     * and REFUND_FAILED are only entered through the SLA sweep and the refund flow, which carry
+     * their side effects. Both are 409 {@code INVALID_COMPLAINT_TRANSITION} unless they are already
+     * the current status (re-sending it to attach a note).
+     */
+    @Transactional
+    public Complaint adminUpdate(UUID complaintId, ComplaintStatus status, String resolutionNote) {
+        String note = blankToNull(resolutionNote);
+        List<String> errors = new ArrayList<>();
+        if (status == null) {
+            errors.add("status is required");
+        }
+        if (status == ComplaintStatus.RESOLVED && note == null) {
+            errors.add("resolutionNote is required when resolving a complaint");
+        }
+        if (note != null && note.length() > Complaint.RESOLUTION_NOTE_MAX_LENGTH) {
+            errors.add("resolutionNote exceeds " + Complaint.RESOLUTION_NOTE_MAX_LENGTH
+                    + " characters");
+        }
+        if (!errors.isEmpty()) {
+            throw ComplaintException.validation("complaint update is invalid", errors);
+        }
+
+        Complaint complaint = requireComplaint(complaintId);
+        if (complaint.getStatus() != status) {
+            if (SYSTEM_ONLY_STATES.contains(status)) {
+                throw ComplaintException.invalidTransition(status + " is set by the system, not by "
+                        + "staff; a complaint cannot be moved to it from the Admin Portal");
+            }
+            complaint = changeStatus(complaintId, status);
+        }
+        if (note != null) {
+            complaint.recordResolutionNote(note);
+            complaintRepository.save(complaint);
+        }
+        log.info("Admin update of complaint {}: status {}{}", complaintId, complaint.getStatus(),
+                note != null ? ", resolution note recorded" : "");
+        return complaint;
+    }
+
+    /** Escapes the {@code LIKE} wildcards so a search term matches literally. */
+    private static String escapeLike(String term) {
+        return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
     }
 
     // ---- Stats aggregation (Requirement 16.9) --------------------------------------------------

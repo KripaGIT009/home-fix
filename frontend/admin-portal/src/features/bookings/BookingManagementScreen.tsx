@@ -67,9 +67,9 @@ export function BookingManagementScreen() {
         </Stack>
       ),
     },
-    { key: 'customer', header: 'Customer', render: (row) => row.customerName },
+    { key: 'customer', header: 'Customer', render: (row) => row.customerName ?? '—' },
     { key: 'provider', header: 'Provider', render: (row) => row.providerName ?? '—' },
-    { key: 'service', header: 'Service', render: (row) => row.serviceName },
+    { key: 'service', header: 'Service', render: (row) => row.serviceName ?? '—' },
     { key: 'status', header: 'Status', render: (row) => <StatusChip status={row.status} /> },
     {
       key: 'amount',

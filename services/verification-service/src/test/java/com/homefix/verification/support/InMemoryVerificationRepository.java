@@ -32,6 +32,52 @@ public class InMemoryVerificationRepository implements VerificationRepository {
         return store.values().stream().filter(v -> providerId.equals(v.getProviderId())).findFirst();
     }
 
+    /** No lazy loading in memory: the aggregate is always whole, so this is the same lookup. */
+    @Override
+    public Optional<Verification> findWithDocumentsByProviderId(UUID providerId) {
+        return findByProviderId(providerId);
+    }
+
+    @Override
+    public List<UUID> findProviderIdsByStatus(java.util.Collection<UUID> providerIds,
+                                              com.homefix.verification.domain.VerificationStatus status) {
+        return store.values().stream()
+                .filter(v -> providerIds.contains(v.getProviderId()) && v.getStatus() == status)
+                .map(Verification::getProviderId)
+                .toList();
+    }
+
+    /** Same grouping and ordering as the JPQL: latest upload (else updatedAt) ascending. */
+    @Override
+    public List<com.homefix.verification.domain.VerificationQueueRow> findQueue(
+            com.homefix.verification.domain.VerificationStatus status, Pageable page) {
+        return store.values().stream()
+                .filter(v -> v.getStatus() == status)
+                .map(v -> new com.homefix.verification.domain.VerificationQueueRow(
+                        v.getProviderId(),
+                        (long) v.getDocuments().size(),
+                        v.getDocuments().stream()
+                                .map(com.homefix.verification.domain.VerificationDocument::getUploadedAt)
+                                .max(java.util.Comparator.naturalOrder())
+                                .orElse(null),
+                        v.getUpdatedAt()))
+                .sorted(java.util.Comparator
+                        .comparing(com.homefix.verification.domain.VerificationQueueRow::submittedAt)
+                        .thenComparing(com.homefix.verification.domain.VerificationQueueRow::providerId))
+                .limit(page.getPageSize())
+                .toList();
+    }
+
+    @Override
+    public List<com.homefix.verification.domain.VerificationStatusView> findStatusesByProviderIds(
+            java.util.Collection<UUID> providerIds) {
+        return store.values().stream()
+                .filter(v -> providerIds.contains(v.getProviderId()))
+                .map(v -> new com.homefix.verification.domain.VerificationStatusView(
+                        v.getProviderId(), v.getStatus()))
+                .toList();
+    }
+
     @Override
     public boolean existsByProviderId(UUID providerId) {
         return findByProviderId(providerId).isPresent();

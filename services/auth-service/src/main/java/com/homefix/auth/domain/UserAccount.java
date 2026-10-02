@@ -2,6 +2,7 @@ package com.homefix.auth.domain;
 
 import java.time.Instant;
 import java.util.EnumSet;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
@@ -15,6 +16,8 @@ import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.Table;
+
+import org.hibernate.annotations.BatchSize;
 
 /**
  * A verified platform user account created on successful OTP verification (Requirement 1.2).
@@ -54,11 +57,25 @@ public class UserAccount {
     @Column(name = "password_hash", length = 100)
     private String passwordHash;
 
+    /**
+     * Batch-fetched so the Admin Portal's user list (up to 200 accounts) loads every account's
+     * roles in a couple of queries instead of one per account.
+     */
     @ElementCollection(fetch = FetchType.EAGER)
+    @BatchSize(size = 100)
     @CollectionTable(name = "user_account_role", joinColumns = @JoinColumn(name = "user_id"))
     @Column(name = "role", nullable = false, length = 32)
     @Enumerated(EnumType.STRING)
     private Set<Role> roles = EnumSet.noneOf(Role.class);
+
+    /**
+     * Whether the account may authenticate (Requirement 19.2). Every factory starts it
+     * {@link AccountStatus#ACTIVE}; only an administrator changes it, through
+     * {@link #changeStatus}. Rows that predate the column were backfilled ACTIVE by V2.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status", nullable = false, length = 16)
+    private AccountStatus status = AccountStatus.ACTIVE;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
@@ -147,5 +164,17 @@ public class UserAccount {
 
     public Instant getCreatedAt() {
         return createdAt;
+    }
+
+    public AccountStatus getStatus() {
+        return status;
+    }
+
+    /**
+     * Sets the account's status. Who may do this, and the consequences for live sessions, are
+     * the caller's concern ({@code AdminUserService}); the entity only records the new value.
+     */
+    public void changeStatus(AccountStatus newStatus) {
+        this.status = Objects.requireNonNull(newStatus, "status");
     }
 }

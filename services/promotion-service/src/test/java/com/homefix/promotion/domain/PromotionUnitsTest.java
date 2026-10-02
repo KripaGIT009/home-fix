@@ -88,4 +88,24 @@ class PromotionUnitsTest {
         p.setMaxRedemptionRetries(10);
         assertThat(p.getMaxRedemptionRetries()).isEqualTo(10);
     }
+
+    // ---- Admin Portal status derivation (Requirement 19.2) -------------------------------------
+
+    @Test
+    void couponStatusCoversEveryPortalCase() {
+        LocalDate today = LocalDate.of(2024, 6, 1);
+        Coupon coupon = Coupon.create(
+                "STATUS1", DiscountType.FLAT, BigDecimal.TEN,
+                BigDecimal.ZERO, null, today.minusDays(10), today, 1, 1);
+
+        assertThat(coupon.statusOn(today)).isEqualTo(CouponStatus.ACTIVE);
+        assertThat(coupon.statusOn(today.plusDays(1)))
+                .isEqualTo(CouponStatus.EXPIRED);
+
+        coupon.deactivate();
+        assertThat(coupon.statusOn(today)).isEqualTo(CouponStatus.INACTIVE);
+        // Expiry wins over the flag: an expired coupon is EXPIRED whether or not it was deactivated.
+        assertThat(coupon.statusOn(today.plusDays(1)))
+                .isEqualTo(CouponStatus.EXPIRED);
+    }
 }

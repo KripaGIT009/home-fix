@@ -78,6 +78,7 @@ public class HttpPricingClientAdapter implements PricingClientPort {
                 request.emergency(),
                 null,
                 localTime(request.scheduledAt()),
+                request.couponCode(),
                 request.customerId())));
     }
 
@@ -86,11 +87,13 @@ public class HttpPricingClientAdapter implements PricingClientPort {
         // A re-quote carrying the new parts total: the Pricing Engine re-derives every other
         // component from the booking's original inputs, so the emergency multiplier and the
         // night/weekend surcharges the first estimate used are preserved (Requirement 6.8, 11.3).
+        // The booking does not keep its coupon code, so a re-quote is priced without it.
         return toEstimate(quote(new PriceRequestPayload(
                 request.subcategoryId(),
                 request.emergency(),
                 request.partsTotal(),
                 localTime(request.scheduledAt()),
+                null,
                 null)));
     }
 
@@ -155,6 +158,7 @@ public class HttpPricingClientAdapter implements PricingClientPort {
             boolean emergency,
             BigDecimal partsMaterialsCharge,
             LocalDateTime scheduledLocalTime,
+            String couponCode,
             UUID userId) {
     }
 

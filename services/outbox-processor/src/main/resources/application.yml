@@ -10,6 +10,13 @@ spring:
     hibernate:
       ddl-auto: validate
     open-in-view: false
+  # The relay owns no schema of its own; it reads the shared outbox tables, which the
+  # R__homefix_outbox_tables migration in homefix-shared-outbox creates. History lives beside them.
+  flyway:
+    schemas: outbox
+    default-schema: outbox
+    baseline-on-migrate: true
+    baseline-version: 1
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     producer:
@@ -20,21 +27,37 @@ spring:
       acks: all
       properties:
         enable.idempotence: true
+        # Bound one publish so a broker outage costs the poll loop seconds, not minutes (the
+        # client defaults are 60 s blocked on metadata plus 120 s to deliver). The relay reschedules
+        # a timed-out publish at retry.max-interval without spending an attempt (a broker outage
+        # is not the event's fault); delivery.timeout.ms must stay >= linger.ms +
+        # request.timeout.ms or the producer refuses to start. The relay reads max.block.ms back
+        # and refuses to start unless claim-lease exceeds publish-timeout + max.block.ms.
+        max.block.ms: 10000
+        request.timeout.ms: 10000
+        delivery.timeout.ms: 25000
 
 server:
   port: ${SERVER_PORT:8099}
 
 homefix:
   outbox-processor:
-    # Number of PENDING rows drained per poll cycle.
+    # Number of due PENDING rows claimed per poll cycle.
     batch-size: ${OUTBOX_BATCH_SIZE:100}
     # Interval between poll cycles (ISO-8601 duration).
     poll-interval: ${OUTBOX_POLL_INTERVAL:PT1S}
+    # A claim (SELECT ... FOR UPDATE SKIP LOCKED, then next_attempt_at = now + lease) hides the
+    # rows from other relay instances for this long. Must exceed publish-timeout + max.block.ms.
+    claim-lease: ${OUTBOX_CLAIM_LEASE:PT2M}
+    # Longest wait for one broker ACK; must exceed delivery.timeout.ms above to be a backstop only.
+    publish-timeout: ${OUTBOX_PUBLISH_TIMEOUT:PT30S}
     retry:
       # Exponential backoff on publish failure: 1 s doubling up to a 60 s cap (Requirement 22.4).
+      # Persisted as the row's next_attempt_at; the relay never sleeps.
       initial-interval: ${OUTBOX_RETRY_INITIAL:PT1S}
       max-interval: ${OUTBOX_RETRY_MAX_INTERVAL:PT60S}
-      # Total publish attempts before the row is marked FAILED and ops alerted.
+      # Total publish attempts before the row is marked FAILED and ops alerted. Retriable broker
+      # failures (timeouts, unreachable or leaderless brokers) are not counted.
       max-attempts: ${OUTBOX_RETRY_MAX_ATTEMPTS:10}
     topics:
       # Topic used when an event type has no explicit mapping below.
@@ -52,6 +75,10 @@ homefix:
         PaymentCompleted: PaymentCompleted
         BookingCancelled: BookingCancelled
         ReviewSubmitted: ReviewSubmitted
+        # complaint-service (ComplaintCreatedEvent / ComplaintStatusChangedEvent.EVENT_TYPE).
+        # Mapped explicitly so they no longer fall through to the default topic.
+        ComplaintCreated: ComplaintCreated
+        ComplaintStatusChanged: ComplaintStatusChanged
 
 management:
   endpoints:

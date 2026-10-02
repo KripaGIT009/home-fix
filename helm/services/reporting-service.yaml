@@ -1,0 +1,19 @@
+# reporting-service - per-service values for helm/homefix-service.
+# Mirrors the service's entry in docker-compose.core.yml, minus dev-only settings
+# (inline secrets, ddl-auto=update, debug logging, dev seeding/OTP echo).
+# The port must equal the Dockerfile EXPOSE and compose SERVER_PORT.
+
+serviceName: reporting-service
+containerPort: 8096
+
+dependencies:
+  postgres: false
+  redis: false
+  kafka: false
+
+# Keys read from the existing Secret "reporting-service-secrets".
+secrets:
+  env:
+    JWT_SECRET: jwt_secret
+
+config: {}

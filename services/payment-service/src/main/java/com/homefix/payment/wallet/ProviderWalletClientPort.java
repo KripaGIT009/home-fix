@@ -14,6 +14,12 @@ public interface ProviderWalletClientPort {
     /**
      * Credits {@code netAmount} to the provider's wallet for a completed booking.
      *
+     * <p><strong>Must be idempotent per {@code bookingId}.</strong> A booking has exactly one
+     * payment, and the Payment Service delivers this credit at least once: it re-sends a credit
+     * whose confirmation it never durably recorded (a crash after the wallet accepted it, or a
+     * failed marker clear), so an adapter must apply a repeated credit for the same booking only
+     * once.
+     *
      * @throws WalletCreditException if the credit could not be applied; the caller retries and,
      *                               on exhaustion, alerts Finance_Admin (Requirement 12.11).
      */

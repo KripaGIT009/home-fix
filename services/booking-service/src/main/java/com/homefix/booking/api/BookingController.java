@@ -58,7 +58,8 @@ public class BookingController {
         UUID customerId = customerId(authentication);
         CreateBookingCommand cmd = new CreateBookingCommand(
                 customerId, request.categoryId(), request.subcategoryId(), request.addressId(),
-                request.emergency(), request.scheduledAt(), request.description(), List.of());
+                request.emergency(), request.scheduledAt(), request.description(),
+                request.couponCode(), List.of());
         BookingService.BookingCreationResult result = request.emergency()
                 ? bookingService.createEmergency(cmd)
                 : bookingService.createScheduled(cmd);
@@ -69,23 +70,25 @@ public class BookingController {
     /**
      * {@code POST /bookings/media} — multipart variant that accepts up to 10 media files
      * alongside the booking fields (Requirement 7.2). The media is validated and stored, and
-     * the booking is created the same way as {@link #create}.
+     * the booking is created the same way as {@link #create}; {@code addressId} is required
+     * here for the same reason it is on {@link CreateBookingRequest}.
      */
     @PostMapping(path = "/media", consumes = "multipart/form-data")
     public ResponseEntity<BookingResponse> createWithMedia(
             @RequestParam("categoryId") UUID categoryId,
             @RequestParam("subcategoryId") UUID subcategoryId,
-            @RequestParam(value = "addressId", required = false) UUID addressId,
+            @RequestParam("addressId") UUID addressId,
             @RequestParam(value = "emergency", defaultValue = "false") boolean emergency,
             @RequestParam(value = "scheduledAt", required = false) String scheduledAt,
             @RequestParam(value = "description", required = false) String description,
+            @RequestParam(value = "couponCode", required = false) String couponCode,
             @RequestParam(value = "media", required = false) MultipartFile[] media,
             Authentication authentication) {
         UUID customerId = customerId(authentication);
         CreateBookingCommand cmd = new CreateBookingCommand(
                 customerId, categoryId, subcategoryId, addressId, emergency,
                 scheduledAt == null ? null : java.time.Instant.parse(scheduledAt),
-                description, toMediaFiles(media));
+                description, couponCode, toMediaFiles(media));
         BookingService.BookingCreationResult result = emergency
                 ? bookingService.createEmergency(cmd)
                 : bookingService.createScheduled(cmd);

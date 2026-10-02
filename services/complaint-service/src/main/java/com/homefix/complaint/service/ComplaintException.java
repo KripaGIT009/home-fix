@@ -50,6 +50,31 @@ public class ComplaintException extends RuntimeException {
         return new ComplaintException(HttpStatus.CONFLICT, "INVALID_COMPLAINT_TRANSITION", message);
     }
 
+    /** The complaint's current state does not allow a refund (Requirement 16.5). */
+    public static ComplaintException refundNotAllowed(String message) {
+        return new ComplaintException(HttpStatus.CONFLICT, "REFUND_NOT_ALLOWED", message);
+    }
+
+    /** The complaint already carries a refund; a complaint is refunded at most once (16.5). */
+    public static ComplaintException refundAlreadyRequested(String message) {
+        return new ComplaintException(HttpStatus.CONFLICT, "REFUND_ALREADY_REQUESTED", message);
+    }
+
+    /** A retry replayed a refund whose Payment Service outcome is not yet recorded. */
+    public static ComplaintException refundInProgress(String message) {
+        return new ComplaintException(HttpStatus.CONFLICT, "REFUND_IN_PROGRESS", message);
+    }
+
+    /** A refund idempotency key was reused with a different amount. */
+    public static ComplaintException idempotencyKeyReused(String message) {
+        return new ComplaintException(HttpStatus.CONFLICT, "IDEMPOTENCY_KEY_REUSED", message);
+    }
+
+    /** The Payment Service call failed with an unknown outcome; Finance_Admin must reconcile it. */
+    public static ComplaintException refundOutcomeUnknown(String message) {
+        return new ComplaintException(HttpStatus.BAD_GATEWAY, "REFUND_OUTCOME_UNKNOWN", message);
+    }
+
     public HttpStatus getStatus() {
         return status;
     }

@@ -71,7 +71,8 @@ public class ComplaintRbacConfig {
 
     /**
      * Staff tier permitted to moderate complaints: change status (16.3), approve refunds (16.5),
-     * mark disputes (16.7) and read aggregated statistics (16.9). Logical OR.
+     * mark disputes (16.7), read aggregated statistics (16.9) and work the Admin Portal complaint
+     * list (19.2). Logical OR.
      */
     private static final List<String> SUPPORT_TIER =
             List.of("ADMIN", "SUPER_ADMIN", "SUPPORT_AGENT");
@@ -97,6 +98,10 @@ public class ComplaintRbacConfig {
     @PostConstruct
     public void registerEndpointRoles() {
         var rules = rbacProperties.getEndpointRoles();
+        // Admin Portal complaint management (19.2): the list and the status/note update. The
+        // "/**" form also matches the bare "/admin/complaints" list path.
+        rules.put("GET /admin/complaints/**", SUPPORT_TIER);
+        rules.put("PATCH /admin/complaints/**", SUPPORT_TIER);
         // Staff reporting surface (16.9) — declared before anything that could widen it.
         rules.put("GET /complaints/stats", SUPPORT_TIER);
         // Staff moderation of an individual complaint (16.3, 16.5/16.6, 16.7).

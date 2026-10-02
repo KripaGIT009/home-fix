@@ -2,6 +2,8 @@ package com.homefix.complaint.support;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -37,6 +39,27 @@ public class InMemoryComplaintRepository implements ComplaintRepository {
                 .toList();
     }
 
+    /**
+     * Mirrors the JPQL query: {@code pattern} is the service's lower-case {@code %term%} with
+     * {@code \}-escaped wildcards, matched against the description and the three ids.
+     */
+    @Override
+    public List<Complaint> searchForAdmin(Collection<ComplaintStatus> statuses, String pattern,
+                                          Pageable page) {
+        String term = "%".equals(pattern) ? "" : pattern.substring(1, pattern.length() - 1)
+                .replace("\\%", "%").replace("\\_", "_").replace("\\\\", "\\");
+        return byId.values().stream()
+                .filter(c -> statuses.contains(c.getStatus()))
+                .filter(c -> term.isEmpty()
+                        || c.getDescription().toLowerCase().contains(term)
+                        || c.getBookingId().toString().contains(term)
+                        || c.getCustomerId().toString().contains(term)
+                        || c.getId().toString().contains(term))
+                .sorted(Comparator.comparing(Complaint::getCreatedAt).reversed())
+                .limit(page.getPageSize())
+                .toList();
+    }
+
     @Override
     public List<Complaint> findAll() {
         return new ArrayList<>(byId.values());
@@ -51,6 +74,12 @@ public class InMemoryComplaintRepository implements ComplaintRepository {
     @Override
     public Optional<Complaint> findById(UUID id) {
         return Optional.ofNullable(byId.get(id));
+    }
+
+    /** No real locking in memory; tests are single-threaded. */
+    @Override
+    public Optional<Complaint> findByIdForUpdate(UUID id) {
+        return findById(id);
     }
 
     @Override

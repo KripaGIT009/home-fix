@@ -20,4 +20,16 @@ public interface AuditLogStore {
 
     /** Returns all audit entries produced by a given Admin actor, most recent first. */
     List<AuditLogEntry> findByActor(UUID actorId);
+
+    /**
+     * Returns one page of the whole log in {@code loggedAt DESC, id DESC} order (the Admin Portal's
+     * Audit Logs view, Requirement 19.8).
+     *
+     * @param action     only entries of this action, or {@code null} for all
+     * @param entityType only entries whose entity type contains this text, ignoring case, or
+     *                   {@code null} for all
+     * @param after      only entries strictly after this position, or {@code null} from the start
+     * @param limit      the maximum number of entries to return
+     */
+    List<AuditLogEntry> findPage(AdminAction action, String entityType, AuditCursor after, int limit);
 }

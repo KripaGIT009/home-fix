@@ -1,8 +1,10 @@
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { UseMutationResult, UseQueryResult } from '@tanstack/react-query';
 import { keepPreviousData } from '@tanstack/react-query';
 import type { ApiError } from '@api/client';
+import { isTerminalStatus } from './status';
 import {
+  decideQuote,
   fetchBookingDetail,
   fetchBookingHistory,
   fetchInvoiceDownloadUrl,
@@ -33,13 +35,45 @@ export function useBookingHistory(
   });
 }
 
-/** Detailed view of a single booking. */
-export function useBookingDetail(bookingId: string): UseQueryResult<BookingDetail, ApiError> {
+/** How often an in-flight booking is re-read while a screen is watching it. */
+export const BOOKING_POLL_INTERVAL_MS = 5_000;
+
+/**
+ * Detailed view of a single booking.
+ *
+ * With `poll`, the booking is re-read every few seconds until it reaches a
+ * terminal status, so the tracking screen follows the booking through the
+ * dispatch and job lifecycle. A 403/404 stops polling (the booking is not the
+ * caller's, or does not exist); a transient failure backs off to a slower poll.
+ */
+export function useBookingDetail(
+  bookingId: string,
+  options: { poll?: boolean } = {},
+): UseQueryResult<BookingDetail, ApiError> {
+  const { poll = false } = options;
   return useQuery<BookingDetail, ApiError>({
     queryKey: historyKeys.detail(bookingId),
     queryFn: () => fetchBookingDetail(bookingId),
     enabled: Boolean(bookingId),
-    staleTime: 30_000,
+    staleTime: poll ? 0 : 30_000,
+    refetchInterval: (query) => {
+      if (!poll) return false;
+      const { error, data } = query.state;
+      if (error) {
+        return error.status === 403 || error.status === 404 ? false : BOOKING_POLL_INTERVAL_MS * 3;
+      }
+      return isTerminalStatus(data?.status) ? false : BOOKING_POLL_INTERVAL_MS;
+    },
+  });
+}
+
+/** Approve or decline an updated quote, then re-read the booking (Requirement 9.7, 9.8). */
+export function useQuoteDecision(bookingId: string): UseMutationResult<void, ApiError, boolean> {
+  const queryClient = useQueryClient();
+  return useMutation<void, ApiError, boolean>({
+    mutationFn: (approve) => decideQuote(bookingId, approve),
+    onSettled: () =>
+      void queryClient.invalidateQueries({ queryKey: historyKeys.detail(bookingId) }),
   });
 }
 

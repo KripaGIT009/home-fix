@@ -12,21 +12,25 @@ import {
   Typography,
 } from '@mui/material';
 import BoltRoundedIcon from '@mui/icons-material/BoltRounded';
-import PlaceRoundedIcon from '@mui/icons-material/PlaceRounded';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import ScheduleRoundedIcon from '@mui/icons-material/ScheduleRounded';
 import { AppShell } from '@components/AppShell';
 import { QueryStateView } from '@components/QueryStateView';
-import { formatCurrency, formatDateTime } from '@lib/format';
+import { formatDateTime } from '@lib/format';
 import { isApiError } from '@api/client';
 import { useCountdown } from '../auth/useCountdown';
-import { useAcceptJob, useDeclineJob, useJobOffer } from './hooks';
-import type { JobOffer } from './api';
+import { useAcceptJobOffer, useDeclineJobOffer, useJobOffer } from './hooks';
+import { OFFER_ERROR, type JobOffer, type JobOfferStatus } from './api';
 
 /**
- * Job Request screen (Requirement 28.8): shows the incoming offer's service
- * details and customer info with accept/decline buttons governed by a live
- * countdown. The offer auto-expires when the countdown hits zero, disabling
- * accept.
+ * Job Request screen (Requirement 28.8): shows an incoming offer with
+ * accept/decline buttons governed by a live countdown. The offer auto-expires
+ * when the countdown hits zero, disabling accept; the server enforces the same
+ * deadline, so an accept that races it is refused with OFFER_EXPIRED.
+ *
+ * The Dispatch Engine knows only what matching needs (reference, emergency
+ * flag, slot), so the address, description and earning are not shown here;
+ * they arrive with the job itself once the offer is accepted.
  */
 export function JobRequestScreen() {
   const { bookingId = '' } = useParams();
@@ -46,7 +50,6 @@ export function JobRequestScreen() {
             offer={offer.data}
             bookingId={bookingId}
             onDone={() => navigate('/dashboard')}
-            onAccepted={() => navigate(`/jobs/${bookingId}`)}
           />
         ) : null}
       </QueryStateView>
@@ -57,36 +60,40 @@ export function JobRequestScreen() {
 interface OfferContentProps {
   offer: JobOffer;
   bookingId: string;
+  /** Leave the screen once the provider has answered. */
   onDone: () => void;
-  onAccepted: () => void;
 }
 
-function OfferContent({ offer, bookingId, onDone, onAccepted }: OfferContentProps) {
+function OfferContent({ offer, bookingId, onDone }: OfferContentProps) {
   const timer = useCountdown(0);
   const timerReset = timer.reset;
   useEffect(() => {
     timerReset(Math.max(0, Math.floor(offer.expiresInSeconds)));
   }, [offer.expiresInSeconds, timerReset]);
 
-  const accept = useAcceptJob(bookingId);
-  const decline = useDeclineJob(bookingId);
+  const accept = useAcceptJobOffer(bookingId);
+  const decline = useDeclineJobOffer(bookingId);
 
-  const isExpired = timer.secondsLeft <= 0;
+  const isPending = offer.status === 'PENDING';
+  const isExpired = !isPending || timer.secondsLeft <= 0;
   const isBusy = accept.isPending || decline.isPending;
+  // Fall back to the offer's own remaining time if the window length is missing.
+  const windowSeconds = offer.timeoutSeconds > 0 ? offer.timeoutSeconds : offer.expiresInSeconds;
+  const ringValue =
+    windowSeconds > 0 ? Math.min(100, (timer.secondsLeft / windowSeconds) * 100) : 0;
 
   const handleAccept = () => {
-    accept.mutate(undefined, { onSuccess: onAccepted });
+    accept.mutate(undefined, { onSuccess: onDone });
   };
   const handleDecline = () => {
     decline.mutate(undefined, { onSuccess: onDone });
   };
 
+  const decisionError = accept.error ?? decline.error;
   const errorMessage =
-    accept.isError && isApiError(accept.error)
-      ? accept.error.message
-      : decline.isError && isApiError(decline.error)
-        ? decline.error.message
-        : null;
+    (accept.isError || decline.isError) && isApiError(decisionError)
+      ? describeDecisionError(decisionError.code, decisionError.message)
+      : null;
 
   return (
     <Stack spacing={2}>
@@ -94,7 +101,7 @@ function OfferContent({ offer, bookingId, onDone, onAccepted }: OfferContentProp
         <Box sx={{ position: 'relative', display: 'inline-flex' }}>
           <CircularProgress
             variant="determinate"
-            value={(timer.secondsLeft / 60) * 100}
+            value={ringValue}
             size={96}
             thickness={4}
             color={isExpired ? 'error' : timer.secondsLeft <= 10 ? 'warning' : 'primary'}
@@ -119,7 +126,11 @@ function OfferContent({ offer, bookingId, onDone, onAccepted }: OfferContentProp
           </Box>
         </Box>
         <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }} aria-live="polite">
-          {isExpired ? 'This offer has expired' : 'Respond before the timer runs out'}
+          {isPending
+            ? isExpired
+              ? 'This offer has expired'
+              : 'Respond before the timer runs out'
+            : describeClosedOffer(offer.status)}
         </Typography>
       </Box>
 
@@ -128,13 +139,15 @@ function OfferContent({ offer, bookingId, onDone, onAccepted }: OfferContentProp
           <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
             <Stack spacing={0.25}>
               <Typography variant="h6" fontWeight={700}>
-                {offer.serviceName}
+                {offer.emergency ? 'Emergency job' : 'New job'}
               </Typography>
-              <Typography variant="caption" color="text.secondary">
-                {offer.reference}
-              </Typography>
+              {offer.reference ? (
+                <Typography variant="caption" color="text.secondary">
+                  {offer.reference}
+                </Typography>
+              ) : null}
             </Stack>
-            {offer.isEmergency ? (
+            {offer.emergency ? (
               <Chip
                 size="small"
                 color="error"
@@ -148,30 +161,17 @@ function OfferContent({ offer, bookingId, onDone, onAccepted }: OfferContentProp
           <Stack spacing={0.75} sx={{ mt: 1.5 }}>
             <Stack direction="row" spacing={1} alignItems="center" color="text.secondary">
               <ScheduleRoundedIcon fontSize="small" aria-hidden />
-              <Typography variant="body2">{formatDateTime(offer.scheduledAt)}</Typography>
+              <Typography variant="body2">
+                {offer.scheduledAt ? formatDateTime(offer.scheduledAt) : 'As soon as possible'}
+              </Typography>
             </Stack>
-            <Stack direction="row" spacing={1} alignItems="center" color="text.secondary">
-              <PlaceRoundedIcon fontSize="small" aria-hidden />
-              <Typography variant="body2">{offer.customerArea}</Typography>
+            <Stack direction="row" spacing={1} alignItems="flex-start" color="text.secondary">
+              <InfoOutlinedIcon fontSize="small" aria-hidden sx={{ mt: 0.25 }} />
+              <Typography variant="body2">
+                The address, job description and earning are shared once you accept.
+              </Typography>
             </Stack>
           </Stack>
-
-          {offer.description ? (
-            <Typography variant="body2" sx={{ mt: 1.5 }}>
-              {offer.description}
-            </Typography>
-          ) : null}
-
-          {offer.estimatedEarning !== null ? (
-            <Stack direction="row" justifyContent="space-between" sx={{ mt: 2 }}>
-              <Typography variant="body2" color="text.secondary">
-                Estimated earning
-              </Typography>
-              <Typography variant="subtitle1" fontWeight={700}>
-                {formatCurrency(offer.estimatedEarning, offer.currency)}
-              </Typography>
-            </Stack>
-          ) : null}
         </CardContent>
       </Card>
 
@@ -184,7 +184,7 @@ function OfferContent({ offer, bookingId, onDone, onAccepted }: OfferContentProp
           size="large"
           fullWidth
           onClick={handleDecline}
-          disabled={isBusy}
+          disabled={isBusy || !isPending}
         >
           {decline.isPending ? 'Declining…' : 'Decline'}
         </Button>
@@ -200,4 +200,33 @@ function OfferContent({ offer, bookingId, onDone, onAccepted }: OfferContentProp
       </Stack>
     </Stack>
   );
+}
+
+/** Status line for an offer that can no longer be answered. */
+function describeClosedOffer(status: JobOfferStatus): string {
+  switch (status) {
+    case 'ACCEPTED':
+      return 'You accepted this job';
+    case 'DECLINED':
+      return 'You declined this job';
+    case 'WITHDRAWN':
+      return 'The customer cancelled this booking';
+    case 'EXPIRED':
+    default:
+      return 'This offer has expired';
+  }
+}
+
+/** A refused decision, in the provider's terms rather than the API's. */
+function describeDecisionError(code: string, fallback: string): string {
+  switch (code) {
+    case OFFER_ERROR.expired:
+      return 'Too late: this offer expired before your answer arrived.';
+    case OFFER_ERROR.alreadyDecided:
+      return 'This offer has already been answered or withdrawn.';
+    case OFFER_ERROR.notFound:
+      return 'This offer is no longer available.';
+    default:
+      return fallback;
+  }
 }

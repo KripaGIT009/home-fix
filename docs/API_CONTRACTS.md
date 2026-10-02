@@ -10,7 +10,9 @@ Every field name and type here was read out of the Java records and controllers,
 
 **Authentication.** The shared `JwtValidationFilter` reads `Authorization: Bearer <jwt>`, takes the user id from `sub` and roles from the `roles` claim, and grants `ROLE_<NAME>` authorities. Tokens are HS384-signed. `CorrelationIdFilter` propagates `X-Correlation-ID` into the logging context.
 
-**Authorization, as actually configured.** The shared `RbacEnforcementFilter` matches `"METHOD /path/**" → [roles]` entries from `homefix.security.rbac.endpoint-roles`. No service defines that map in YAML. Only admin-service and reporting-service populate it, programmatically. Everywhere else the filter finds no match and passes the request through, so those endpoints are **authenticated only, with no role rule configured**, whatever the Javadoc claims. Entries below say so explicitly rather than repeating the intent.
+**Authorization, as actually configured.** The shared `RbacEnforcementFilter` matches `"METHOD /path/**" → [roles]` entries from `homefix.security.rbac.endpoint-roles`, first match wins. No service defines that map in YAML. Thirteen services populate it programmatically in a `*RbacConfig` class: admin, catalog, chat, complaint, customer, invoice, payment, pricing, promotion, provider, rating-review, reporting and verification. Where no rule matches, the filter passes the request through, so that endpoint is **authenticated only, with no role rule configured**, whatever the Javadoc claims. Entries below say so explicitly rather than repeating the intent.
+
+Rules are matched against the decoded path within the application, not the raw request URI. The servlet context path is stripped, one trailing slash is removed, and case is ignored. A `GET` rule also governs `HEAD`, because Spring MVC serves HEAD from the GET handler. A request the default `StrictHttpFirewall` would refuse, or one with a malformed percent-encoding, is answered 400 `{"error":"Malformed request path"}` before any rule is evaluated. That covers `;` path parameters, encoded `/`, `\`, `.` or `%`, and `//`, `/./` or `/../` segments.
 
 **Roles.** `CUSTOMER`, `SERVICE_PROVIDER`, `ADMIN`, `SUPER_ADMIN`, `FINANCE_ADMIN`, `DISPATCHER`, `SUPPORT_AGENT`.
 
@@ -42,7 +44,7 @@ Every field name and type here was read out of the Java records and controllers,
 }
 ```
 
-Two exceptions to the envelope. `RbacEnforcementFilter` writes its own body, so an RBAC rejection returns `{"error":"Insufficient role"}` or `{"error":"Authentication required"}`. dispatch-engine has only a controller-local handler, so its bean-validation failures return Spring's default body; invoice-service has no exception handler at all.
+Two exceptions to the envelope. `RbacEnforcementFilter` writes its own body, so an RBAC rejection returns `{"error":"Insufficient role"}`, `{"error":"Authentication required"}` or, for an ambiguous path, 400 `{"error":"Malformed request path"}`. dispatch-engine has only a controller-local handler, so its bean-validation failures return Spring's default body; invoice-service has no exception handler at all.
 
 ---
 
@@ -84,7 +86,7 @@ Global filters, in order, each rejection using the shared envelope:
 | -100 | `HttpsRedirectGatewayFilter` | 301 when `X-Forwarded-Proto` is not https and enforcement is on |
 | -90 | `CorrelationIdGatewayFilter` | Sets or echoes `X-Correlation-ID` |
 | -80 | `WafInspectionGatewayFilter` | Regex scan of path, query values, `User-Agent`, `Referer`, `X-Forwarded-For`, `Cookie` → 400 |
-| -70 | `JwtIntrospectionGatewayFilter` | Calls `GET /auth/introspect`; 401 unless the path starts with `/auth/register`, `/auth/login`, `/auth/token/refresh`, `/auth/introspect`, `/actuator`, `/health` |
+| -70 | `JwtIntrospectionGatewayFilter` | Calls `GET /auth/introspect`; 401 unless the path starts with `/auth/register`, `/auth/login`, `/auth/token/refresh`, `/auth/introspect`, `/actuator`, `/health`. An active result is reused for up to `homefix.gateway.auth.introspection-cache.ttl` (default `30s`, env `INTROSPECTION_CACHE_TTL`, `0` disables) and never past the token's `exp`. Entries are keyed by the token's SHA-256 and capped at `max-entries` (default 10000, env `INTROSPECTION_CACHE_MAX_ENTRIES`). Inactive results and failed or timed-out calls are never cached, and they still give 401 |
 | -60 | `OtpRateLimitGatewayFilter` | On `/auth/register/otp`, over 5 per phone per hour → 429, `Retry-After: 3600` |
 | -50 | `RateLimitGatewayFilter` | 60-second window per subject: CUSTOMER 100, provider 60, default 60 → 429, `Retry-After: 60` |
 
@@ -92,7 +94,7 @@ Global filters, in order, each rejection using the shared envelope:
 
 ### auth-service
 
-Port 8081, rooted at `/auth`. Every endpoint is public by design: registration is how a caller first obtains a token, and introspection is called by the gateway.
+Port 8081, rooted at `/auth`. Every `/auth` endpoint is public by design: registration is how a caller first obtains a token, and introspection is called by the gateway. The one exception is the service-to-service surface under `/internal`, which requires the shared service credential and is not routed by the gateway.
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
@@ -102,6 +104,7 @@ Port 8081, rooted at `/auth`. Every endpoint is public by design: registration i
 | POST | `/auth/login/social` | public | Validate a Google or Apple identity token |
 | POST | `/auth/logout` | public | Revoke a refresh token, idempotent |
 | GET | `/auth/introspect` | public | Validate a JWT and return its claims |
+| GET | `/internal/users/{userId}/contact` | service credential | A user's delivery addresses, for notification-service |
 
 **POST /auth/register/otp**
 
@@ -155,7 +158,7 @@ Response 201, and the same body is returned by `/auth/token/refresh` and `/auth/
 { "refreshToken": "22690c5e-221a-4d50-8d87-dc141e63c991..." }
 ```
 
-Refresh rotates within a token family and re-resolves roles. Replaying an already-rotated token revokes the whole family with `REFRESH_TOKEN_REPLAY`. Logout returns 204 with no body and is idempotent.
+Refresh rotates within a token family and re-resolves roles. Replaying an already-rotated token revokes the whole family with `REFRESH_TOKEN_REPLAY`. Rotation is atomic: if two refreshes present the same token at once, exactly one consumes it. The other counts as a replay and revokes the family, and that includes the successor the first refresh was issuing. Clients must therefore send one refresh at a time per session. Logout returns 204 with no body and is idempotent.
 
 **POST /auth/login/social**
 
@@ -182,6 +185,20 @@ Refresh rotates within a token family and re-resolves roles. Replaying an alread
 
 An invalid token returns `{"active": false}`. `exp` is epoch seconds, zero when absent; `iss` is an empty string when absent; `roles` is an empty array when absent.
 
+**GET /internal/users/{userId}/contact** is service-to-service only. Events carry user ids, never contact details, so notification-service resolves a recipient's addresses here at send time. The caller must send the platform's shared service credential in `X-Internal-Api-Key` (the `INTERNAL_API_KEY` value booking-service's `/internal/**` endpoints also use). The key is compared in constant time and has no default: if auth-service has none configured it refuses every internal call. A user's JWT does not grant access, even with a staff role. The gateway has no `/internal/**` route, so this path cannot be reached from outside the cluster.
+
+Response 200:
+
+```json
+{
+  "userId": "bc0551ae-b3fb-4571-8587-017fa39096a4",
+  "mobileNumber": "+919000000001",
+  "emailAddress": null
+}
+```
+
+Every address may be null. `mobileNumber` is null for a social-login account that never registered a phone. `emailAddress` is always null today because auth-service does not store an email. The field is in the contract so that storing one later is not a breaking change. The response is PII and is never logged.
+
 | HTTP | errorCode | When |
 |------|-----------|------|
 | 400 | `VALIDATION_ERROR` | Bean validation failed; `details` lists `field: message` |
@@ -195,13 +212,15 @@ An invalid token returns `{"active": false}`. `exp` is epoch seconds, zero when 
 | 401 | `SOCIAL_PROVIDER_UNSUPPORTED` | No verifier registered or configured for that provider |
 | 429 | `OTP_SESSION_LOCKED` | 5 wrong attempts; locked 30 minutes, sends `Retry-After` |
 | 429 | `OTP_RATE_LIMIT_EXCEEDED` | Over 5 code requests in an hour for that number |
+| 401 | `INTERNAL_AUTH_FAILED` | `/internal/**` called without the right `X-Internal-Api-Key`, or with none configured |
+| 404 | `USER_NOT_FOUND` | `/internal/users/{userId}/contact` for an id with no account |
 | 502 | `SMS_DELIVERY_FAILED` | Gateway failed; no pending session was created |
 
 ---
 
 ### customer-service
 
-Port 8082, rooted at `/customers`.
+Port 8082, rooted at `/customers`, plus one service-to-service endpoint under `/internal`.
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
@@ -210,6 +229,7 @@ Port 8082, rooted at `/customers`.
 | POST | `/customers/{id}/deletion` | authenticated only, no role rule | Request account and data deletion |
 | POST | `/customers/{id}/addresses` | authenticated only, no role rule | Add a saved address from coordinates |
 | DELETE | `/customers/{id}/addresses/{addressId}` | authenticated only, no role rule | Delete a saved address |
+| GET | `/internal/addresses/{addressId}` | service credential | An address's owner and coordinates, for dispatch-engine |
 
 **PUT /customers/{id}/profile** is `multipart/form-data` with a JSON `profile` part and an optional `photo` part. The photo must be `image/jpeg` or `image/png` and at most 5 MB.
 
@@ -288,13 +308,30 @@ Response 201:
 
 **DELETE /customers/{id}/addresses/{addressId}** returns 204. Booking-service is asked whether an active booking references the address: a hit gives `ADDRESS_IN_USE`, and an unreachable booking-service gives `BOOKING_SERVICE_UNAVAILABLE` rather than risking a wrong delete. Deleting the default promotes the most recently created remaining address.
 
+**GET /internal/addresses/{addressId}** is service-to-service only. `BookingCreated` carries the booking's `addressId`, not coordinates, so dispatch-engine resolves it here before matching a provider. The caller must send the platform's shared service credential in `X-Internal-Api-Key` (the `INTERNAL_API_KEY` value booking-service's and auth-service's `/internal/**` endpoints also use; customer-service reads it as `homefix.customer.internal-api-key`). The key is compared in constant time and has no default: with none configured every internal call is refused. A user's JWT does not grant access, even the address owner's or a staff role. The gateway routes only `/customers/**` here and has no `/internal/**` route, so this path cannot be reached from outside the cluster.
+
+Response 200:
+
+```json
+{
+  "addressId": "c4e7a1b9-3d28-4f06-9a15-8b6d2e0f7c43",
+  "customerId": "bc0551ae-b3fb-4571-8587-017fa39096a4",
+  "lat": 12.971599,
+  "lng": 77.594566
+}
+```
+
+Coordinates are always present: they are stored even when reverse-geocoding fails. The encrypted street address and the label are deliberately not returned. Addresses are hard-deleted, so a deleted address is a 404.
+
 | HTTP | errorCode | When |
 |------|-----------|------|
 | 400 | `VALIDATION_ERROR` | Bean validation failed |
 | 400 | `GPS_UNAVAILABLE` | `gpsDenied` true, or a coordinate missing |
 | 400 | `INVALID_PHOTO_TYPE` | Photo part is not JPEG or PNG |
 | 400 | `PHOTO_TOO_LARGE` | Photo part over 5 MB |
+| 401 | `INTERNAL_AUTH_FAILED` | `/internal/**` called without the right `X-Internal-Api-Key`, or with none configured |
 | 404 | `CUSTOMER_NOT_FOUND` | Address not found for the customer, or no such profile |
+| 404 | `ADDRESS_NOT_FOUND` | `/internal/addresses/{addressId}` for an id with no address |
 | 409 | `ADDRESS_IN_USE` | An active booking references the address |
 | 422 | `ADDRESS_LIMIT_REACHED` | 10 active addresses already exist |
 | 503 | `BOOKING_SERVICE_UNAVAILABLE` | Booking-service lookup failed |
@@ -449,14 +486,14 @@ Port 8094 locally. Provider paths under `/verifications/{providerId}`, admin pat
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
-| POST | `/verifications/{providerId}/documents` | authenticated only, no role rule | Upload required documents, multipart |
-| GET | `/verifications/{providerId}` | authenticated only, no role rule | Read the record including its audit trail |
-| GET | `/verifications/{providerId}/job-assignment-eligibility` | authenticated only, no role rule | Assert dispatch eligibility, 204 or 403 |
-| POST | `/admin/verifications/{providerId}/verify-documents` | authenticated only, no role rule | Mark documents verified, auto-start the check |
-| POST | `/admin/verifications/{providerId}/background-check-result` | authenticated only, no role rule | Record the check result |
-| POST | `/admin/verifications/{providerId}/approve` | authenticated only, no role rule | Approve, or reinstate a suspended provider |
-| POST | `/admin/verifications/{providerId}/reject` | authenticated only, no role rule | Reject with a required reason |
-| POST | `/admin/verifications/{providerId}/suspend` | authenticated only, no role rule | Suspend and remove from the dispatch pool |
+| POST | `/verifications/{providerId}/documents` | SERVICE_PROVIDER, ADMIN, SUPER_ADMIN; caller must be `providerId` or staff | Upload required documents, multipart |
+| GET | `/verifications/{providerId}` | SERVICE_PROVIDER, ADMIN, SUPER_ADMIN, SUPPORT_AGENT; caller must be `providerId` or staff | Read the record including its audit trail |
+| GET | `/verifications/{providerId}/job-assignment-eligibility` | SERVICE_PROVIDER, DISPATCHER, ADMIN, SUPER_ADMIN; no ownership check, by design | Assert dispatch eligibility, 204 or 403 |
+| POST | `/admin/verifications/{providerId}/verify-documents` | ADMIN, SUPER_ADMIN | Mark documents verified, auto-start the check |
+| POST | `/admin/verifications/{providerId}/background-check-result` | ADMIN, SUPER_ADMIN | Record the check result |
+| POST | `/admin/verifications/{providerId}/approve` | ADMIN, SUPER_ADMIN | Approve, or reinstate a suspended provider |
+| POST | `/admin/verifications/{providerId}/reject` | ADMIN, SUPER_ADMIN | Reject with a required reason |
+| POST | `/admin/verifications/{providerId}/suspend` | ADMIN, SUPER_ADMIN | Suspend and remove from the dispatch pool |
 
 The admin handler binds a document upload as `@RequestParam Map<String, MultipartFile>`, so **each part name is a document type**: `GOVERNMENT_ID`, `ADDRESS_PROOF`, `SKILL_CERTIFICATION`. All three are required; a missing one gives `MISSING_REQUIRED_DOCUMENTS` listing them, and an unrecognised part name gives `VALIDATION_ERROR`. No per-part size or MIME allow-list is enforced on this path.
 
@@ -531,6 +568,8 @@ The acting principal is never read from the body: the actor id is the JWT subjec
 | POST | `/bookings/{reference}/quote/approval` | authenticated only, no role rule | Approve → `JOB_STARTED` |
 | POST | `/bookings/{reference}/quote/rejection` | authenticated only, no role rule | Reject → `JOB_COMPLETED` at the original price |
 | POST | `/bookings/{reference}/complete` | authenticated only, no role rule | → `JOB_COMPLETED`, requires an after photo |
+| GET | `/bookings/history` | `CUSTOMER`, staff | The caller's own bookings, newest first, paged |
+| GET | `/bookings/{bookingId}` | `CUSTOMER`, `SERVICE_PROVIDER`, staff; plus ownership | One booking, by UUID or by reference |
 
 **POST /bookings**
 
@@ -610,6 +649,57 @@ Net duration is the sum of work intervals minus pause intervals, persisted but n
 | 422 | `PHOTO_REQUIRED` | Start without a before photo, complete without an after photo |
 | 503 | `PRICING_ENGINE_UNAVAILABLE` | Pricing-engine unreachable |
 | 500 | `BOOKING_NOT_COMPLETED` | The booking saga failed and was compensated |
+
+**GET /bookings/history?page=1&pageSize=10** lists the caller's own bookings (customer id = JWT subject), newest first by creation time. `page` is **1-based** in the request and the response, matching the customer app's pagination control; it defaults to 1. `pageSize` is 1 to 50 and defaults to 10. A page past the end returns `items: []` with the real totals. Staff are admitted but see only their own bookings; this endpoint never lists anybody else's. A provider-only account gets 403.
+
+```json
+{
+  "items": [
+    {
+      "bookingId": "b2e7d410-3a65-4c98-9f12-7d4e6a8b0c55",
+      "referenceNumber": "HFX-20260912-AB12CD",
+      "status": "PROVIDER_ACCEPTED",
+      "serviceName": "Tap repair",
+      "date": "2026-09-12T10:00:00Z",
+      "amount": 1250.00,
+      "currency": "INR"
+    }
+  ],
+  "page": 1,
+  "pageSize": 10,
+  "totalItems": 1,
+  "totalPages": 1
+}
+```
+
+`date` is `scheduledAt`, or `createdAt` when there is none. `amount` is `finalTotal` once set, otherwise `estimatedTotal`. `status` is the booking-state enum name. `serviceName` comes from catalog-service's `GET /catalog/categories` (one call per page). When the catalog is unreachable, or the subcategory has since been deactivated, it is `"Service"`. A catalog failure never fails the read.
+
+**GET /bookings/{bookingId}** takes the booking UUID (what the customer app routes on) or its reference. A reference is never a well-formed UUID, so the two forms cannot be confused. The booking is visible to its customer, its assigned provider (`providerId` = JWT subject) and staff (`ADMIN`, `SUPER_ADMIN`, `FINANCE_ADMIN`, `SUPPORT_AGENT`, `DISPATCHER`). Anyone else gets the same 404 `BOOKING_NOT_FOUND` as for a booking that does not exist, so ids and references cannot be probed.
+
+```json
+{
+  "bookingId": "b2e7d410-3a65-4c98-9f12-7d4e6a8b0c55",
+  "referenceNumber": "HFX-20260912-AB12CD",
+  "status": "PROVIDER_ACCEPTED",
+  "serviceName": "Tap repair",
+  "date": "2026-09-12T10:00:00Z",
+  "amount": 1250.00,
+  "currency": "INR",
+  "emergency": false,
+  "scheduledAt": "2026-09-12T10:00:00Z",
+  "createdAt": "2026-09-10T07:41:22.512Z",
+  "providerId": "c81f2a90-6d3e-4b57-a1c4-0e9f7b2d8a63",
+  "subcategoryId": "7c9e4b1a-2d86-4a3f-9e51-8b2c6d4f0a77"
+}
+```
+
+Null fields are omitted, so `scheduledAt` and `providerId` are absent until set. The app's type also allows `address`, `description`, `provider` and `invoice`. Booking-service never sends them: the address and the provider's name and rating belong to customer-service and provider-service, the invoice belongs to invoice-service, and the description is not persisted.
+
+| HTTP | errorCode | When |
+|------|-----------|------|
+| 400 | `VALIDATION_ERROR` | `page` < 1, `pageSize` outside 1 to 50, or a non-numeric value |
+| 401 | `INVALID_PRINCIPAL` | The JWT subject is not a UUID |
+| 404 | `BOOKING_NOT_FOUND` | No such booking, or the caller is not its customer, provider or staff |
 
 The full transition table is in [ARCHITECTURE.md](ARCHITECTURE.md) section 8.1.
 
@@ -813,7 +903,9 @@ Port 8088, controller at `/payments`.
 | POST | `/payments/{transactionId}/refunds` | authenticated only, no role rule | Refund fully or partially |
 | POST | `/payments/settlements` | authenticated only, no role rule | Initiate a settlement transfer |
 
-**Idempotency is server-derived, not client-supplied.** There is no `Idempotency-Key` header anywhere in this service. The key is built internally as the literal string `cust:<customerId>:booking:<bookingId>` and held in Redis. A client cannot supply, override or scope it, so replaying the same customer and booking pair returns the original transaction regardless of any header sent.
+**Payment idempotency is server-derived, not client-supplied.** There is no `Idempotency-Key` header anywhere in this service. For payments the key is built internally as the literal string `cust:<customerId>:booking:<bookingId>`, reserved in Redis and backed by a unique column. A client cannot supply, override or scope it, so replaying the same customer and booking pair returns the original transaction regardless of any header sent. Refunds are the exception: they take a client-supplied `idempotencyKey` in the body (see below), because two separate refunds of the same amount are legitimate and only the client knows whether a request is a retry.
+
+The PENDING transaction row is committed before the gateway is charged, and the charge request carries the transaction id so the gateway can echo it in its signed callback. A gateway decline marks the transaction `FAILED`. If the charge call itself errors the outcome is unknown, so the transaction stays `PENDING` for its callback to settle and the response is `502 PAYMENT_GATEWAY_ERROR`.
 
 **POST /payments**
 
@@ -860,26 +952,42 @@ Response 201, and the same body with 200 from the read, callback, retry and refu
 ```json
 {
   "gatewayId": "razorpay",
-  "payload": "{\"order_id\":\"order_NqJ8xT2bVcL9Ae\",\"status\":\"captured\",\"amount\":125000}",
-  "signature": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
-  "succeeded": true,
-  "failureReason": null
+  "payload": "{\"eventId\":\"evt_NqJ8xT2bVcL9Ae\",\"transactionId\":\"7e4b1c93-0d58-4a26-bf71-3c9e5d2a8b64\",\"gatewayId\":\"razorpay\",\"status\":\"SUCCEEDED\",\"amount\":\"1250.00\",\"timestamp\":\"2026-09-11T09:31:05Z\"}",
+  "signature": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
 }
 ```
 
-What the signature actually covers matters, so here it is explicitly. The HMAC is recomputed over the UTF-8 bytes of the `payload` string alone and compared in constant time.
+The HMAC-SHA256 is recomputed over the UTF-8 bytes of the `payload` string and compared in constant time. The endpoint is public, so **everything the callback decides comes from inside the signed payload**; the outer body only carries the payload, its signature, and which gateway's secret to verify it with. The old unsigned `succeeded` and `failureReason` body fields have been removed. A body that still sends them is accepted, but they are ignored.
 
-| Field | Signed | How it is used |
-|-------|--------|----------------|
-| `payload` | **yes**, the only signed input | Verified, then never parsed or inspected |
-| `gatewayId` | no | Selects which signing secret verifies the payload |
-| `succeeded` | no | Decides `SUCCESS` versus `FAILED`, the entire outcome |
-| `failureReason` | no | Recorded on the transaction |
-| `{transactionId}` in the path | no | Selects which transaction is mutated |
+The signed `payload` is a JSON object:
 
-Verification happens before any state change, so a bad signature gives `INVALID_CALLBACK_SIGNATURE` and logs a security warning. But the signed payload is never cross-checked against the outcome fields or the path id, and the endpoint is public, so a single captured gateway id, payload and signature triple can be retargeted at any other pending transaction with the outcome flipped. That is the critical finding in review section 8.4.
+| Field | Required | Rule |
+|-------|----------|------|
+| `eventId` | yes | Gateway event id, string, at most 128 characters. Stored on the transaction for reconciliation |
+| `transactionId` | yes | Must equal `{transactionId}` in the path |
+| `gatewayId` | yes | Must equal the body's `gatewayId` and the transaction's gateway |
+| `status` | yes | `SUCCEEDED` or `FAILED`, exact upper case |
+| `amount` | yes | Decimal in major units (rupees, not paise), as a JSON number or string. Must equal the transaction amount; scale is ignored, so `1250` matches `1250.00` |
+| `timestamp` | yes | ISO-8601 instant. Rejected if older than `homefix.payment.callback-max-age` (default `72h`, `0` disables) or more than 5 minutes in the future |
+| `failureReason` | no | Recorded only when `status` is `FAILED`, truncated to 512 characters |
 
-On success the handler publishes `PaymentCompleted` through the outbox in the same transaction, then triggers invoice generation and credits the provider wallet, both with bounded retries and an ops alert on exhaustion.
+Unknown payload fields are ignored, so a gateway may sign extra data. Checks run in this order, and nothing touches the database until the signature has passed:
+
+| Check | Response |
+|-------|----------|
+| Unknown body `gatewayId` | 400 `VALIDATION_ERROR` |
+| Signature does not verify | 400 `INVALID_CALLBACK_SIGNATURE`, logged as a security warning |
+| Payload is not the JSON above | 400 `INVALID_CALLBACK_PAYLOAD` |
+| Payload names another transaction than the path, or another gateway than the body | 400 `CALLBACK_MISMATCH`, logged as a security warning |
+| Timestamp outside the window | 400 `CALLBACK_STALE` |
+| Transaction does not exist | 404 `TRANSACTION_NOT_FOUND` |
+| Payload gateway or amount differs from the transaction's | 400 `CALLBACK_MISMATCH`, logged as a security warning |
+| Transaction already settled and the payload agrees (`SUCCEEDED` on `SUCCESS`, `PARTIALLY_REFUNDED` or `REFUNDED`, or `FAILED` on `FAILED`) | 200 with the current transaction. Idempotent no-op: no second event, invoice or wallet credit |
+| Transaction already settled and the payload contradicts it | 409 `CALLBACK_CONFLICT` |
+
+A gateway adapter must therefore send our transaction id to the gateway (it is in the charge request) and deliver callbacks in this shape. Real Razorpay and Stripe webhooks need translating into it by their adapters.
+
+On success the `SUCCESS` state change and the `PaymentCompleted` outbox row commit together. After that commit, with no transaction open, the handler triggers invoice generation and credits the provider wallet, both with bounded retries and an ops alert on exhaustion.
 
 **POST /payments/{transactionId}/retries** takes **no body**; the optional reason is a query parameter:
 
@@ -889,7 +997,19 @@ POST /payments/7e4b1c93-0d58-4a26-bf71-3c9e5d2a8b64/retries?failureReason=UPI%20
 
 Only a `PENDING` transaction is retryable; anything else gives `NOT_RETRYABLE`. Once the attempt count reaches the configured maximum the transaction is moved to `FAILED` in the same call. Note that this endpoint only increments a counter; it never re-charges the gateway.
 
-**POST /payments/{transactionId}/refunds** takes `{"amount": 500.00}`, `@NotNull` and at least 0.01, legal only from `SUCCESS`, yielding `PARTIALLY_REFUNDED` or `REFUNDED`.
+**POST /payments/{transactionId}/refunds** takes `{"amount": 500.00, "idempotencyKey": "rf-7e4b1c93-1"}`. `amount` is `@NotNull` and at least 0.01. `idempotencyKey` is required, client-chosen, at most 64 characters, and scoped to the transaction. The refund is legal only from `SUCCESS` and yields `PARTIALLY_REFUNDED` or `REFUNDED`. Because `PARTIALLY_REFUNDED` is terminal in the state machine, a transaction can be refunded only once.
+
+The state and amount are validated, and a `PENDING` refund record is committed, before the gateway is asked to move any money. So an over-limit or illegal refund is rejected without any money moving. The gateway is then called with no transaction open, and the refund record id is passed to it as the gateway-side idempotency key.
+
+| Situation | Response |
+|-----------|----------|
+| Amount exceeds what remains | 400 `VALIDATION_ERROR`, gateway not called |
+| Transaction not refundable from its state | 409 `INVALID_STATE_TRANSITION`, gateway not called |
+| Same key and amount, earlier attempt succeeded | 200 with the transaction, not refunded again |
+| Same key and amount, earlier attempt failed at the gateway | 502 `REFUND_GATEWAY_ERROR`, gateway not called again. Use a new key to retry |
+| Same key and amount, earlier attempt still running, or any other refund of this transaction still `PENDING` | 409 `REFUND_IN_PROGRESS` |
+| Same key with a different amount | 409 `IDEMPOTENCY_KEY_REUSED` |
+| Gateway rejects or errors | 502 `REFUND_GATEWAY_ERROR`, the refund is recorded `FAILED` and Finance_Admin is alerted |
 
 **POST /payments/settlements**
 
@@ -1054,7 +1174,7 @@ Port 8091, controller at `/complaints`. The `customerId` is always the JWT subje
 |--------|------|------|---------|
 | POST | `/complaints` | authenticated only, no role rule | Raise a complaint against a booking |
 | POST | `/complaints/{complaintId}/status` | authenticated only, no role rule | Change status and notify the customer |
-| POST | `/complaints/{complaintId}/refund` | authenticated only, no role rule | Approve a refund, 202 with an empty body |
+| POST | `/complaints/{complaintId}/refund` | authenticated only, no role rule | Approve a refund (at most one per complaint), 202 with the recorded refund |
 | POST | `/complaints/{complaintId}/dispute` | authenticated only, no role rule | Set disputed and hold the provider settlement |
 | GET | `/complaints/stats` | authenticated only, no role rule | Aggregated statistics |
 
@@ -1100,7 +1220,41 @@ Response 201, and the same body with 200 from the status and dispute endpoints:
 
 An agent is assigned at creation from a directory stub that returns random UUIDs. `resolvedAt` stays null until a terminal status, and `RESOLVED` or `CLOSED` release any settlement hold.
 
-The status change takes `{"status": "IN_PROGRESS"}`. The refund takes `{"amount": 1250.00}`, positive, and returns **202 with an empty body** because the refund is coordinated asynchronously; a failure moves the complaint to `REFUND_FAILED` rather than failing the call. The dispute endpoint takes no body and sets the settlement hold.
+The status change takes `{"status": "IN_PROGRESS"}`. The dispute endpoint takes no body and sets the settlement hold.
+
+**POST /complaints/{complaintId}/refund**
+
+```json
+{
+  "amount": 1250.00,
+  "reason": "Tap leaked again within two hours of the repair.",
+  "idempotencyKey": "agent-7f3c-refund-1"
+}
+```
+
+`amount` is required, positive, with at most two decimal places. `reason` (up to 500 characters) and `idempotencyKey` (up to 64) are optional. The approving agent is the JWT subject, never the body.
+
+A complaint is refunded **at most once**, whatever the outcome of the first attempt; a failed refund goes to Finance_Admin for manual processing. Only a complaint in `OPEN`, `IN_PROGRESS`, `ESCALATED` or `DISPUTED` can be refunded. `RESOLVED`, `CLOSED` and `REFUND_FAILED` are refused. The refund is recorded as `PENDING` and committed before the Payment Service is called. The call runs outside any database transaction and carries a stable idempotency key derived from the record id (`complaint-refund:<refund id>`). The outcome is recorded in a second transaction. This service does not cap the amount; the Payment Service checks it against the transaction.
+
+Response 202 with the recorded refund. A rejection is not an error: the body has `"status": "FAILED"` and a `failureReason`, the complaint moves to `REFUND_FAILED`, the customer is notified and Finance_Admin is alerted.
+
+```json
+{
+  "id": "5c0f6a2e-8d1b-4f7a-9e3c-2b4d6f8a1c90",
+  "complaintId": "e81c4f27-3a69-4b05-9d82-7f1e6c3a5b94",
+  "bookingId": "b2e7d410-3a65-4c98-9f12-7d4e6a8b0c55",
+  "amount": 1250.00,
+  "reason": "Tap leaked again within two hours of the repair.",
+  "approvedBy": "3a351d47-7395-4902-85d5-3c354dcb2ee7",
+  "status": "SUCCEEDED",
+  "externalReference": "stub_rf_0b6f2a6c-3e1d-3c55-9a8e-4f1b7d2c9e01",
+  "failureReason": null,
+  "requestedAt": "2026-09-12T10:15:00Z",
+  "completedAt": "2026-09-12T10:15:01Z"
+}
+```
+
+A retry with the same `idempotencyKey` and amount returns the recorded refund again without calling the Payment Service. Any other second request is refused with `REFUND_ALREADY_REQUESTED`. The default refund adapter is a logging stub that approves without moving money; there is no HTTP adapter to payment-service yet.
 
 **GET /complaints/stats**
 
@@ -1126,9 +1280,14 @@ The status change takes `{"status": "IN_PROGRESS"}`. The refund takes `{"amount"
 | 401 | `UNAUTHENTICATED` / `INVALID_PRINCIPAL` | No principal, or a non-UUID subject |
 | 404 | `COMPLAINT_NOT_FOUND` | Unknown complaint |
 | 409 | `INVALID_COMPLAINT_TRANSITION` | Status not reachable from the current one |
+| 409 | `REFUND_NOT_ALLOWED` | Refund of a complaint that is `RESOLVED`, `CLOSED` or `REFUND_FAILED` |
+| 409 | `REFUND_ALREADY_REQUESTED` | The complaint already has a refund and the request is not a retry of it |
+| 409 | `REFUND_IN_PROGRESS` | Retry of a refund whose outcome is not recorded yet |
+| 409 | `IDEMPOTENCY_KEY_REUSED` | Retry with the same `idempotencyKey` but a different amount |
+| 502 | `REFUND_OUTCOME_UNKNOWN` | The Payment Service call failed; the refund stays `PENDING` and Finance_Admin is alerted to reconcile it |
 | 503 | `NO_AGENT_AVAILABLE` | No support agent could be assigned |
 
-The refund path has no status precondition and records nothing on success, so repeated calls issue repeated refunds. See review section 8.5.
+Repeated refund calls no longer refund repeatedly (review sections 8.5 and 12.3 item 4); see the refund rules above.
 
 ---
 
@@ -1300,6 +1459,15 @@ All five are `@NotNull` and must sum to exactly 1.0, checked with `BigDecimal` b
 
 This service has no `@ControllerAdvice`, only a local handler for weight validation, so a `@NotNull` violation returns Spring's default error body rather than the shared envelope. The weight-validation response is also missing a `correlationId`.
 
+**Outbound calls made while consuming `BookingCreated`.** Before matching, the consumer resolves what the event does not carry, synchronously on the listener thread, each call under the shared resilience stack (5 s timeout, 3 attempts on timeouts and 5xx, circuit breaker):
+
+| Call | Purpose | Credential |
+|------|---------|------------|
+| customer-service `GET /internal/addresses/{addressId}` (`CUSTOMER_SERVICE_URL`) | Address to coordinates; the returned `customerId` must equal the booking's | `X-Internal-Api-Key` (`INTERNAL_API_KEY`) |
+| catalog-service `GET /catalog/categories` (`CATALOG_SERVICE_URL`) | Subcategory to `skillTags`, from the public active listing | none |
+
+See `BookingCreated` below for how each outcome is handled.
+
 ---
 
 ### admin-service
@@ -1459,7 +1627,7 @@ The export endpoint returns raw bytes with `Content-Type` `text/csv` or `applica
 
 ### notification-service and outbox-processor
 
-Neither declares a controller. notification-service is a pure Kafka consumer, and outbox-processor is the relay; both expose only health, metrics and Prometheus at the root path. Their contracts are events, below. Note that the gateway still routes `/notifications/**` to a service with no handler.
+Neither declares a controller. notification-service is a pure Kafka consumer, and outbox-processor is the relay. Both expose only health, metrics and Prometheus at the root path, and their contracts are the events below. notification-service makes one outbound call, auth-service's internal contact lookup (see auth-service). Note that the gateway still routes `/notifications/**` to a service with no handler.
 
 ---
 
@@ -1469,7 +1637,7 @@ Neither declares a controller. notification-service is a pure Kafka consumer, an
 
 Producers never talk to Kafka. `OutboxEventPublisher.publish(aggregateType, aggregateId, eventType, payload)` is annotated `@Transactional(propagation = MANDATORY)`, so calling it outside a transaction throws by design and the event row always commits with the business state change.
 
-The `outbox_event` row carries `id`, `aggregate_type`, `aggregate_id`, `event_type`, `payload`, `status`, `retry_count`, `created_at`, `published_at`, `last_error` and a `@Version` column, indexed on status and creation time.
+The `outbox_event` row carries `id`, `aggregate_type`, `aggregate_id`, `event_type`, `payload`, `status`, `retry_count`, `created_at`, `published_at`, `next_attempt_at`, `last_error` and a `@Version` column, indexed on status and creation time. `next_attempt_at` is the relay's: null (what producers write) means due now.
 
 The relay then sends:
 
@@ -1480,9 +1648,13 @@ The relay then sends:
 | Headers | `eventId` only, the outbox row id. There is no `eventType` or `aggregateType` header |
 | Value | The `payload` column verbatim, with no wrapping envelope |
 
-The producer refuses to start unless `acks=all` and idempotence are enabled. The same `eventId` is reused across retries, never regenerated. Polling is 100 rows per second, with backoff from 1 second doubling to a 60-second cap and 10 attempts before the row is marked `FAILED` and ops are alerted.
+The producer refuses to start unless `acks=all` and idempotence are enabled. The same `eventId` is reused across retries, never regenerated.
 
-**Consumer-side dedupe.** `IdempotentKafkaConsumer` extracts `eventId`, dead-letters immediately if it is absent, skips if the `(consumerGroup, eventId)` row already exists, otherwise handles the record with up to 3 attempts 5 seconds apart and then records the marker. The marker is written in a separate transaction from the handler, so exactly-once is not guaranteed.
+**Claiming and retries.** Every second the relay claims up to 100 due `PENDING` rows (`next_attempt_at` null or past), oldest first, with `SELECT ... FOR UPDATE SKIP LOCKED` in a short transaction that sets each row's `next_attempt_at` to now plus a 2-minute lease and commits. Concurrent relay instances therefore never work the same row, and the publish happens outside any transaction. Each claimed row gets one attempt, bounded by a 30-second ACK timeout (10 s `max.block.ms`, 25 s `delivery.timeout.ms`). A failure increments `retry_count`, writes `last_error` and sets `next_attempt_at` to the next backoff step (1 second doubling to a 60-second cap); nothing sleeps. The attempt that reaches 10 marks the row `FAILED`, keeps `last_error` and alerts ops with the event id, topic and attempt count. The first failure in a cycle also gives the rest of that batch back unattempted, so a broker outage costs one attempt per cycle rather than one per row. Re-queue a `FAILED` row with `UPDATE outbox.outbox_event SET status = 'PENDING', retry_count = 0, next_attempt_at = NULL WHERE id = ...`.
+
+**Delivery is at-least-once.** An event can reach Kafka twice: the relay dies or loses its database after the broker ACK, a timed-out publish is delivered by the producer afterwards, or a relay outlives its lease (its stale outcome write is then rejected by the `@Version` check, but its publish has happened). Consumers deduplicate on `eventId`. Nothing is lost: a row only leaves `PENDING` on an ACK or an exhausted budget.
+
+**Consumer-side dedupe.** `IdempotentKafkaConsumer` extracts `eventId`, dead-letters immediately if it is absent, skips if the `(consumerGroup, eventId)` row already exists, otherwise handles the record with up to 3 attempts 5 seconds apart and then records the marker. The marker is written in a separate transaction from the handler, so exactly-once is not guaranteed. The 5 seconds are not slept on the listener thread: the shared module's auto-configuration gives Spring Boot's listener-container factory a `DefaultErrorHandler` that pauses the container between attempts (`ContainerPausingBackOffHandler`, `homefix.outbox.consumer.retry-delay`, default `PT5S`) and turns on the delivery-attempt header, so the consumer rethrows attempts 1 and 2 for redelivery and dead-letters on attempt 3 itself.
 
 **Dead letters** go to `<sourceTopic>.DLT` with headers `eventId`, `originalTopic` and `dlqReason`, preserving the key.
 
@@ -1501,9 +1673,9 @@ The producer refuses to start unless `acks=all` and idempotence are enabled. The
 | `PaymentCompleted` | `PaymentCompleted` |
 | `BookingCancelled` | `BookingCancelled` |
 | `ReviewSubmitted` | `ReviewSubmitted` |
+| `ComplaintCreated` | `ComplaintCreated` |
+| `ComplaintStatusChanged` | `ComplaintStatusChanged` |
 | anything unmapped | `domain-events` |
-
-`ComplaintCreated` and `ComplaintStatusChanged` are **not** in the mapping, so both land on `domain-events`, where nothing subscribes.
 
 ### Event catalogue
 
@@ -1517,11 +1689,11 @@ The producer refuses to start unless `acks=all` and idempotence are enabled. The
 | `ProviderAccepted` | `ProviderAccepted` | dispatch-engine | chat-service, notification-service |
 | `PaymentCompleted` | `PaymentCompleted` | payment-service | invoice-service, rating-review-service, chat-service, notification-service |
 | `ReviewSubmitted` | `ReviewSubmitted` | rating-review-service | notification-service |
-| `ProviderAssigned` | `ProviderAssigned` | **no producer** | notification-service |
-| `ProviderRejected` | `ProviderRejected` | **no producer** | notification-service |
-| `BookingCancelled` | `BookingCancelled` | **no producer** | chat-service, notification-service |
-| `ComplaintCreated` | `domain-events` | complaint-service | **none** |
-| `ComplaintStatusChanged` | `domain-events` | complaint-service | **none** |
+| `ProviderAssigned` | `ProviderAssigned` | booking-service, when a booking comes to rest in `PROVIDER_ASSIGNED` (no current path does; see below) | notification-service |
+| `ProviderRejected` | `ProviderRejected` | dispatch-engine, when an offer is declined or times out | notification-service |
+| `BookingCancelled` | `BookingCancelled` | booking-service, on entering `CANCELLED` or `SEARCHING_FAILED` | chat-service, notification-service |
+| `ComplaintCreated` | `ComplaintCreated` | complaint-service | notification-service |
+| `ComplaintStatusChanged` | `ComplaintStatusChanged` | complaint-service | notification-service |
 
 Consumer records are all annotated to ignore unknown properties, so extra producer fields are tolerated. Missing fields deserialise to null or zero and then fail the consumer's own checks, which is where the mismatches below bite.
 
@@ -1557,7 +1729,15 @@ What dispatch-engine's consumer expects:
 }
 ```
 
-**Mismatch.** The producer never emits `customerLat`, `customerLon` or `requiredSkillTags`. They deserialise to 0.0, 0.0 and null, so provider matching scores every candidate against the null island with no skill filter. The producer sends `addressId` where the consumer wants coordinates. Fixing this means resolving the address to coordinates and the subcategory to skill tags before publishing.
+**Resolved by enrichment in the consumer.** The producer never emits `customerLat`, `customerLon` or `requiredSkillTags`, and is not expected to: it publishes booking facts. dispatch-engine resolves them itself before matching. The `addressId` is looked up through customer-service's `GET /internal/addresses/{addressId}`, and the `subcategoryId` through the `skillTags` on catalog-service's `GET /catalog/categories`. A value the event does carry is used as-is. The consumer fields are boxed, so an absent value is never read as 0.0.
+
+| Outcome | Handling |
+|---------|----------|
+| Both resolved, at least one skill tag | Dispatched on the resolved values |
+| A dependency could not be consulted (timeout, 5xx, open breaker, 401/403, or a 404 without `ADDRESS_NOT_FOUND`) | `EnrichmentUnavailableException`. Retried by the shared consumer, then dead-lettered. Not recorded as processed, so it can be replayed |
+| No coordinates and no `addressId`; `404 ADDRESS_NOT_FOUND`; the address's `customerId` differs from the booking's; subcategory absent from the active catalog; subcategory with no skill tags | `UnresolvableBookingException`. Dead-lettered with a `dlqReason` naming the booking and the id to fix. It takes the same retry path, so it stays replayable once the data is fixed |
+
+The Pact in `dispatch-engine/src/test/resources/pacts` still describes the old denormalised shape. It still passes, because pre-enriched events are accepted, but booking-service's consumer test should be regenerated from the real producer shape.
 
 #### ProviderArriving and ProviderArrived
 
@@ -1567,12 +1747,13 @@ Identical shape:
 {
   "bookingId": "b2e7d410-3a65-4c98-9f12-7d4e6a8b0c55",
   "reference": "HFX-2026-0004821",
+  "customerId": "bc0551ae-b3fb-4571-8587-017fa39096a4",
   "providerId": "dd73094d-7dbb-4a7f-b96b-0fab756cb240",
   "occurredAt": "2026-09-11T09:30:00Z"
 }
 ```
 
-**Mismatch.** No `customerId` and no `recipientUserId`, so notification-service cannot resolve a recipient, throws, retries three times and dead-letters. No notification is ever delivered for either event.
+`customerId` is the recipient notification-service addresses (it ignores `providerId` for these events). Before it was added, both events were dead-lettered and no notification was delivered.
 
 #### JobStarted
 
@@ -1580,13 +1761,14 @@ Identical shape:
 {
   "bookingId": "b2e7d410-3a65-4c98-9f12-7d4e6a8b0c55",
   "reference": "HFX-2026-0004821",
+  "customerId": "bc0551ae-b3fb-4571-8587-017fa39096a4",
   "providerId": "dd73094d-7dbb-4a7f-b96b-0fab756cb240",
   "startedAt": "2026-09-11T09:30:00Z",
   "occurredAt": "2026-09-11T09:30:00Z"
 }
 ```
 
-**Mismatch, topic rather than schema.** location-service's consumer hard-codes the topic `booking.job-started`, which is not configurable and does not match the published `JobStarted`. The payload shape itself is compatible, since the consumer reads only `bookingId`. The effect is that tracking sessions are never terminated on job start. notification-service also dead-letters this event for lack of a recipient.
+**Mismatch, topic rather than schema.** location-service's consumer hard-codes the topic `booking.job-started`, which is not configurable and does not match the published `JobStarted`. The payload shape itself is compatible, since the consumer reads only `bookingId`. The effect is that tracking sessions are never terminated on job start. notification-service addresses it to `customerId`.
 
 #### JobCompleted
 
@@ -1594,6 +1776,7 @@ Identical shape:
 {
   "bookingId": "b2e7d410-3a65-4c98-9f12-7d4e6a8b0c55",
   "reference": "HFX-2026-0004821",
+  "customerId": "bc0551ae-b3fb-4571-8587-017fa39096a4",
   "providerId": "dd73094d-7dbb-4a7f-b96b-0fab756cb240",
   "completedAt": "2026-09-11T10:45:00Z",
   "netDurationSeconds": 4200,
@@ -1602,7 +1785,56 @@ Identical shape:
 }
 ```
 
-Dead-letters at notification-service for the same missing-recipient reason.
+notification-service addresses it to `customerId`.
+
+#### ProviderAssigned
+
+Written by `BookingTransitionService` in the same transaction as a `SEARCHING_PROVIDER → PROVIDER_ASSIGNED` transition after which the booking rests in `PROVIDER_ASSIGNED`, awaiting the provider's acceptance.
+
+dispatch-engine's acceptance callback does **not** publish it. That callback assigns and accepts in one transaction, applying the intermediate step through `BookingTransitionService.transitionPassingThrough`, which validates and audits it but publishes nothing. The acceptance is announced by dispatch-engine's `ProviderAccepted` alone, so the customer is not sent "assigned" immediately followed by "accepted", and the provider is not told about a job they have just accepted.
+
+**In practice this event is not emitted today.** The acceptance callback is the only production path into `PROVIDER_ASSIGNED`. The generic `BookingService.transition` would publish it, but no endpoint calls that method. admin-service's `PUT /admin/bookings/{id}` goes to a stub adapter that echoes the payload back and never reaches booking-service. A manual or admin assignment endpoint that leaves the booking in `PROVIDER_ASSIGNED` would publish it with no further change.
+
+```json
+{
+  "bookingId": "b2e7d410-3a65-4c98-9f12-7d4e6a8b0c55",
+  "reference": "HFX-2026-0004821",
+  "customerId": "bc0551ae-b3fb-4571-8587-017fa39096a4",
+  "providerId": "dd73094d-7dbb-4a7f-b96b-0fab756cb240",
+  "bookingCreatedAt": "2026-09-11T09:25:00Z",
+  "occurredAt": "2026-09-11T09:30:00Z"
+}
+```
+
+notification-service notifies the customer ("Professional assigned") and the provider ("New job assigned"), and resolves their contact details from auth-service.
+
+#### BookingCancelled
+
+Written by `BookingTransitionService` in the same transaction as every transition into `CANCELLED` (customer, provider or admin cancellation through `POST /bookings/{reference}/cancellation`, or the generic guarded transition) and into `SEARCHING_FAILED` (dispatch-engine's `searching-failed` callback). A rejected transition writes nothing, and an idempotent retry of a dispatch callback does not write a second row.
+
+```json
+{
+  "bookingId": "b2e7d410-3a65-4c98-9f12-7d4e6a8b0c55",
+  "reference": "HFX-2026-0004821",
+  "customerId": "bc0551ae-b3fb-4571-8587-017fa39096a4",
+  "providerId": "dd73094d-7dbb-4a7f-b96b-0fab756cb240",
+  "previousStatus": "PROVIDER_ON_THE_WAY",
+  "status": "CANCELLED",
+  "cancelledBy": "bc0551ae-b3fb-4571-8587-017fa39096a4",
+  "cancelledByRole": "CUSTOMER",
+  "reason": "customer no longer available",
+  "cancellationFee": 75.00,
+  "bookingCreatedAt": "2026-09-11T09:25:00Z",
+  "occurredAt": "2026-09-11T09:30:00Z"
+}
+```
+
+- `providerId` is null when the booking is cancelled before a provider is assigned.
+- `status` is `CANCELLED` or `SEARCHING_FAILED`. On `SEARCHING_FAILED`, `cancelledBy` is null, `cancelledByRole` is `booking-service` and `cancellationFee` is null.
+- `cancellationFee` is the fee the cancellation policy applied: `0.00` before `PROVIDER_ON_THE_WAY`, the configured subcategory fee from then on.
+- `reason` is the free text recorded in the audit trail, and may be null.
+
+chat-service needs only `bookingId` to deactivate the channel. notification-service notifies the customer, and also the provider when `providerId` is set ("you do not need to attend"). It tells a `SEARCHING_FAILED` booking that no professional was available.
 
 #### ProviderAccepted
 
@@ -1628,6 +1860,25 @@ What chat-service expects in order to activate a channel:
 ```
 
 **Mismatch.** The producer omits `customerId`, which the activation branch explicitly requires, so every `ProviderAccepted` is retried and dead-lettered and **chat channels are never activated**. The missing `bookingCreatedAt` is tolerated via a clock fallback. The `acceptedAt` the producer does send is never read.
+
+#### ProviderRejected
+
+Producer (dispatch-engine, one per declined or unanswered offer):
+
+```json
+{
+  "bookingId": "b2e7d410-3a65-4c98-9f12-7d4e6a8b0c55",
+  "customerId": "bc0551ae-b3fb-4571-8587-017fa39096a4",
+  "providerId": "dd73094d-7dbb-4a7f-b96b-0fab756cb240",
+  "reason": "TIMED_OUT",
+  "rejectedAt": "2026-09-11T09:31:00Z"
+}
+```
+
+- `reason` is `REJECTED` (the provider declined) or `TIMED_OUT` (no answer within the offer window). Today the job-offer adapter also reports a transport failure as `TIMED_OUT`.
+- Written to the outbox in its own transaction, because a rejection changes no other dispatch-engine state. The write is best-effort: if it fails, the failure is logged and the search moves on to the next candidate.
+- Nothing is published for a provider that was skipped because another booking held its offer lock, or for an accepted offer.
+- notification-service reads `bookingId`, `customerId` and `providerId`. Under its recipient policy the customer is the recipient.
 
 #### PaymentCompleted
 
@@ -1663,7 +1914,7 @@ This is the one event with no schema drift: the invoice and rating consumer reco
 }
 ```
 
-Dead-letters at notification-service: the reviewer and reviewee are named `reviewerId` and `revieweeId`, so no recipient resolves.
+notification-service notifies both parties: the reviewer is thanked and the reviewee is told they received a review.
 
 #### Complaint events
 
@@ -1689,32 +1940,53 @@ Dead-letters at notification-service: the reviewer and reviewee are named `revie
 }
 ```
 
-Categories are `POOR_QUALITY`, `LATE_ARRIVAL`, `OVERCHARGING`, `UNPROFESSIONAL_BEHAVIOR`, `INCOMPLETE_WORK`, `DAMAGE`, `PAYMENT_ISSUE`. Statuses are `OPEN`, `IN_PROGRESS`, `ESCALATED`, `DISPUTED`, `REFUND_FAILED`, `RESOLVED`, `CLOSED`, with `previousStatus` null on the first transition. Both events go to `domain-events` and are never consumed.
+Categories are `POOR_QUALITY`, `LATE_ARRIVAL`, `OVERCHARGING`, `UNPROFESSIONAL_BEHAVIOR`, `INCOMPLETE_WORK`, `DAMAGE`, `PAYMENT_ISSUE`. Statuses are `OPEN`, `IN_PROGRESS`, `ESCALATED`, `DISPUTED`, `REFUND_FAILED`, `RESOLVED`, `CLOSED`, with `previousStatus` null on the first transition. Both events are relayed to same-named topics (`ComplaintCreated`, `ComplaintStatusChanged`), and notification-service consumes both to notify the customer (Requirements 16.2, 16.3).
 
 #### The notification-service consumer contract
 
-One consumer group binds all eleven lifecycle topics and deserialises every one into the same record:
+One consumer group binds all eleven lifecycle topics and the two complaint topics (`ComplaintCreated`, `ComplaintStatusChanged`). Every payload deserialises into the same read model. Unknown fields are ignored and only these are read:
 
 ```json
 {
   "bookingId": "b2e7d410-3a65-4c98-9f12-7d4e6a8b0c55",
-  "bookingReference": "HFX-2026-0004821",
-  "recipientUserId": "bc0551ae-b3fb-4571-8587-017fa39096a4",
+  "reference": "HFX-2026-0004821",
   "customerId": "bc0551ae-b3fb-4571-8587-017fa39096a4",
   "providerId": "dd73094d-7dbb-4a7f-b96b-0fab756cb240",
-  "mobileNumber": "+919000000001",
-  "emailAddress": "ananya.rao@example.com",
-  "deviceToken": "fcm-dGhpcyBpcyBhIGRldmljZSB0b2tlbg"
+  "reviewerId": "bc0551ae-b3fb-4571-8587-017fa39096a4",
+  "revieweeId": "dd73094d-7dbb-4a7f-b96b-0fab756cb240",
+  "complaintId": "e81c4f27-3a69-4b05-9d82-7f1e6c3a5b94",
+  "newStatus": "IN_PROGRESS",
+  "status": "CANCELLED"
 }
 ```
 
-**No producer emits any of `recipientUserId`, `mobileNumber`, `emailAddress` or `deviceToken`.** `bookingReference` is never emitted either, because booking-service calls the field `reference`. The consequences:
+`reference` is also accepted under its older name, `bookingReference`. `newStatus` is the complaint's new status. `status` is the booking status on `BookingCancelled`, where `SEARCHING_FAILED` is rendered as "no professional available" rather than as a cancellation.
 
-- `BookingCreated` and `PaymentCompleted` process, because they carry `customerId`, but with an entirely empty contact record, so no channel has an address to deliver to.
-- `ProviderAccepted`, `ProviderArriving`, `ProviderArrived`, `JobStarted`, `JobCompleted` and `ReviewSubmitted` have no resolvable recipient, so all six are retried three times and dead-lettered.
-- `ProviderAssigned`, `ProviderRejected` and `BookingCancelled` have no producer, so nothing ever arrives.
+**Events carry user ids, never contact details.** notification-service decides who each event concerns. It then fetches each recipient's addresses from auth-service's `GET /internal/users/{userId}/contact`, sending the shared `X-Internal-Api-Key`. Phone numbers stay out of Kafka and out of every producer. Any `mobileNumber`, `emailAddress` or `deviceToken` on an event is ignored.
 
-Delivery channels are `PUSH`, `SMS`, `EMAIL`, `IN_APP`, and delivery statuses are `DELIVERED`, `PERMANENTLY_FAILED`, `SKIPPED_PREFERENCE`. All four channel adapters are logging stubs.
+Recipients per event:
+
+| Event | Notified | Required field (else dead-lettered) |
+|-------|----------|--------------------------------------|
+| `BookingCreated`, `ProviderAccepted`, `ProviderRejected`, `ProviderArriving`, `ProviderArrived`, `JobStarted`, `JobCompleted` | customer | `customerId` |
+| `ProviderAssigned`, `PaymentCompleted`, `BookingCancelled` | customer, plus the provider when `providerId` is present | `customerId` |
+| `ReviewSubmitted` | reviewer ("review submitted") and reviewee ("new review"), each when present | `reviewerId` or `revieweeId` |
+| `ComplaintCreated` | customer: the acknowledgement of Requirement 16.2 | `customerId` |
+| `ComplaintStatusChanged` | customer: in-app and push, per Requirement 16.3 | `customerId` |
+
+Failure handling, all through the shared consumer's retry (3 attempts) and `<topic>.DLT`:
+
+- **An event that names no required recipient** is a producer defect. It is dead-lettered, with the missing field in `dlqReason`, so it can be replayed once the producer is fixed.
+- **The contact lookup could not be done** is treated as transient. This covers a timeout (2 s connect/read, `NOTIFICATION_CONTACT_LOOKUP_TIMEOUT`), a connection failure, a 5xx, a 401 from a mismatched key, and a 404 that is not `USER_NOT_FOUND`. The event is retried and then dead-lettered. All contacts are resolved before anything is sent, so a retry starts clean.
+- **A user auth-service does not know** (`404 USER_NOT_FOUND`), or a channel with no address, is a logged skip rather than an error. That channel is recorded as `SKIPPED_NO_CONTACT` with no retry. In-app delivery needs no address, so it still happens.
+
+Producer status against this contract:
+
+- Ready as published: `BookingCreated`, `ProviderAccepted`, `PaymentCompleted`, `ReviewSubmitted`, `ProviderAssigned`, `BookingCancelled`, `ProviderArriving`, `ProviderArrived`, `JobStarted`, `JobCompleted`, `ComplaintCreated`, `ComplaintStatusChanged`.
+- `ProviderArriving`, `ProviderArrived`, `JobStarted` and `JobCompleted` now carry `customerId` as well as `providerId`, so they are no longer dead-lettered.
+- `ProviderRejected` is produced by dispatch-engine (see below) with `customerId`, so it resolves a recipient. It is delivered in-app only: dispatch emits one per candidate that declines or lets an offer lapse, and a push for each would buzz the customer repeatedly while one booking is matched.
+
+The delivery log is keyed on `(kafkaEventId, userId, channel)`. A single event can reach several recipients on the same channel, for example a cancellation sent to both customer and provider. Delivery channels are `PUSH`, `SMS`, `EMAIL`, `IN_APP`. Delivery statuses are `DELIVERED`, `PERMANENTLY_FAILED`, `SKIPPED_PREFERENCE`, `SKIPPED_NO_CONTACT`. Because auth-service stores only a phone number, SMS and in-app are the only channels that can deliver today. Nothing on the platform stores a push token. All four channel adapters are logging stubs.
 
 ---
 
@@ -1724,10 +1996,10 @@ The extraction surfaced these, all verified in code:
 
 1. **RBAC is unconfigured in 17 of 19 services**, so every documented role restriction outside admin and reporting is unenforced.
 2. **Chat channels are never activated**, because `ProviderAccepted` omits the `customerId` the consumer requires.
-3. **Six of eleven notification topics always dead-letter**, and the two that process carry no contact details, so no notification can be delivered on any channel.
+3. **Four notification topics dead-lettered** because `ProviderArriving`, `ProviderArrived`, `JobStarted` and `JobCompleted` lacked the `customerId` that notification-service addresses them by. booking-service now includes it. Contact details come from auth-service by user id rather than from events, so every topic delivers over SMS and in-app.
 4. **location-service subscribes to `booking.job-started`** while the relay publishes `JobStarted`.
-5. **Dispatch matching runs on null coordinates and null skill tags**, because of the `BookingCreated` schema gap.
-6. **Three topics have consumers but no producer**: `ProviderAssigned`, `ProviderRejected` and `BookingCancelled`. The last matters most, since chat relies on it to close channels for cancelled bookings.
+5. **Dispatch matching ran on null coordinates and null skill tags** because of the `BookingCreated` schema gap. dispatch-engine now resolves both from customer-service and catalog-service before matching, and dead-letters an event it cannot resolve. Matching still cannot succeed end to end: provider-service has no `/internal/providers/eligible` endpoint, notification-service has no `/internal/offers` endpoint, and the local seed data has no catalog skill tags and no customer addresses.
+6. **`ProviderRejected` had consumers but no producer.** dispatch-engine now publishes it through the outbox when an offer is declined or times out. `ProviderAssigned` and `BookingCancelled` were in the same state until booking-service began publishing them from its transition service; chat now receives `BookingCancelled` and closes channels for cancelled bookings. `ProviderAssigned` is held back when dispatch assigns and accepts in one step, which is currently the only path into `PROVIDER_ASSIGNED`, so in practice it is not emitted yet.
 7. **Complaint events are unmapped** and land on a topic nothing reads.
 8. **Two services lack the shared error envelope**: invoice-service has no handler at all, dispatch-engine only a local one.
 9. **Port and route inconsistencies**, including a dispatch-engine endpoint shadowed by the admin catch-all and a routed notification-service with no controller.

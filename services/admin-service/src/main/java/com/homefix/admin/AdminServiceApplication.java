@@ -10,9 +10,10 @@ import com.homefix.admin.config.AdminProperties;
 /**
  * Entry point for the HomeFix Admin Service.
  *
- * <p>Owns the Admin dashboard, the 15 operational modules, RBAC enforcement (ADMIN vs
- * SUPER_ADMIN), dispatch matching-weight validation, and the immutable Audit_Log
- * (Requirement 19). The shared security, observability, and outbox libraries are wired
+ * <p>Owns the Admin dashboard, the verification queue view, System Configuration, RBAC
+ * enforcement (ADMIN vs SUPER_ADMIN) and the immutable Audit_Log (Requirement 19). The other
+ * operational modules are served by the services that own their data; the API gateway routes each
+ * {@code /admin/<module>} path there directly. The shared security, observability, and outbox libraries are wired
  * automatically via their Spring Boot auto-configurations simply by being on the classpath
  * (Tasks 4-6).
  *

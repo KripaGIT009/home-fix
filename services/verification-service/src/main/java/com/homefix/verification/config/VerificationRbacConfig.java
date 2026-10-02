@@ -57,8 +57,14 @@ import jakarta.annotation.PostConstruct;
  * (see {@link WebSecurityConfig}) via {@code addFilterAfter(...)}, so it runs for every request
  * that reaches the chain — including those that {@code authorizeHttpRequests} marked
  * {@code permitAll()}. A rule matching a public path therefore turns that public path into a 401
- * for anonymous callers. One surface is consequently left unmapped on purpose:
+ * for anonymous callers. Two surfaces are consequently left unmapped on purpose:
  * <ul>
+ *   <li><strong>The service-to-service surface</strong> ({@code /internal/**}, the Provider
+ *       Service's batch {@code APPROVED} lookup) — its caller is a service presenting
+ *       {@code X-Internal-Api-Key}, not a user with roles. It is authorised by
+ *       {@code InternalApiKeyFilter} and the {@code ROLE_INTERNAL} requirement in
+ *       {@link WebSecurityConfig}; a role rule here would refuse it, since the internal principal
+ *       holds no platform role.</li>
  *   <li><strong>The health / metrics surface</strong> ({@code /health/**}, {@code /actuator/**},
  *       {@code /metrics}, {@code /prometheus}) — scraped by Kubernetes probes and Prometheus,
  *       which present no bearer token. Any rule covering these paths would fail every liveness
@@ -97,16 +103,24 @@ public class VerificationRbacConfig {
 
     /**
      * Registers the verification endpoint → role rules. Deliberately adds no entry for the
-     * health/actuator surface — see the class Javadoc.
+     * health/actuator or {@code /internal/**} surfaces — see the class Javadoc.
      */
     @PostConstruct
     public void registerEndpointRoles() {
         var rules = rbacProperties.getEndpointRoles();
         // Admin verification workflow: verify-documents, background-check-result, approve, reject,
         // suspend (Requirements 5.4-5.9). Registered first, as the most privileged surface.
+        // The Admin Portal's Verification Queue (Requirement 19.3): the review queue, a provider's
+        // documents and the approve/reject decision. The catch-alls below would cover them too;
+        // they are pinned explicitly so narrowing a catch-all can never open them.
+        rules.put("GET /admin/verification/**", ADMIN_TIER);
+        rules.put("POST /admin/verification/**", ADMIN_TIER);
         rules.put("GET /admin/**", ADMIN_TIER);
         rules.put("POST /admin/**", ADMIN_TIER);
         rules.put("PUT /admin/**", ADMIN_TIER);
+        // No PATCH handler exists today; the rule closes the gap so one added later is never open
+        // to any authenticated caller by default.
+        rules.put("PATCH /admin/**", ADMIN_TIER);
         rules.put("DELETE /admin/**", ADMIN_TIER);
         // Provider document upload (Requirement 5.3).
         rules.put("POST /verifications/*/documents", DOCUMENT_SUBMIT_TIER);

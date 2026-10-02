@@ -13,6 +13,8 @@ import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.http.HttpStatus;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
@@ -97,6 +99,32 @@ class PaymentRbacConfigTest {
         assertPassedThrough(invoke("POST", "/payments/" + UUID.randomUUID() + "/refunds"));
     }
 
+    // ------------------------------------------------------- refund reconciliation
+
+    @Test
+    void customer_isForbiddenFromReconcilingRefunds() throws Exception {
+        authenticateAs("CUSTOMER");
+
+        assertRejectedWith(invoke("POST", "/payments/" + UUID.randomUUID() + "/refunds/"
+                + UUID.randomUUID() + "/reconcile"), HttpStatus.FORBIDDEN);
+    }
+
+    @Test
+    void supportAgent_isForbiddenFromReconcilingRefunds() throws Exception {
+        authenticateAs("SUPPORT_AGENT");
+
+        assertRejectedWith(invoke("POST", "/payments/" + UUID.randomUUID() + "/refunds/"
+                + UUID.randomUUID() + "/reconcile"), HttpStatus.FORBIDDEN);
+    }
+
+    @Test
+    void financeAdmin_mayReconcileRefunds() throws Exception {
+        authenticateAs("FINANCE_ADMIN");
+
+        assertPassedThrough(invoke("POST", "/payments/" + UUID.randomUUID() + "/refunds/"
+                + UUID.randomUUID() + "/reconcile"));
+    }
+
     // --------------------------------------------------------------- settlements
 
     @Test
@@ -125,6 +153,46 @@ class PaymentRbacConfigTest {
         authenticateAs("CUSTOMER");
 
         assertPassedThrough(invoke("POST", "/payments"));
+    }
+
+    // ------------------------------------------------------------ admin portal
+
+    @ParameterizedTest
+    @ValueSource(strings = {"ADMIN", "SUPER_ADMIN", "FINANCE_ADMIN"})
+    void financeTier_mayListPayments(String role) throws Exception {
+        authenticateAs(role);
+
+        assertPassedThrough(invoke("GET", "/admin/payments"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"ADMIN", "SUPER_ADMIN", "FINANCE_ADMIN"})
+    void financeTier_mayRefundFromThePortal(String role) throws Exception {
+        authenticateAs(role);
+
+        assertPassedThrough(invoke("POST", "/admin/payments/" + UUID.randomUUID() + "/refund"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"CUSTOMER", "SERVICE_PROVIDER", "SUPPORT_AGENT", "DISPATCHER"})
+    void othersAreForbiddenFromTheAdminList(String role) throws Exception {
+        authenticateAs(role);
+
+        assertRejectedWith(invoke("GET", "/admin/payments"), HttpStatus.FORBIDDEN);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"CUSTOMER", "SERVICE_PROVIDER", "SUPPORT_AGENT", "DISPATCHER"})
+    void othersAreForbiddenFromThePortalRefund(String role) throws Exception {
+        authenticateAs(role);
+
+        assertRejectedWith(invoke("POST", "/admin/payments/" + UUID.randomUUID() + "/refund"),
+                HttpStatus.FORBIDDEN);
+    }
+
+    @Test
+    void unauthenticatedAdminList_isUnauthorized() throws Exception {
+        assertRejectedWith(invoke("GET", "/admin/payments"), HttpStatus.UNAUTHORIZED);
     }
 
     // --------------------------------------------------- public gateway callback

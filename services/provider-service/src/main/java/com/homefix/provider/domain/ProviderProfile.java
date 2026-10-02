@@ -57,6 +57,23 @@ public class ProviderProfile {
     @Column(name = "under_review", nullable = false)
     private boolean underReview;
 
+    /**
+     * Latitude of the provider's base service location, in decimal degrees (WGS84). Together with
+     * {@link #baseLongitude} it is the point the service radius is measured from when dispatch
+     * looks for eligible providers (Requirement 8.2).
+     *
+     * <p>Nullable because profiles created before the column existed, and providers who have not
+     * yet set it, have no location; such a provider is never eligible for dispatch, since there is
+     * nothing to measure a distance from. The pair is set and cleared together — see
+     * {@link #setBaseLocation(Double, Double)}.
+     */
+    @Column(name = "base_latitude")
+    private Double baseLatitude;
+
+    /** Longitude of the base service location, in decimal degrees (WGS84). See {@link #baseLatitude}. */
+    @Column(name = "base_longitude")
+    private Double baseLongitude;
+
     /** AES-256/KMS ciphertext of the settlement bank account details (Requirement 4.9). */
     @Column(name = "bank_account_encrypted")
     private String bankAccountEncrypted;
@@ -155,6 +172,20 @@ public class ProviderProfile {
         touch();
     }
 
+    /**
+     * Sets the base service location. Both coordinates are required together: a latitude without
+     * a longitude is not a place. Range validation is the service layer's job; this guard only
+     * keeps the pair consistent whatever the caller.
+     */
+    public void setBaseLocation(Double latitude, Double longitude) {
+        if ((latitude == null) != (longitude == null)) {
+            throw new IllegalArgumentException("base latitude and longitude must be set together");
+        }
+        this.baseLatitude = latitude;
+        this.baseLongitude = longitude;
+        touch();
+    }
+
     public void setBankAccount(String bankAccountEncrypted, boolean verified) {
         this.bankAccountEncrypted = bankAccountEncrypted;
         this.bankAccountVerified = verified;
@@ -233,6 +264,19 @@ public class ProviderProfile {
 
     public boolean isUnderReview() {
         return underReview;
+    }
+
+    public Double getBaseLatitude() {
+        return baseLatitude;
+    }
+
+    public Double getBaseLongitude() {
+        return baseLongitude;
+    }
+
+    /** {@code true} when a base service location is on file, the precondition for dispatch. */
+    public boolean hasBaseLocation() {
+        return baseLatitude != null && baseLongitude != null;
     }
 
     public String getBankAccountEncrypted() {

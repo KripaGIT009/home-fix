@@ -18,7 +18,10 @@ import java.util.List;
 /**
  * Validates the bearer token on every routed request by calling the Auth Service
  * {@code /auth/introspect} (Requirement 23.1). Requests without a valid, active token are rejected
- * with {@code 401 Unauthorized} <em>before</em> being routed to any microservice.
+ * with {@code 401 Unauthorized} <em>before</em> being routed to any microservice. The production
+ * {@link TokenIntrospector} reuses an active result for a few seconds (see
+ * {@code CachingTokenIntrospector}), so not every request costs an Auth Service call; an inactive
+ * result or a failed call is never reused.
  *
  * <p>A small allow-list of unauthenticated edge endpoints (registration, login, token refresh,
  * health probes) bypasses introspection — these are the entry points that necessarily precede a

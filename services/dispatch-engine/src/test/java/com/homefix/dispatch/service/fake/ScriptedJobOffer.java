@@ -8,6 +8,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.BiConsumer;
 
 /**
  * Fake {@link JobOfferPort} whose response per provider is scripted. Defaults to TIMED_OUT for any
@@ -20,6 +21,7 @@ public class ScriptedJobOffer implements JobOfferPort {
     private final List<UUID> offeredProviders = new ArrayList<>();
     private final InMemoryLock lockToVerify;
     private boolean lockHeldAtEveryOffer = true;
+    private BiConsumer<UUID, UUID> onOffer = (booking, provider) -> { };
 
     public ScriptedJobOffer() {
         this(null);
@@ -35,9 +37,16 @@ public class ScriptedJobOffer implements JobOfferPort {
         return this;
     }
 
+    /** Runs {@code hook(bookingId, providerId)} while each offer is outstanding, e.g. to cancel it. */
+    public ScriptedJobOffer onOffer(BiConsumer<UUID, UUID> hook) {
+        this.onOffer = hook;
+        return this;
+    }
+
     @Override
     public OfferOutcome offer(UUID bookingId, UUID providerId, Duration timeout) {
         offeredProviders.add(providerId);
+        onOffer.accept(bookingId, providerId);
         if (lockToVerify != null && !lockToVerify.isHeld(providerId)) {
             lockHeldAtEveryOffer = false;
         }

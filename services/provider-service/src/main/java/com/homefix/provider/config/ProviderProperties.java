@@ -49,6 +49,13 @@ public class ProviderProperties {
     /** Zone whose civil day bounds the dashboard's "today" earnings window (Requirement 14.1). */
     private String earningsDayZone = "Asia/Kolkata";
 
+    /**
+     * Zone the weekly availability slots are read in when dispatch asks "is this provider
+     * available now?" (Requirements 4.5, 8.2). Slots are stored as bare day-of-week and hour, the
+     * provider's local wall-clock time, so the check must happen in the zone they live in.
+     */
+    private String availabilityZone = "Asia/Kolkata";
+
     public int getMaxActiveCategories() {
         return maxActiveCategories;
     }
@@ -143,5 +150,13 @@ public class ProviderProperties {
 
     public void setEarningsDayZone(String earningsDayZone) {
         this.earningsDayZone = earningsDayZone;
+    }
+
+    public String getAvailabilityZone() {
+        return availabilityZone;
+    }
+
+    public void setAvailabilityZone(String availabilityZone) {
+        this.availabilityZone = availabilityZone;
     }
 }

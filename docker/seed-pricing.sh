@@ -3,8 +3,14 @@
 #
 # The Pricing Engine refuses to quote a subcategory it has no parameters for
 # (PRICING_PARAMETERS_NOT_FOUND), so without this the booking flow stops at the
-# price-estimate step. Parameters are held in memory in the local slice
-# (PRICING_CACHE=memory), so re-run this after restarting pricing-engine.
+# price-estimate step. Parameters persist in Postgres (pricing.pricing_parameters),
+# so this is needed once per database, not after every pricing-engine restart.
+# Re-running it is safe: each PUT replaces that subcategory's parameters.
+#
+# PUT /admin/pricing/parameters requires an ADMIN principal (RbacEnforcementFilter),
+# so this signs in as the seeded `admin` account. It used to register a throwaway
+# OTP number instead, which authorization hardening turned into a silent 403 on
+# every subcategory.
 #
 # The work runs INSIDE the compose network via `docker exec`. Docker Desktop's
 # Windows port-forwarding proxy resets connections intermittently under this
@@ -16,50 +22,46 @@ set -uo pipefail
 
 # Any container on the compose network with wget and a shell; the gateway will do.
 RUNNER="${RUNNER:-homefix-core-api-gateway-1}"
-SEED_MOBILE="${SEED_MOBILE:-+919000881234}"
-SMS_LOG="$(dirname "$0")/dev-sms/dev-sms.log"
+ADMIN_USER="${ADMIN_USER:-admin}"
+# Matches DEV_SEED_PASSWORD, which auth-service seeds the admin account with.
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-${DEV_SEED_PASSWORD:-HomeFix@2026}}"
 
-echo "==> Requesting an OTP for ${SEED_MOBILE}"
-docker exec "${RUNNER}" sh -c \
-  "wget -q -O /dev/null --post-data='{\"mobileNumber\":\"${SEED_MOBILE}\"}' \
-   --header='Content-Type: application/json' \
-   http://auth-service:8081/auth/register/otp" || {
-  echo "Could not reach the Auth Service from ${RUNNER}." >&2
-  exit 1
-}
-
-sleep 1
-OTP="$(grep -F "${SEED_MOBILE}" "${SMS_LOG}" 2>/dev/null \
-  | grep -o 'code is [0-9]\{4,10\}' | tail -1 | grep -o '[0-9]\{4,10\}')"
-if [ -z "${OTP}" ]; then
-  echo "No OTP for ${SEED_MOBILE} in ${SMS_LOG}." >&2
-  echo "Is SMS_PROVIDER=file set for auth-service in docker-compose.core.yml?" >&2
-  exit 1
-fi
-
+echo "==> Signing in as ${ADMIN_USER}"
 echo "==> Seeding from inside the compose network"
 docker exec "${RUNNER}" sh -c "
-set -e
-TOKEN=\$(wget -q -O - --post-data='{\"mobileNumber\":\"${SEED_MOBILE}\",\"otp\":\"${OTP}\"}' \
+set -u
+TOKEN=\$(wget -q -O - --post-data='{\"username\":\"${ADMIN_USER}\",\"password\":\"${ADMIN_PASSWORD}\"}' \
   --header='Content-Type: application/json' \
-  http://auth-service:8081/auth/register/verify \
+  http://auth-service:8081/auth/login/password \
   | sed 's/.*\"accessToken\":\"\([^\"]*\)\".*/\1/')
-case \"\$TOKEN\" in eyJ*) ;; *) echo 'OTP verification failed' >&2; exit 1 ;; esac
+case \"\$TOKEN\" in
+  eyJ*) ;;
+  *) echo 'Admin sign-in failed. Is DEV_SEED_ENABLED=true and DEV_SEED_PASSWORD correct?' >&2; exit 1 ;;
+esac
 
 wget -q -O - http://catalog-service:8085/catalog/categories \
   | tr '{' '\n' | grep '\"basePrice\"' \
   | sed 's/.*\"id\":\"\([^\"]*\)\".*\"basePrice\":\([0-9.]*\).*/\1 \2/' > /tmp/subs.txt
 
-count=0
+ok=0
+failed=0
 while read id base; do
   [ -z \"\$id\" ] && continue
-  wget -q -O /dev/null --method=PUT \
+  if wget -q -O /dev/null --method=PUT \
     --body-data=\"{\\\"subcategoryId\\\":\\\"\$id\\\",\\\"basePrice\\\":\$base,\\\"perKmRate\\\":8.00,\\\"maxTravelCharge\\\":150.00,\\\"nightSurcharge\\\":100.00,\\\"weekendSurcharge\\\":75.00,\\\"platformFeeRate\\\":0.10,\\\"taxRate\\\":0.18,\\\"emergencyMultiplier\\\":2.0,\\\"surgeMultiplier\\\":1.0,\\\"overrideFloor\\\":1.00,\\\"overrideCeiling\\\":99999.00}\" \
     --header=\"Authorization: Bearer \$TOKEN\" --header='Content-Type: application/json' \
-    http://pricing-engine:8086/admin/pricing/parameters \
-    && echo \"    \$id  base=\$base\" \
-    || echo \"    FAILED \$id\"
-  count=\$((count + 1))
+    http://pricing-engine:8086/admin/pricing/parameters; then
+    ok=\$((ok + 1))
+    echo \"    \$id  base=\$base\"
+  else
+    failed=\$((failed + 1))
+    echo \"    FAILED \$id\"
+  fi
 done < /tmp/subs.txt
-echo \"==> Seeded pricing parameters for \$count subcategories\"
+
+# Report what actually landed, and fail the script if anything did not. The old
+# version counted attempts, so a run where every PUT 403'd still signed off with
+# a success line.
+echo \"==> Seeded pricing parameters for \$ok subcategories (\$failed failed)\"
+[ \"\$failed\" -eq 0 ] && [ \"\$ok\" -gt 0 ]
 "

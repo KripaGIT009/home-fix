@@ -154,6 +154,48 @@ class RatingRbacConfigTest {
         assertThat(invoke("POST", "/reviews", mock(FilterChain.class)).getStatus()).isEqualTo(403);
     }
 
+    // ---- Admin Portal moderation (Requirement 19.2) --------------------------------------------
+
+    private static String moderatePath() {
+        return "/admin/reviews/" + UUID.randomUUID() + "/moderate";
+    }
+
+    @Test
+    void moderationTierMayListAndModerateFromTheAdminPortal() throws Exception {
+        for (String role : List.of("ADMIN", "SUPER_ADMIN", "SUPPORT_AGENT")) {
+            authenticateAs(role);
+            for (String[] call : new String[][] {
+                    {"GET", "/admin/reviews"}, {"POST", moderatePath()}}) {
+                FilterChain chain = mock(FilterChain.class);
+
+                assertThat(invoke(call[0], call[1], chain).getStatus())
+                        .as(role + " " + call[0] + " " + call[1]).isEqualTo(200);
+                verify(chain, times(1)).doFilter(org.mockito.ArgumentMatchers.any(),
+                        org.mockito.ArgumentMatchers.any());
+            }
+        }
+    }
+
+    @Test
+    void otherRolesAreDeniedTheAdminPortalModerationSurface() throws Exception {
+        for (String role : List.of("CUSTOMER", "SERVICE_PROVIDER", "FINANCE_ADMIN", "DISPATCHER")) {
+            authenticateAs(role);
+            for (String[] call : new String[][] {
+                    {"GET", "/admin/reviews"}, {"POST", moderatePath()}}) {
+                assertThat(invoke(call[0], call[1], mock(FilterChain.class)).getStatus())
+                        .as(role + " " + call[0] + " " + call[1]).isEqualTo(403);
+            }
+        }
+    }
+
+    @Test
+    void unauthenticatedAdminReviewListIsUnauthorized() throws Exception {
+        SecurityContextHolder.clearContext();
+
+        assertThat(invoke("GET", "/admin/reviews", mock(FilterChain.class)).getStatus())
+                .isEqualTo(401);
+    }
+
     // ---- Public surface must stay unruled ------------------------------------------------------
 
     @Test

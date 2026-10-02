@@ -122,7 +122,7 @@ graph TB
     PA -.->|"/api/auth"| AUTH
     AP -.->|"/api/auth"| AUTH
 
-    GW -->|introspect<br/>every request| AUTH
+    GW -->|introspect<br/>cached up to 30 s| AUTH
     GW --> CUST & PROV & VER & BOOK & CAT & PRICE & DISP & LOC
     GW --> PAYS & INV & PROMO & NOTIF & CHAT & CMPL & RATE & ADM & REP
 
@@ -187,9 +187,9 @@ sequenceDiagram
     SVC-->>SPA: 200 booking JSON
 ```
 
-One problem remains visible in this path: the gateway introspects on every single request, with no cache and no timeout, so a slow auth-service ties up gateway connections.
+The gateway's introspection call has a response timeout (3 s by default) and resolves auth-service through the JDK resolver so a recreated container is followed (review 14.1). Active results are reused for at most `homefix.gateway.auth.introspection-cache.ttl` (30 s by default) and never past the token's `exp`, keyed by a SHA-256 of the token and bounded to 10,000 entries; inactive results and failed calls are never cached, so an auth-service outage still denies. Concurrent requests carrying the same uncached token share one call. The cost is revocation latency: if access tokens ever become revocable before `exp`, the gateway honours a revocation within the ttl. Today logout revokes only the refresh token, so nothing is lost. Set the ttl to `0` to introspect every request.
 
-The role filter used to be the larger problem. It passes through when no rule matches, and until recently no service except admin and reporting configured any rule, so every staff endpoint accepted any valid token. Thirteen services now register rules. Public paths are still deliberately left unruled, because this filter runs inside the security chain and a rule on a public path would turn it into a 401. See review sections 8.2 and 12.1.
+The role filter used to be the larger problem. It passes through when no rule matches, and until recently no service except admin and reporting configured any rule, so every staff endpoint accepted any valid token. Thirteen services now register rules. Public paths are still deliberately left unruled, because this filter runs inside the security chain and a rule on a public path would turn it into a 401. Rules are matched against the decoded path within the application, without the servlet context path, with one trailing slash removed and case ignored, rather than against the raw request URI. A `GET` rule also governs `HEAD`. Anything Spring Security's `StrictHttpFirewall` refuses, such as `;` path parameters, encoded `/`, `\`, `.` or `%`, `//`, `/./` or `/../`, is answered with 400 before any rule is evaluated. Before this change, `/admin;x/users`, `/%61dmin/users` and `HEAD /admin/users` each reached the admin handler without a role check. See review sections 8.2 and 12.1.
 
 ---
 
@@ -343,9 +343,9 @@ sequenceDiagram
     BOOK-->>APP: 201 {bookingId, reference, status, priceBreakdown}
 
     loop every 1 s, batch 100
-        OUT->>PG: SELECT pending outbox.outbox_event
+        OUT->>PG: claim due rows: FOR UPDATE SKIP LOCKED,<br/>next_attempt_at = now + lease, commit
         OUT->>KF: publish BookingCreated, header eventId
-        OUT->>PG: mark PUBLISHED
+        OUT->>PG: mark PUBLISHED (or schedule retry)
     end
 
     KF->>DISP: BookingCreated
@@ -477,7 +477,7 @@ stateDiagram-v2
     APPROVED --> [*]: eligible for dispatch
 ```
 
-State names follow `VerificationStatus` in verification-service. Only `APPROVED` makes a provider eligible for job assignment. The document bytes are discarded by the storage stub, and neither endpoint checks that the caller owns the provider id. See review section 8.5.
+State names follow `VerificationStatus` in verification-service. Only `APPROVED` makes a provider eligible for job assignment. The document bytes are discarded by the storage stub. The upload and record-read endpoints assert that the caller is the provider named in the path, or staff. The eligibility check deliberately does not, because dispatch asks about other providers. See review sections 8.5 and 12.1.
 
 ### 5.7 Complaint lifecycle with SLA
 
@@ -568,17 +568,18 @@ graph LR
     T1 & T2 & T3 & T4 & T5 & T6 & T7 & T8 & T9 & T10 & T11 --> CNOTIF
 ```
 
-Consumer groups: `dispatch-engine`, `notification-service`, `invoice-service`, `chat-service`, `rating-review-service`, `location-service`. Any event type without an explicit mapping falls through to the `domain-events` topic, which is where both complaint events currently land and where nothing subscribes.
+Consumer groups: `dispatch-engine`, `notification-service`, `invoice-service`, `chat-service`, `rating-review-service`, `location-service`. Any event type without an explicit mapping falls through to the `domain-events` topic, where nothing subscribes. Both complaint events are mapped to their own same-named topics.
 
 ### Outbox and delivery guarantees
 
 ```mermaid
 flowchart LR
-    A["Domain write +<br/>outbox_event INSERT<br/>one transaction"] --> B["outbox-processor<br/>polls PENDING"]
+    A["Domain write +<br/>outbox_event INSERT<br/>one transaction"] --> B["outbox-processor claims due rows<br/>FOR UPDATE SKIP LOCKED + lease"]
     B --> C{"publish to Kafka<br/>acks=all, idempotent"}
     C -->|ok| D["mark PUBLISHED"]
-    C -->|error| E["retry, backoff 1s→60s"]
-    E -->|"10 attempts"| F["mark FAILED<br/>alert ops"]
+    C -->|error| E["retry_count++, last_error,<br/>next_attempt_at = now + 1s→60s"]
+    E -->|"due again"| B
+    E -->|"10th attempt"| F["mark FAILED<br/>alert ops"]
     D --> G["Consumer receives<br/>header eventId"]
     G --> H{"processed_event<br/>has eventId?"}
     H -->|yes| I["skip, already handled"]
@@ -586,7 +587,9 @@ flowchart LR
     J -->|"3 failures"| K["forward to topic.DLT"]
 ```
 
-The publisher requires `Propagation.MANDATORY`, so an outbox row can only be written inside an existing transaction. The producer template refuses to start unless `acks=all` and idempotence are enabled. The handler and the dedupe marker commit separately, so exactly-once is not guaranteed; see review section 8.2.
+The publisher requires `Propagation.MANDATORY`, so an outbox row can only be written inside an existing transaction. The producer template refuses to start unless `acks=all` and idempotence are enabled.
+
+The relay claims rows in a short transaction (`SELECT ... FOR UPDATE SKIP LOCKED`, then `next_attempt_at` = now + a 2-minute lease) and publishes outside it, so several relay instances can run without two of them working one row. A failed publish is not slept on: the attempt, its error and the next attempt time are written to the row, and the row is simply not due until then. Delivery is at-least-once (a crash between the broker ACK and the PUBLISHED write, a timed-out publish that still lands, or a relay outliving its lease can each publish twice), which consumer dedupe on `eventId` absorbs. The consumer's 5-second retry delay is likewise a paused listener container rather than a sleeping thread. The handler and the dedupe marker commit separately, so exactly-once is not guaranteed; see review section 8.2.
 
 ---
 
@@ -751,7 +754,7 @@ erDiagram
 
 `PROVIDER_PROFILE`, `VERIFICATION`, `PAYMENT_TRANSACTION`, `COUPON` and the catalog tables carry `@Version` optimistic locking; most child tables do not. Personally identifying fields are stored as AES-GCM ciphertext with a random 96-bit IV, and the column names carry the `_encrypted` suffix.
 
-Two model-level defects. `CUSTOMER_PROFILE` is looked up by primary key in service code while the customer id actually lives in `user_id`, which breaks the second profile update, every deletion request and the anonymization sweep. `VERIFICATION` declares both of its child collections as eager `List` bags, which Hibernate rejects with `MultipleBagFetchException`. See review sections 8.4 and 8.5.
+Two model-level defects. `CUSTOMER_PROFILE` is looked up by primary key in service code while the customer id actually lives in `user_id`, which breaks the second profile update, every deletion request and the anonymization sweep. `VERIFICATION` declared both of its child collections as eager `List` bags. Hibernate 6.4 accepts that mapping but loads each bag with its own extra SELECT, so every lookup, the dispatch eligibility check included, took three statements and loaded every child row. Both collections are now lazy. Reads that need the whole aggregate fetch-join the documents and load the audit trail with one more statement, inside the transaction. See review sections 8.4 and 8.5.
 
 ### 7.2 Catalog, booking and dispatch
 
@@ -863,11 +866,12 @@ erDiagram
         string aggregate_type
         uuid aggregate_id
         string event_type
-        clob payload
+        text payload
         string status "PENDING, PUBLISHED, FAILED"
         int retry_count
         timestamp created_at
         timestamp published_at
+        timestamp next_attempt_at "claim lease or next retry; null = due"
         string last_error
         long version
     }
@@ -886,7 +890,7 @@ erDiagram
     BOOKING ||--o{ LOCATION_HISTORY : "tracked by booking_id"
 ```
 
-`outbox_event` and `processed_event` come from the shared outbox module and exist in every producing or consuming service's schema. The payload is stored as a CLOB, not `jsonb` as the design document specifies. `location_history` and `terminated_booking` live in the `location` schema, not `booking`.
+`outbox_event` and `processed_event` come from the shared outbox module and live once, in the shared `outbox` schema, not in each service's schema. `processed_event` is keyed by consumer group and event id, so services consuming the same event deduplicate independently. The payload is stored as `text`, not `jsonb` as the design document specifies; it was briefly a large-object `oid`, which broke the relay (see CODEBASE_REVIEW.md 15.2). `location_history` and `terminated_booking` live in the `location` schema, not `booking`.
 
 Child tables such as `booking_audit` and `saga_step` use assigned UUID primary keys with no `@Version` and no `Persistable` implementation, so every save costs a SELECT before the INSERT.
 
@@ -1159,7 +1163,7 @@ These are the statuses the service uses, but no transition table is encoded, so 
 stateDiagram-v2
     [*] --> PENDING: written in domain transaction
     PENDING --> PUBLISHED: Kafka ack
-    PENDING --> PENDING: retry, backoff 1s→60s
+    PENDING --> PENDING: failed attempt, next_attempt_at = now + backoff 1s→60s
     PENDING --> FAILED: 10 attempts exhausted
     PUBLISHED --> [*]
     FAILED --> [*]: manual replay
@@ -1255,11 +1259,11 @@ graph TB
     EKS --> FB["Fluent Bit → CloudWatch"]
 ```
 
-Terraform is the most complete infrastructure layer. The gaps that block a real deploy are the Helm probe paths, the CI pipeline building nothing, and the missing database migrations. See review sections 8.7 and 11.
+Terraform is the most complete infrastructure layer. The largest gap that blocks a real deploy is the missing database migrations. The pipeline builds, tests and images every service and can deploy them with the chart, but only once infrastructure the repository does not create exists (ECR repositories, a GitHub OIDC role, per-service Kubernetes Secrets); the header of `.github/workflows/cd-production.yml` lists it.
 
 ### 10.3 Namespace and chart layout
 
-All services share one Helm chart, `helm/homefix-service`, parameterised per release. Two inconsistent layouts exist: the Kubernetes manifests under `infra/k8s` assume six domain namespaces with bare deployment names, while CI deploys `homefix-<service>` into `staging` and `production`. Reconciling these is step 12 of the roadmap.
+All services share one Helm chart, `helm/homefix-service`, with one release per service (`homefix-<service>`) rendered from `values-<environment>.yaml` plus `helm/services/<service>.yaml`. Resources are named after the bare service, so in-cluster DNS matches Compose (`auth-service:8081`). The pipeline deploys into the namespace configured on each GitHub environment, while the Kubernetes manifests under `infra/k8s` still assume six domain namespaces. Reconciling these is step 12 of the roadmap.
 
 ---
 
@@ -1280,7 +1284,7 @@ graph LR
     end
 ```
 
-Actuator endpoints are exposed at the root path, not under `/actuator`, which is why the Helm chart's probes fail. They are also unauthenticated.
+Actuator endpoints are exposed at the root path, not under `/actuator`; the Helm chart probes `/health/liveness` and `/health/readiness` on each service's own port. They are also unauthenticated.
 
 Resilience is meant to wrap every synchronous call through the shared `ResilientCall` helper: per-call timeout, three retries with exponential backoff, then a circuit breaker that opens at 50 percent failures over a 10-call window for 30 seconds. In practice only booking-service and dispatch-engine use it, and most other outbound clients have no timeout at all.
 

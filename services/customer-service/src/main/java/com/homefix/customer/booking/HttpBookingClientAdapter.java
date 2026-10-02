@@ -5,6 +5,7 @@ import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
@@ -13,11 +14,10 @@ import org.springframework.web.client.RestClientException;
  * Default {@link BookingClientPort} adapter that queries the Booking Service over HTTP.
  *
  * <p>Calls {@code GET {booking.base-url}/internal/bookings/active?customerId=..&addressId=..}
- * and interprets a returned booking reference as "address in use". A transport failure is
- * treated conservatively as "not blocking" is unsafe for a delete; therefore any error is
- * surfaced so the caller can fail the deletion rather than silently allow it. Here we log
- * and rethrow-as-empty is avoided â€” instead we propagate by returning the reference only
- * on a definitive positive, and let transport errors bubble up.
+ * with the shared {@code X-Internal-Api-Key}, and interprets a returned booking reference as
+ * "address in use". Any failure, including a refused key, is surfaced so the caller fails the
+ * deletion rather than silently allowing it: treating an unknown answer as "not in use" is unsafe
+ * for a delete.
  *
  * <p>Activated whenever no other {@link BookingClientPort} bean is present (tests supply
  * their own fake).
@@ -27,11 +27,16 @@ public class HttpBookingClientAdapter implements BookingClientPort {
 
     private static final Logger log = LoggerFactory.getLogger(HttpBookingClientAdapter.class);
 
+    /** Header carrying the shared service credential the Booking Service expects on /internal/**. */
+    static final String INTERNAL_KEY_HEADER = "X-Internal-Api-Key";
+
     private final RestClient restClient;
 
-    public HttpBookingClientAdapter(BookingClientProperties properties) {
+    public HttpBookingClientAdapter(BookingClientProperties properties,
+                                    @Value("${homefix.customer.internal-api-key:}") String internalApiKey) {
         this.restClient = RestClient.builder()
                 .baseUrl(properties.getBaseUrl())
+                .defaultHeader(INTERNAL_KEY_HEADER, internalApiKey)
                 .build();
     }
 

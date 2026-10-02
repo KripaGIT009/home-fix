@@ -2,20 +2,29 @@ package com.homefix.payment.service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionOperations;
 
 import com.homefix.payment.alert.FinanceAlertPort;
 import com.homefix.payment.config.PaymentProperties;
 import com.homefix.payment.crypto.KmsEncryptionPort;
+import com.homefix.payment.domain.PaymentRefund;
+import com.homefix.payment.domain.PaymentRefundRepository;
 import com.homefix.payment.domain.PaymentTransaction;
 import com.homefix.payment.domain.PaymentTransactionRepository;
+import com.homefix.payment.domain.RefundStatus;
 import com.homefix.payment.domain.Settlement;
 import com.homefix.payment.domain.SettlementRepository;
 import com.homefix.payment.domain.SettlementStatus;
@@ -41,8 +50,16 @@ import com.homefix.payment.wallet.ProviderWalletClientPort;
  * (12.3), gateway selection through the {@link PaymentGatewayRegistry} abstraction (12.1),
  * cryptographic callback signature verification and state-machine-guarded state changes (12.4,
  * 12.5), publishing {@code PaymentCompleted} via the outbox plus invoice triggering with retry
- * (12.6), provider wallet credit with retry-then-alert (12.10, 12.11), customer retry attempts
- * (12.8), refunds (12.7), and settlement bank transfers (14.3, 14.4).
+ * (12.6), provider wallet credit with retry-then-alert backed by a durable owed-credit marker and
+ * sweep (12.10, 12.11), customer retry attempts (12.8), idempotent refunds with staff
+ * reconciliation (12.7), and settlement bank transfers (14.3, 14.4).
+ *
+ * <p><strong>Transaction boundaries.</strong> No external call (gateway, wallet, invoice) and no
+ * retry backoff runs while a database transaction is open. Each money-moving flow is split into
+ * short transactions through {@link TransactionOperations}: (1) record intent and commit, (2) call
+ * the gateway with no transaction open, (3) record the outcome in a new transaction. So the
+ * PENDING payment row exists before the charge, a PENDING refund row exists before the gateway
+ * refund, and the post-success side effects run after the SUCCESS state has committed.
  *
  * <p>All external dependencies are expressed as ports so the logic is fully unit-testable against
  * in-memory fakes and mocks. All monetary math uses {@link BigDecimal}.
@@ -53,7 +70,22 @@ public class PaymentService {
     private static final Logger log = LoggerFactory.getLogger(PaymentService.class);
     private static final BigDecimal HUNDRED = new BigDecimal("100");
 
+    /** Clock skew tolerated on a signed callback timestamp that lies in the future. */
+    private static final Duration CALLBACK_FUTURE_SKEW = Duration.ofMinutes(5);
+
+    /**
+     * Attempts at recording a charge result that lost an optimistic-lock race. Each conflict means
+     * another versioned write of the row committed in between; in practice that is the gateway
+     * callback (a refund cannot start before the gateway reference is recorded, and the wallet-marker
+     * clear does not bump the version), so the second attempt normally succeeds.
+     */
+    private static final int CHARGE_RECORD_ATTEMPTS = 3;
+
+    /** Maximum number of owed wallet credits one sweep re-sends. */
+    private static final int WALLET_CREDIT_SWEEP_BATCH = 100;
+
     private final PaymentTransactionRepository transactionRepository;
+    private final PaymentRefundRepository refundRepository;
     private final SettlementRepository settlementRepository;
     private final PaymentGatewayRegistry gatewayRegistry;
     private final IdempotencyStorePort idempotencyStore;
@@ -64,8 +96,10 @@ public class PaymentService {
     private final FinanceAlertPort financeAlert;
     private final ProviderNotificationPort providerNotification;
     private final PaymentProperties props;
+    private final TransactionOperations transactions;
 
     public PaymentService(PaymentTransactionRepository transactionRepository,
+                          PaymentRefundRepository refundRepository,
                           SettlementRepository settlementRepository,
                           PaymentGatewayRegistry gatewayRegistry,
                           IdempotencyStorePort idempotencyStore,
@@ -75,8 +109,10 @@ public class PaymentService {
                           PaymentCompletedPublisher paymentCompletedPublisher,
                           FinanceAlertPort financeAlert,
                           ProviderNotificationPort providerNotification,
-                          PaymentProperties props) {
+                          PaymentProperties props,
+                          TransactionOperations transactions) {
         this.transactionRepository = transactionRepository;
+        this.refundRepository = refundRepository;
         this.settlementRepository = settlementRepository;
         this.gatewayRegistry = gatewayRegistry;
         this.idempotencyStore = idempotencyStore;
@@ -87,6 +123,7 @@ public class PaymentService {
         this.financeAlert = financeAlert;
         this.providerNotification = providerNotification;
         this.props = props;
+        this.transactions = transactions;
     }
 
     // ===================== Initiate (Requirement 12.2, 12.3, 12.9) =====================
@@ -94,8 +131,13 @@ public class PaymentService {
     /**
      * Initiates a payment. Idempotent on {@code (customerId, bookingId)}: a duplicate request
      * returns the original transaction without a new gateway charge (Requirement 12.3, Property 11).
+     *
+     * <p>The PENDING row is committed <em>before</em> the gateway is charged, so a charge can never
+     * exist without a durable record for its callback to find, and only the request that committed
+     * the row charges. If the gateway declines, the transaction is marked FAILED. If the charge call
+     * itself errors, the outcome at the gateway is unknown, so the transaction stays PENDING (its
+     * signed callback settles it) and the caller gets {@code 502 PAYMENT_GATEWAY_ERROR}.
      */
-    @Transactional
     public PaymentTransaction initiatePayment(InitiatePaymentCommand cmd) {
         validateInitiate(cmd);
         String key = IdempotencyKeys.forCustomerBooking(cmd.customerId(), cmd.bookingId());
@@ -133,10 +175,64 @@ public class PaymentService {
             }
         }
 
-        GatewayChargeResult result = gateway.charge(new GatewayChargeRequest(
-                cmd.bookingId(), cmd.customerId(), cmd.amount(), cmd.method()));
-        tx.setGatewayReference(result.gatewayReference());
-        return transactionRepository.save(tx);
+        // Phase 1: commit the PENDING row. The unique idempotency_key column is the authoritative
+        // guard: a concurrent duplicate that got past the store loses here and returns the winner.
+        UUID transactionId = tx.getId();
+        try {
+            transactions.executeWithoutResult(status -> transactionRepository.save(tx));
+        } catch (DataIntegrityViolationException e) {
+            log.info("Idempotent payment (unique key): concurrent duplicate for key {}", key);
+            return transactionRepository.findByIdempotencyKey(key).orElseThrow(() -> e);
+        }
+
+        // Phase 2: charge with no database transaction open.
+        GatewayChargeResult result;
+        try {
+            result = gateway.charge(new GatewayChargeRequest(
+                    transactionId, cmd.bookingId(), cmd.customerId(), cmd.amount(), cmd.method()));
+        } catch (RuntimeException e) {
+            log.error("Gateway charge call threw for transaction {}: {}", transactionId, e.getMessage());
+            transactions.executeWithoutResult(status -> {
+                PaymentTransaction fresh = getExisting(transactionId);
+                if (fresh.getStatus() == TransactionStatus.PENDING) {
+                    fresh.recordFailureReason("Charge initiation error: " + e.getMessage());
+                    transactionRepository.save(fresh);
+                }
+            });
+            throw new PaymentException(HttpStatus.BAD_GATEWAY, "PAYMENT_GATEWAY_ERROR",
+                    "Gateway charge failed for transaction " + transactionId
+                            + "; it stays PENDING until the gateway callback settles it");
+        }
+
+        // Phase 3: record the gateway reference. A fast callback can commit between our re-read and
+        // our write, failing this step on the version check even though the charge succeeded. That
+        // must not surface as a 500 or leave the reference unrecorded (a later refund needs it), so
+        // the step is re-run against a fresh read; the re-run only changes the status while the
+        // transaction is still PENDING, so it never overwrites the state the callback settled.
+        OptimisticLockingFailureException conflict = null;
+        for (int attempt = 1; attempt <= CHARGE_RECORD_ATTEMPTS; attempt++) {
+            try {
+                return recordChargeResult(transactionId, result);
+            } catch (OptimisticLockingFailureException e) {
+                conflict = e;
+                log.info("Concurrent update of transaction {} while recording its gateway reference "
+                        + "(attempt {}); re-reading", transactionId, attempt);
+            }
+        }
+        throw conflict;
+    }
+
+    /** Phase 3 of {@link #initiatePayment}: re-reads the row and records the charge result on it. */
+    private PaymentTransaction recordChargeResult(UUID transactionId, GatewayChargeResult result) {
+        return transactions.execute(status -> {
+            PaymentTransaction fresh = getExisting(transactionId);
+            fresh.setGatewayReference(result.gatewayReference());
+            if (!result.accepted() && fresh.getStatus() == TransactionStatus.PENDING) {
+                fresh.recordFailureReason("Gateway declined the charge");
+                fresh.transitionTo(TransactionStatus.FAILED);
+            }
+            return transactionRepository.save(fresh);
+        });
     }
 
     private void validateInitiate(InitiatePaymentCommand cmd) {
@@ -146,6 +242,7 @@ public class PaymentService {
         if (cmd.amount() == null || cmd.amount().signum() <= 0) {
             throw PaymentException.validation("Payment amount must be positive");
         }
+        requireMoneyScale(cmd.amount(), "Payment amount");
         if (cmd.method() == null) {
             throw PaymentException.validation("Payment method is required");
         }
@@ -163,27 +260,55 @@ public class PaymentService {
             if (explicitFee.compareTo(amount) > 0) {
                 throw PaymentException.validation("Platform fee cannot exceed the payment amount");
             }
+            requireMoneyScale(explicitFee, "Platform fee");
             return explicitFee;
         }
         return amount.multiply(props.getDefaultPlatformFeePercent())
                 .divide(HUNDRED, 2, RoundingMode.HALF_UP);
     }
 
+    /**
+     * Rejects an amount with more than two decimal places. Every money column is
+     * {@code numeric(12,2)}, so Postgres would silently round {@code 33.334} to {@code 33.33} while
+     * the gateway was asked for {@code 33.334}: the stored amount would then disagree with what moved
+     * at the gateway, with refund totals, with the refund idempotency amount comparison and with the
+     * signed callback amount binding. Trailing zeros are not precision ({@code 33.3300} is fine).
+     */
+    private static void requireMoneyScale(BigDecimal amount, String what) {
+        if (amount.stripTrailingZeros().scale() > 2) {
+            throw PaymentException.validation(what + " must have at most 2 decimal places");
+        }
+    }
+
     // ===================== Gateway callback (Requirement 12.5, 12.6, 12.10) =====================
 
     /**
-     * Handles an asynchronous gateway callback: verifies the signature (Requirement 12.5), then
-     * transitions the transaction to SUCCESS or FAILED (Requirement 12.4). On SUCCESS it publishes
-     * PaymentCompleted, triggers invoice generation, and credits the provider wallet.
+     * Handles an asynchronous gateway callback (Requirement 12.5, 12.4).
      *
-     * @throws PaymentException 400 if the signature is invalid (the callback is rejected and logged).
+     * <ol>
+     *   <li>Verifies the signature over {@code payload} with the named gateway's secret, before
+     *       anything else (no database access for an unauthenticated caller).</li>
+     *   <li>Parses the signed payload ({@link SignedCallbackPayload}); the outcome, failure reason,
+     *       transaction id and amount come <em>only</em> from it.</li>
+     *   <li>Binds it to this request and transaction: the payload's transaction id must equal the
+     *       path id, its gateway must equal both the request's and the transaction's gateway, and its
+     *       amount must equal the transaction amount. Its timestamp must be within
+     *       {@code callback-max-age}.</li>
+     *   <li>Replay protection: on a transaction already settled, a callback that agrees with the
+     *       settled state is an idempotent no-op (no second event, invoice or wallet credit); one
+     *       that contradicts it is rejected with {@code 409 CALLBACK_CONFLICT}.</li>
+     * </ol>
+     *
+     * <p>The state change and the {@code PaymentCompleted} outbox row commit together; invoice
+     * triggering and wallet credit (which retry with backoff) run after that commit.
+     *
+     * @throws PaymentException 400 for an invalid signature, malformed payload, mismatched binding
+     *                          or stale timestamp; 404 for an unknown transaction; 409 on conflict.
      */
-    @Transactional
     public PaymentTransaction handleGatewayCallback(UUID transactionId, GatewayCallback callback) {
-        PaymentTransaction tx = getExisting(transactionId);
         PaymentGatewayPort gateway = gatewayRegistry.require(callback.gatewayId());
 
-        // Requirement 12.5: verify the cryptographic signature BEFORE any state change.
+        // Requirement 12.5: verify the cryptographic signature BEFORE anything else.
         if (!gateway.verifyCallbackSignature(callback.payload(), callback.signature())) {
             log.warn("SECURITY invalid gateway callback signature for transaction {} gateway {}",
                     transactionId, callback.gatewayId());
@@ -191,27 +316,115 @@ public class PaymentService {
                     "Invalid callback signature for transaction " + transactionId);
         }
 
-        if (callback.succeeded()) {
-            tx.transitionTo(TransactionStatus.SUCCESS);
-            transactionRepository.save(tx);
-            onPaymentSuccess(tx);
-        } else {
-            tx.recordFailureReason(callback.failureReason());
-            tx.transitionTo(TransactionStatus.FAILED);
-            transactionRepository.save(tx);
+        SignedCallbackPayload signed = SignedCallbackPayload.parse(callback.payload());
+        if (!transactionId.equals(signed.transactionId())) {
+            log.warn("SECURITY signed callback for transaction {} (event {}) was sent for transaction {}",
+                    signed.transactionId(), signed.eventId(), transactionId);
+            throw PaymentException.callbackMismatch(
+                    "Signed payload is for a different transaction than " + transactionId);
         }
-        return tx;
+        if (!gateway.gatewayId().equals(signed.gatewayId())) {
+            log.warn("SECURITY signed callback names gateway {} but was verified as {} (transaction {})",
+                    signed.gatewayId(), gateway.gatewayId(), transactionId);
+            throw PaymentException.callbackMismatch(
+                    "Signed payload gateway does not match the callback gateway");
+        }
+        requireFreshCallback(transactionId, signed);
+
+        CallbackApplication applied;
+        try {
+            applied = applyCallback(transactionId, signed);
+        } catch (OptimisticLockingFailureException e) {
+            // A concurrent delivery of a callback for this transaction committed first. Re-run once:
+            // the fresh read now sees the settled state and takes the idempotent/conflict path.
+            log.info("Concurrent callback for transaction {}; re-evaluating against the settled state",
+                    transactionId);
+            applied = applyCallback(transactionId, signed);
+        }
+
+        if (applied.newlySucceeded()) {
+            onPaymentSuccess(applied.transaction());
+        }
+        return applied.transaction();
+    }
+
+    private void requireFreshCallback(UUID transactionId, SignedCallbackPayload signed) {
+        Instant now = Instant.now();
+        if (signed.timestamp().isAfter(now.plus(CALLBACK_FUTURE_SKEW))) {
+            log.warn("SECURITY callback for transaction {} is timestamped in the future: {}",
+                    transactionId, signed.timestamp());
+            throw PaymentException.callbackStale("Callback timestamp is in the future");
+        }
+        Duration maxAge = props.getCallbackMaxAge();
+        if (maxAge != null && !maxAge.isZero() && !maxAge.isNegative()
+                && signed.timestamp().isBefore(now.minus(maxAge))) {
+            log.warn("SECURITY stale callback for transaction {} timestamped {} (max age {})",
+                    transactionId, signed.timestamp(), maxAge);
+            throw PaymentException.callbackStale("Callback timestamp is older than " + maxAge);
+        }
+    }
+
+    /** Applies a verified, bound callback in one short transaction (state change + outbox row). */
+    private CallbackApplication applyCallback(UUID transactionId, SignedCallbackPayload signed) {
+        return transactions.execute(status -> {
+            PaymentTransaction tx = getExisting(transactionId);
+            if (!tx.getGateway().equals(signed.gatewayId())) {
+                log.warn("SECURITY callback via gateway {} for transaction {} which uses gateway {}",
+                        signed.gatewayId(), transactionId, tx.getGateway());
+                throw PaymentException.callbackMismatch(
+                        "Callback gateway does not match the transaction's gateway");
+            }
+            if (tx.getAmount().compareTo(signed.amount()) != 0) {
+                log.warn("SECURITY callback amount {} does not match transaction {} amount {}",
+                        signed.amount(), transactionId, tx.getAmount());
+                throw PaymentException.callbackMismatch(
+                        "Signed amount does not match the transaction amount");
+            }
+
+            if (tx.getStatus() != TransactionStatus.PENDING) {
+                if (signed.outcome().agreesWith(tx.getStatus())) {
+                    log.info("Duplicate {} callback (event {}) for transaction {} already {}; no-op",
+                            signed.outcome(), signed.eventId(), transactionId, tx.getStatus());
+                    return new CallbackApplication(tx, false);
+                }
+                log.warn("SECURITY conflicting {} callback (event {}) for transaction {} already {}",
+                        signed.outcome(), signed.eventId(), transactionId, tx.getStatus());
+                throw PaymentException.callbackConflict("Transaction " + transactionId + " is already "
+                        + tx.getStatus() + "; a " + signed.outcome() + " callback cannot be applied");
+            }
+
+            tx.recordCallbackEvent(signed.eventId());
+            if (signed.outcome() == SignedCallbackPayload.Outcome.SUCCEEDED) {
+                tx.transitionTo(TransactionStatus.SUCCESS);
+                PaymentTransaction saved = transactionRepository.save(tx);
+                // Atomic with the SUCCESS state change: the outbox row commits in this transaction.
+                paymentCompletedPublisher.publish(saved);
+                return new CallbackApplication(saved, true);
+            }
+            tx.recordFailureReason(signed.failureReason());
+            tx.transitionTo(TransactionStatus.FAILED);
+            return new CallbackApplication(transactionRepository.save(tx), false);
+        });
+    }
+
+    /** Result of applying a callback: the transaction, and whether it moved to SUCCESS just now. */
+    private record CallbackApplication(PaymentTransaction transaction, boolean newlySucceeded) {
     }
 
     /**
-     * Post-SUCCESS side effects (Requirement 12.6, 12.10, 12.11): publish PaymentCompleted through
-     * the outbox (atomic with the state change), trigger invoice generation with retry, and credit
-     * the provider wallet with retry-then-alert.
+     * Post-SUCCESS side effects (Requirement 12.6, 12.10, 12.11), run after the SUCCESS state and
+     * its PaymentCompleted outbox row have committed: trigger invoice generation with retry, and
+     * credit the provider wallet with retry-then-alert. No transaction is open here, so the retry
+     * backoff never holds a database connection.
+     *
+     * <p>The wallet credit is owed durably: the SUCCESS commit also set the transaction's
+     * wallet-credit marker ({@link PaymentTransaction#isWalletCreditPending()}), which is cleared
+     * only once the wallet accepts the credit. If this process dies before then, or every retry
+     * fails, {@link #retryPendingWalletCredits()} re-sends it later. Nothing consumes
+     * {@code PaymentCompleted} to credit the wallet, so this marker is the only durable record that
+     * the credit is still owed.
      */
     private void onPaymentSuccess(PaymentTransaction tx) {
-        // Atomic with the SUCCESS state change: the outbox row commits in this same transaction.
-        paymentCompletedPublisher.publish(tx);
-
         // Requirement 12.6: trigger invoice generation; retry up to N with exponential backoff.
         Retries.Result invoiceResult = Retries.run(props.getMaxInvoiceRetries(), props.getRetryBackoff(),
                 () -> invoiceTrigger.triggerInvoiceGeneration(tx.getId(), tx.getBookingId()));
@@ -223,15 +436,77 @@ public class PaymentService {
         // Requirement 12.10/12.11: credit provider net earnings; retry then alert Finance_Admin.
         BigDecimal net = tx.providerNetEarning();
         Retries.Result walletResult = Retries.run(props.getMaxWalletCreditRetries(), props.getRetryBackoff(),
-                () -> walletClient.creditEarning(tx.getProviderId(), tx.getBookingId(),
-                        tx.getAmount(), tx.getPlatformFee(), net));
-        if (!walletResult.succeeded()) {
-            String reason = walletResult.lastError() == null ? "unknown"
-                    : walletResult.lastError().getMessage();
-            log.error("Wallet credit failed after {} attempts for provider {} booking {} amount {}",
-                    walletResult.attempts(), tx.getProviderId(), tx.getBookingId(), net);
-            financeAlert.walletCreditFailed(tx.getProviderId(), tx.getBookingId(), net, reason);
+                () -> creditWallet(tx));
+        if (walletResult.succeeded()) {
+            clearWalletCreditPending(tx.getId());
+            return;
         }
+        String reason = walletResult.lastError() == null ? "unknown"
+                : walletResult.lastError().getMessage();
+        log.error("Wallet credit failed after {} attempts for provider {} booking {} amount {}; "
+                        + "it stays owed and the wallet-credit sweeper will re-send it",
+                walletResult.attempts(), tx.getProviderId(), tx.getBookingId(), net);
+        financeAlert.walletCreditFailed(tx.getProviderId(), tx.getBookingId(), net, reason);
+    }
+
+    private void creditWallet(PaymentTransaction tx) {
+        walletClient.creditEarning(tx.getProviderId(), tx.getBookingId(),
+                tx.getAmount(), tx.getPlatformFee(), tx.providerNetEarning());
+    }
+
+    /**
+     * Clears the wallet-credit marker after the wallet accepted the credit. A failure here is logged,
+     * not thrown: the credit already happened, and the worst case is that the sweeper re-sends it,
+     * which the wallet absorbs because {@link ProviderWalletClientPort#creditEarning} is idempotent per
+     * booking.
+     */
+    private void clearWalletCreditPending(UUID transactionId) {
+        try {
+            transactions.executeWithoutResult(
+                    status -> transactionRepository.clearWalletCreditPending(transactionId));
+        } catch (RuntimeException e) {
+            log.warn("Wallet credit for transaction {} succeeded but its pending marker could not be "
+                    + "cleared; the sweeper will re-send it: {}", transactionId, e.getMessage());
+        }
+    }
+
+    // ===================== Owed wallet credits (Requirement 12.10, 12.11) =====================
+
+    /**
+     * Re-sends provider wallet credits that are still owed: payments whose SUCCESS committed at least
+     * {@code wallet-credit-sweep-min-age} ago but whose credit was never confirmed, because the
+     * process died between the commit and the credit or because every in-line retry failed. Driven
+     * by {@code WalletCreditSweeper}.
+     *
+     * <p>The minimum age keeps the sweep clear of a credit the callback thread is still retrying.
+     * Each owed credit gets one attempt per sweep; a failure is logged and left for the next sweep
+     * (Finance_Admin was already alerted when the in-line retries ran out). Credits are at-least-once
+     * &mdash; a crash after the wallet accepted a credit but before the marker was cleared re-sends
+     * it &mdash; which is why the wallet port must treat {@code creditEarning} as idempotent per
+     * booking.
+     *
+     * @return the number of credits delivered by this sweep.
+     */
+    public int retryPendingWalletCredits() {
+        Instant cutoff = Instant.now().minus(props.getWalletCreditSweepMinAge());
+        int credited = 0;
+        for (PaymentTransaction tx : transactionRepository.findWalletCreditsDue(
+                cutoff, PageRequest.of(0, WALLET_CREDIT_SWEEP_BATCH))) {
+            try {
+                creditWallet(tx);
+            } catch (RuntimeException e) {
+                log.error("Owed wallet credit for transaction {} provider {} booking {} amount {} "
+                                + "failed again; will retry on the next sweep: {}",
+                        tx.getId(), tx.getProviderId(), tx.getBookingId(), tx.providerNetEarning(),
+                        e.getMessage());
+                continue;
+            }
+            clearWalletCreditPending(tx.getId());
+            credited++;
+            log.info("Delivered owed wallet credit for transaction {} provider {} booking {}",
+                    tx.getId(), tx.getProviderId(), tx.getBookingId());
+        }
+        return credited;
     }
 
     // ===================== Customer retry (Requirement 12.8) =====================
@@ -261,94 +536,323 @@ public class PaymentService {
     // ===================== Refund (Requirement 12.7) =====================
 
     /**
-     * Initiates a refund via the gateway and updates the transaction to REFUNDED or
-     * PARTIALLY_REFUNDED (Requirement 12.7). If the gateway refund call fails, the state is left
-     * unchanged, the failure is logged, and the Finance_Admin team is alerted for manual processing.
+     * Refunds a transaction fully or partially via the gateway, moving it to REFUNDED or
+     * PARTIALLY_REFUNDED (Requirement 12.7).
+     *
+     * <p>Order of operations, each step in its own short transaction:
+     * <ol>
+     *   <li><strong>Validate and reserve</strong> under a row lock on the transaction: state and
+     *       amount are checked with {@link PaymentTransaction#checkRefundable(BigDecimal)}, and a
+     *       PENDING {@link PaymentRefund} is committed under a unique idempotency key. Nothing has
+     *       been sent to the gateway yet, so an invalid refund never moves money.</li>
+     *   <li><strong>Call the gateway</strong> with no transaction open, passing the refund id as the
+     *       gateway-side idempotency key.</li>
+     *   <li><strong>Record the outcome</strong>: apply the refund to the transaction and mark the
+     *       refund SUCCEEDED; or, on an explicit gateway rejection, mark it FAILED, alert
+     *       Finance_Admin and return {@code 502 REFUND_GATEWAY_ERROR}.</li>
+     * </ol>
+     *
+     * <p><strong>Unknown outcome.</strong> If the gateway call throws (timeout, connection reset),
+     * the gateway may or may not have executed the refund. The refund then stays PENDING,
+     * Finance_Admin is alerted and the caller gets {@code 502 REFUND_OUTCOME_UNKNOWN}. It must
+     * <em>not</em> be marked FAILED: that would invite a retry under a new idempotency key, which
+     * creates a new refund id &mdash; a new gateway idempotency key &mdash; so the gateway could not
+     * de-duplicate it and the customer would be refunded twice.
+     *
+     * <p>Idempotency: {@code idempotencyKey} is client-supplied and scoped to the transaction. A
+     * retry with the same key and amount returns the original result without calling the gateway
+     * again if it SUCCEEDED, or the same 502 if the gateway rejected it. If it is still PENDING, the
+     * retry re-sends it to the gateway under the <em>same</em> refund id &mdash; safe, because the
+     * gateway de-duplicates on that id &mdash; and records whatever the gateway answers; that is how a
+     * caller recovers from {@code REFUND_OUTCOME_UNKNOWN}. Reusing a key with a different amount is
+     * 409 {@code IDEMPOTENCY_KEY_REUSED}. While any refund of the transaction is PENDING, a refund
+     * with a different key is 409 {@code REFUND_IN_PROGRESS}; staff can also settle a stuck PENDING
+     * refund with {@link #reconcileRefund(UUID, UUID)}.
      */
-    @Transactional
-    public PaymentTransaction refund(UUID transactionId, BigDecimal refundAmount) {
-        PaymentTransaction tx = getExisting(transactionId);
+    public PaymentTransaction refund(UUID transactionId, BigDecimal refundAmount, String idempotencyKey) {
+        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+            throw PaymentException.validation("A refund idempotency key is required");
+        }
+        if (idempotencyKey.length() > IdempotencyKeys.MAX_CLIENT_REFUND_KEY_LENGTH) {
+            throw PaymentException.validation("Refund idempotency key must be at most "
+                    + IdempotencyKeys.MAX_CLIENT_REFUND_KEY_LENGTH + " characters");
+        }
+        if (refundAmount == null || refundAmount.signum() <= 0) {
+            throw PaymentException.validation("Refund amount must be positive");
+        }
+        requireMoneyScale(refundAmount, "Refund amount");
+        String key = IdempotencyKeys.forRefund(transactionId, idempotencyKey);
+
+        // Phase 1: validate and reserve (or find the earlier attempt). Any rejection here happens
+        // before money moves.
+        RefundReservation reservation = transactions.execute(
+                status -> reserveRefund(transactionId, refundAmount, key));
+        if (reservation.replayed()) {
+            log.info("Idempotent refund: key {} already succeeded for transaction {}", key, transactionId);
+            return reservation.transaction();
+        }
+        return executeRefund(reservation.transaction(), reservation.refund());
+    }
+
+    /**
+     * Settles a refund stuck in PENDING (staff-only, FINANCE tier): re-sends it to the gateway under
+     * its original refund id and records the outcome, exactly as a same-key retry of
+     * {@link #refund} would. Safe whether or not the gateway executed the earlier attempt, because
+     * the gateway de-duplicates on the refund id: if it already refunded, it reports that refund
+     * again instead of executing a second one. This is also how Finance_Admin repairs a refund that
+     * executed at the gateway but could not be recorded.
+     *
+     * @return the transaction after the outcome is recorded; unchanged if the refund had already
+     *         SUCCEEDED.
+     * @throws PaymentException 404 {@code REFUND_NOT_FOUND} if the refund does not exist or belongs
+     *                          to another transaction, 409 {@code REFUND_NOT_PENDING} if it FAILED,
+     *                          502 as for {@link #refund}.
+     */
+    public PaymentTransaction reconcileRefund(UUID transactionId, UUID refundId) {
+        RefundReservation target = transactions.execute(status -> {
+            PaymentRefund refund = refundRepository.findById(refundId)
+                    .filter(r -> r.getTransactionId().equals(transactionId))
+                    .orElseThrow(() -> new PaymentException(HttpStatus.NOT_FOUND, "REFUND_NOT_FOUND",
+                            "Refund " + refundId + " of transaction " + transactionId + " not found"));
+            PaymentTransaction tx = getExisting(transactionId);
+            return switch (refund.getStatus()) {
+                case SUCCEEDED -> new RefundReservation(tx, refund, true);
+                case PENDING -> new RefundReservation(tx, refund, false);
+                case FAILED -> throw new PaymentException(HttpStatus.CONFLICT, "REFUND_NOT_PENDING",
+                        "Refund " + refundId + " was rejected by the gateway; there is nothing to reconcile");
+            };
+        });
+        if (target.replayed()) {
+            log.info("Reconcile: refund {} of transaction {} already SUCCEEDED; nothing to do",
+                    refundId, transactionId);
+            return target.transaction();
+        }
+        log.warn("Reconciling PENDING refund {} of transaction {}: re-sending it to the gateway",
+                refundId, transactionId);
+        return executeRefund(target.transaction(), target.refund());
+    }
+
+    /**
+     * Phases 2 and 3 of {@link #refund}: sends a PENDING refund to the gateway under its own id and
+     * records the outcome. Used for a fresh reservation and for a re-send of a PENDING one.
+     */
+    private PaymentTransaction executeRefund(PaymentTransaction tx, PaymentRefund refund) {
+        UUID transactionId = tx.getId();
+        UUID refundId = refund.getId();
+        BigDecimal amount = refund.getAmount();
+
+        // Phase 2: call the gateway with no transaction open.
+        PaymentGatewayPort gateway = gatewayRegistry.require(tx.getGateway());
+        GatewayRefundResult result;
+        try {
+            result = gateway.refund(new GatewayRefundRequest(
+                    tx.getGatewayReference(), amount, refundId.toString()));
+        } catch (RuntimeException e) {
+            throw refundOutcomeUnknown(tx, refundId, amount, e);
+        }
+
+        if (!result.succeeded()) {
+            // An explicit rejection: the gateway answered, and no money moved.
+            String reason = "gateway rejected refund";
+            transactions.executeWithoutResult(status -> {
+                PaymentRefund pending = requireRefund(refundId);
+                pending.markFailed(reason);
+                refundRepository.save(pending);
+            });
+            log.error("Gateway refund failed for transaction {} refund {}: {}", transactionId, refundId, reason);
+            financeAlert.refundFailed(transactionId, tx.getBookingId(), amount, reason);
+            throw new PaymentException(HttpStatus.BAD_GATEWAY, "REFUND_GATEWAY_ERROR",
+                    "Gateway refund failed for transaction " + transactionId);
+        }
+
+        // Phase 3: record the executed refund.
+        String gatewayRefundReference = result.gatewayRefundReference();
+        try {
+            return transactions.execute(status -> {
+                PaymentTransaction fresh = getExisting(transactionId);
+                PaymentRefund executed = requireRefund(refundId);
+                if (executed.getStatus() == RefundStatus.SUCCEEDED) {
+                    // A concurrent re-send of this same refund already recorded it; the gateway
+                    // de-duplicated the two calls, so there is nothing more to apply.
+                    return fresh;
+                }
+                fresh.applyRefund(amount);
+                executed.markSucceeded(gatewayRefundReference);
+                refundRepository.save(executed);
+                return transactionRepository.save(fresh);
+            });
+        } catch (RuntimeException e) {
+            // Money has moved at the gateway but the record could not be written. The refund stays
+            // PENDING (blocking further refunds) until a same-key retry or a reconcile re-sends it
+            // and records the gateway's (de-duplicated) answer.
+            log.error("CRITICAL refund {} executed at gateway ({}) but could not be recorded for "
+                    + "transaction {}: {}", refundId, gatewayRefundReference, transactionId, e.getMessage());
+            financeAlert.refundFailed(transactionId, tx.getBookingId(), amount,
+                    "refund executed at gateway (" + gatewayRefundReference
+                            + ") but not recorded: " + e.getMessage());
+            throw e;
+        }
+    }
+
+    /**
+     * Handles a gateway refund call that threw: the outcome is unknown, so the refund stays PENDING
+     * with the error noted on it, Finance_Admin is alerted, and the caller is told to retry with the
+     * <em>same</em> key (never a new one, which would let the gateway refund twice).
+     */
+    private PaymentException refundOutcomeUnknown(PaymentTransaction tx, UUID refundId, BigDecimal amount,
+                                                  RuntimeException cause) {
+        String reason = "gateway refund call failed, outcome unknown: " + cause.getMessage();
+        log.error("Gateway refund call threw for transaction {} refund {}; it stays PENDING: {}",
+                tx.getId(), refundId, cause.getMessage());
+        financeAlert.refundFailed(tx.getId(), tx.getBookingId(), amount, reason + "; refund " + refundId
+                + " stays PENDING until re-sent with the same idempotency key or reconciled");
+        transactions.executeWithoutResult(status -> {
+            PaymentRefund refund = requireRefund(refundId);
+            if (refund.getStatus() == RefundStatus.PENDING) {
+                refund.recordUnknownOutcome(reason);
+                refundRepository.save(refund);
+            }
+        });
+        return new PaymentException(HttpStatus.BAD_GATEWAY, "REFUND_OUTCOME_UNKNOWN",
+                "The gateway did not confirm refund " + refundId + " of transaction " + tx.getId()
+                        + "; it stays PENDING. Retry with the same idempotency key to re-send it safely");
+    }
+
+    /** Phase 1 of {@link #refund}: runs inside a transaction holding the transaction's row lock. */
+    private RefundReservation reserveRefund(UUID transactionId, BigDecimal refundAmount, String key) {
+        PaymentTransaction tx = transactionRepository.findByIdForUpdate(transactionId)
+                .orElseThrow(() -> PaymentException.notFound("Transaction " + transactionId + " not found"));
+
+        // Checked under the lock, so a concurrent request with the same key sees the committed row.
+        Optional<PaymentRefund> prior = refundRepository.findByIdempotencyKey(key);
+        if (prior.isPresent()) {
+            return replayRefund(prior.get(), tx, refundAmount);
+        }
+
         if (tx.getStatus() != TransactionStatus.SUCCESS
                 && tx.getStatus() != TransactionStatus.PARTIALLY_REFUNDED) {
             throw PaymentException.invalidTransition(
                     "Only a SUCCESS or PARTIALLY_REFUNDED transaction can be refunded; current state "
                             + tx.getStatus());
         }
-        PaymentGatewayPort gateway = gatewayRegistry.require(tx.getGateway());
-
-        GatewayRefundResult result;
-        try {
-            result = gateway.refund(new GatewayRefundRequest(tx.getGatewayReference(), refundAmount));
-        } catch (RuntimeException e) {
-            log.error("Gateway refund call threw for transaction {}: {}", transactionId, e.getMessage());
-            financeAlert.refundFailed(tx.getId(), tx.getBookingId(), refundAmount, e.getMessage());
-            throw new PaymentException(HttpStatus.BAD_GATEWAY, "REFUND_GATEWAY_ERROR",
-                    "Gateway refund failed for transaction " + transactionId);
+        if (tx.getGatewayReference() == null) {
+            // Without the charge reference the gateway cannot tell which charge to refund.
+            throw new PaymentException(HttpStatus.CONFLICT, "GATEWAY_REFERENCE_MISSING",
+                    "Transaction " + transactionId + " has no recorded gateway charge reference; "
+                            + "it must be reconciled with the gateway before it can be refunded");
         }
-
-        if (!result.succeeded()) {
-            log.error("Gateway refund failed for transaction {}", transactionId);
-            financeAlert.refundFailed(tx.getId(), tx.getBookingId(), refundAmount, "gateway rejected refund");
-            throw new PaymentException(HttpStatus.BAD_GATEWAY, "REFUND_GATEWAY_ERROR",
-                    "Gateway refund failed for transaction " + transactionId);
+        if (refundRepository.existsByTransactionIdAndStatus(transactionId, RefundStatus.PENDING)) {
+            throw new PaymentException(HttpStatus.CONFLICT, "REFUND_IN_PROGRESS",
+                    "Another refund of transaction " + transactionId + " is still in progress");
         }
+        // Requirement 12.7: validate amount and target state BEFORE the gateway moves any money.
+        tx.checkRefundable(refundAmount);
 
-        tx.applyRefund(refundAmount);
-        return transactionRepository.save(tx);
+        PaymentRefund refund = refundRepository.save(PaymentRefund.reserve(transactionId, key, refundAmount));
+        return new RefundReservation(tx, refund, false);
+    }
+
+    private RefundReservation replayRefund(PaymentRefund prior, PaymentTransaction tx, BigDecimal refundAmount) {
+        if (prior.getAmount().compareTo(refundAmount) != 0) {
+            throw new PaymentException(HttpStatus.CONFLICT, "IDEMPOTENCY_KEY_REUSED",
+                    "Refund idempotency key was already used for amount " + prior.getAmount());
+        }
+        return switch (prior.getStatus()) {
+            case SUCCEEDED -> new RefundReservation(tx, prior, true);
+            case PENDING -> {
+                // Outcome unknown (or still in flight): re-send under the same refund id.
+                log.info("Refund {} of transaction {} is still PENDING; re-sending it under the same id",
+                        prior.getId(), tx.getId());
+                yield new RefundReservation(tx, prior, false);
+            }
+            case FAILED -> throw new PaymentException(HttpStatus.BAD_GATEWAY, "REFUND_GATEWAY_ERROR",
+                    "Refund with this idempotency key was rejected by the gateway; "
+                            + "use a new idempotency key to try again");
+        };
+    }
+
+    private PaymentRefund requireRefund(UUID refundId) {
+        return refundRepository.findById(refundId)
+                .orElseThrow(() -> new IllegalStateException("Refund " + refundId + " disappeared"));
+    }
+
+    /**
+     * Phase-1 outcome of a refund: a PENDING refund to send to the gateway (fresh, or an earlier
+     * attempt to re-send), or a replay of one that already succeeded.
+     */
+    private record RefundReservation(PaymentTransaction transaction, PaymentRefund refund, boolean replayed) {
     }
 
     // ===================== Settlement bank transfer (Requirement 14.3, 14.4) =====================
 
     /**
-     * Initiates a settlement bank transfer for a provider (Requirement 14.3): creates the record in
-     * PENDING, advances to PROCESSING, and initiates the transfer via the gateway. On success the
-     * settlement moves to COMPLETED; on failure it moves to FAILED, the amount is credited back to
-     * the provider wallet, and both the provider and Finance_Admin are notified (Requirement 14.4).
+     * Initiates a settlement bank transfer for a provider (Requirement 14.3): records the settlement
+     * as PROCESSING and commits, then initiates the transfer via the gateway with no transaction
+     * open. On success the settlement moves to COMPLETED; on failure it moves to FAILED, and after
+     * that commits the amount is credited back to the provider wallet and both the provider and
+     * Finance_Admin are notified (Requirement 14.4).
      */
-    @Transactional
     public Settlement initiateSettlement(UUID providerId, BigDecimal amount, String bankAccountRef,
                                          String gatewayId) {
         if (amount == null || amount.signum() <= 0) {
             throw PaymentException.validation("Settlement amount must be positive");
         }
+        requireMoneyScale(amount, "Settlement amount");
         if (bankAccountRef == null || bankAccountRef.isBlank()) {
             throw PaymentException.validation("A destination bank account reference is required");
         }
         PaymentGatewayPort gateway = gatewayRegistry.require(gatewayId);
 
         // Requirement 12.9/4.9: store the bank account reference encrypted at rest.
-        Settlement settlement = Settlement.initiate(providerId, amount, kms.encrypt(bankAccountRef));
-        settlementRepository.save(settlement);
-
-        settlement.transitionTo(SettlementStatus.PROCESSING);
+        String encryptedRef = kms.encrypt(bankAccountRef);
+        Settlement processing = transactions.execute(status -> {
+            Settlement settlement = Settlement.initiate(providerId, amount, encryptedRef);
+            settlement.transitionTo(SettlementStatus.PROCESSING);
+            return settlementRepository.save(settlement);
+        });
+        UUID settlementId = processing.getId();
 
         GatewayTransferResult result;
+        String failure;
         try {
             result = gateway.transfer(new GatewayTransferRequest(providerId, amount, bankAccountRef));
+            failure = result.succeeded() ? null : "gateway rejected transfer";
         } catch (RuntimeException e) {
-            return failSettlement(settlement, providerId, amount, e.getMessage());
+            result = null;
+            failure = e.getMessage();
         }
 
-        if (result.succeeded()) {
-            settlement.setGatewayReference(result.gatewayTransferReference());
-            settlement.transitionTo(SettlementStatus.COMPLETED);
-            return settlementRepository.save(settlement);
+        if (failure == null) {
+            String reference = result.gatewayTransferReference();
+            return transactions.execute(status -> {
+                Settlement settlement = requireSettlement(settlementId);
+                settlement.setGatewayReference(reference);
+                settlement.transitionTo(SettlementStatus.COMPLETED);
+                return settlementRepository.save(settlement);
+            });
         }
-        return failSettlement(settlement, providerId, amount, "gateway rejected transfer");
+        return failSettlement(settlementId, providerId, amount, failure);
     }
 
-    private Settlement failSettlement(Settlement settlement, UUID providerId, BigDecimal amount,
-                                      String reason) {
-        settlement.recordFailure(reason);
-        settlement.transitionTo(SettlementStatus.FAILED);
-        settlementRepository.save(settlement);
+    private Settlement failSettlement(UUID settlementId, UUID providerId, BigDecimal amount, String reason) {
+        Settlement failed = transactions.execute(status -> {
+            Settlement settlement = requireSettlement(settlementId);
+            settlement.recordFailure(reason);
+            settlement.transitionTo(SettlementStatus.FAILED);
+            return settlementRepository.save(settlement);
+        });
         // Requirement 14.4: credit the amount back to the wallet, notify provider + Finance_Admin.
-        walletClient.creditSettlementReversal(providerId, settlement.getId(), amount);
-        providerNotification.settlementFailed(providerId, settlement.getId(), amount);
-        financeAlert.settlementFailed(providerId, settlement.getId(), amount, reason);
+        walletClient.creditSettlementReversal(providerId, settlementId, amount);
+        providerNotification.settlementFailed(providerId, settlementId, amount);
+        financeAlert.settlementFailed(providerId, settlementId, amount, reason);
         log.error("Settlement {} FAILED for provider {} amount {}: {}",
-                settlement.getId(), providerId, amount, reason);
-        return settlement;
+                settlementId, providerId, amount, reason);
+        return failed;
+    }
+
+    private Settlement requireSettlement(UUID settlementId) {
+        return settlementRepository.findById(settlementId)
+                .orElseThrow(() -> new IllegalStateException("Settlement " + settlementId + " disappeared"));
     }
 
     // ===================== Reads =====================

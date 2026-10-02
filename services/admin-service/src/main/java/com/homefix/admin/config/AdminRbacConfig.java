@@ -2,24 +2,28 @@ package com.homefix.admin.config;
 
 import java.util.List;
 
-import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.event.EventListener;
 
 import com.homefix.shared.security.RbacProperties;
+
+import jakarta.annotation.PostConstruct;
 
 /**
  * Populates the shared {@link RbacProperties} allow-list for the Admin Service (Requirement 19.6).
  *
  * <p>Spring's relaxed binder cannot bind map keys containing spaces and slashes (e.g.
  * {@code "GET /admin/**"}) from flat {@code application.yml} strings, so the rules are added
- * programmatically here once the context is ready.
+ * programmatically. They are registered in {@code @PostConstruct}, during context refresh and so
+ * before the server accepts traffic: on {@code ApplicationReadyEvent} the filter would briefly see
+ * an empty allow-list and, as documented for "no rule matches", pass every request through.
  *
  * <p>Rule ordering matters: {@code RbacEnforcementFilter} takes the first matching entry. The
  * System Configuration paths are declared <em>before</em> the catch-all {@code /admin/**} so they
  * are restricted to SUPER_ADMIN, giving the required 403 for an ADMIN principal (Requirement 19.7)
- * as a defence-in-depth layer alongside the per-module {@code AdminAuthorization} check. Every
- * other Admin endpoint is open to both ADMIN and SUPER_ADMIN.
+ * as a defence-in-depth layer alongside the per-module {@code AdminAuthorization} check. The Audit
+ * Logs view is named explicitly (ADMIN, SUPER_ADMIN) so a later change to the catch-all cannot
+ * silently widen it. Every other Admin endpoint is open to both ADMIN and SUPER_ADMIN; PATCH is
+ * covered too, since an unruled method would be open to any authenticated user.
  */
 @Configuration
 public class AdminRbacConfig {
@@ -33,18 +37,18 @@ public class AdminRbacConfig {
         this.rbacProperties = rbacProperties;
     }
 
-    @EventListener(ApplicationReadyEvent.class)
+    @PostConstruct
     public void registerEndpointRoles() {
         var rules = rbacProperties.getEndpointRoles();
         // Most specific first: System Configuration is SUPER_ADMIN only.
-        rules.put("GET /admin/system-config/**", SUPER_ADMIN_ONLY);
-        rules.put("PUT /admin/system-config/**", SUPER_ADMIN_ONLY);
-        rules.put("POST /admin/system-config/**", SUPER_ADMIN_ONLY);
-        rules.put("DELETE /admin/system-config/**", SUPER_ADMIN_ONLY);
+        for (String method : List.of("GET", "PUT", "POST", "PATCH", "DELETE")) {
+            rules.put(method + " /admin/system-config/**", SUPER_ADMIN_ONLY);
+        }
+        // Audit Logs: read-only, Admin tier.
+        rules.put("GET /admin/audit-logs/**", ADMIN_TIER);
         // Catch-all Admin tier for every other module.
-        rules.put("GET /admin/**", ADMIN_TIER);
-        rules.put("POST /admin/**", ADMIN_TIER);
-        rules.put("PUT /admin/**", ADMIN_TIER);
-        rules.put("DELETE /admin/**", ADMIN_TIER);
+        for (String method : List.of("GET", "POST", "PUT", "PATCH", "DELETE")) {
+            rules.put(method + " /admin/**", ADMIN_TIER);
+        }
     }
 }

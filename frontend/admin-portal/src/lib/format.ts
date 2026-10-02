@@ -48,3 +48,11 @@ export function formatDateTime(iso: string): string {
     minute: '2-digit',
   }).format(date);
 }
+
+/**
+ * Shorten a UUID to its first block for dense tables, e.g. "3f2a9c1e…". Values
+ * that are not UUID-shaped (already human references) are returned unchanged.
+ */
+export function shortId(id: string): string {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(id) ? `${id.slice(0, 8)}…` : id;
+}

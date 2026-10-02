@@ -3,6 +3,7 @@ package com.homefix.provider.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -194,6 +195,40 @@ class ProviderServiceTest {
                     new AvailabilityCommand.Slot(DayOfWeek.TUESDAY, 8, 12));
             service.updateAvailability(id, new AvailabilityCommand(slots));
             assertThat(profileRepository.findById(id).orElseThrow().getAvailabilitySlots()).hasSize(2);
+        }
+    }
+
+    // ======================= Provider who has not onboarded yet ===================
+
+    @Nested
+    class NotOnboardedYet {
+
+        @Test
+        void dashboardReadsShowAnEmptyLedgerInsteadOfNotFound() {
+            UUID id = UUID.randomUUID();
+            lenient().when(earningRepository.findByProviderIdAndCreditedAtGreaterThanEqual(eq(id), any()))
+                    .thenReturn(List.of());
+            lenient().when(settlementRepository.findByProviderIdOrderByRequestedAtDesc(id))
+                    .thenReturn(List.of());
+
+            ProviderService.EarningsSnapshot summary = service.earningsSummary(id);
+            assertThat(summary.walletBalance()).isEqualByComparingTo("0");
+            assertThat(summary.todayNet()).isEqualByComparingTo("0");
+            assertThat(summary.todayJobCount()).isZero();
+            assertThat(service.settlementInfo(id).getWalletBalance()).isEqualByComparingTo("0");
+            assertThat(service.settlementHistory(id)).isEmpty();
+        }
+
+        @Test
+        void aDashboardReadDoesNotCreateTheProfile() {
+            UUID id = UUID.randomUUID();
+            lenient().when(earningRepository.findByProviderIdAndCreditedAtGreaterThanEqual(eq(id), any()))
+                    .thenReturn(List.of());
+
+            service.earningsSummary(id);
+            service.settlementInfo(id);
+
+            assertThat(profileRepository.findById(id)).isEmpty();
         }
     }
 
@@ -517,6 +552,83 @@ class ProviderServiceTest {
             service.updateEmergencyAvailability(id, true);
             service.updateEmergencyAvailability(id, false);
             assertThat(profileRepository.findById(id).orElseThrow().isEmergencyAvailable()).isFalse();
+        }
+    }
+
+    // ============================= Base Location (Req 8.2) =======================
+
+    @Nested
+    class BaseLocation {
+
+        private ProfileUpdateCommand withLocation(Double lat, Double lon) {
+            return new ProfileUpdateCommand("Rahul P", List.of(), List.of("plumbing"), 5, 10, lat, lon);
+        }
+
+        @Test
+        void bothCoordinates_areStored() {
+            UUID id = UUID.randomUUID();
+
+            ProviderProfile profile = service.updateProfile(id, withLocation(25.5560, 84.6603));
+
+            assertThat(profile.getBaseLatitude()).isEqualTo(25.5560);
+            assertThat(profile.getBaseLongitude()).isEqualTo(84.6603);
+            assertThat(profile.hasBaseLocation()).isTrue();
+        }
+
+        @Test
+        void neitherCoordinate_leavesTheLocationOnFileUnchanged() {
+            // A client that predates the field must not wipe the location (and with it the
+            // provider's dispatch eligibility) by re-saving the profile.
+            UUID id = UUID.randomUUID();
+            service.updateProfile(id, withLocation(25.5560, 84.6603));
+
+            ProviderProfile profile = service.updateProfile(id, new ProfileUpdateCommand(
+                    "Rahul P", List.of(), List.of("plumbing"), 5, 10));
+
+            assertThat(profile.getBaseLatitude()).isEqualTo(25.5560);
+            assertThat(profile.getBaseLongitude()).isEqualTo(84.6603);
+        }
+
+        @Test
+        void newProfileWithoutLocation_hasNone() {
+            ProviderProfile profile = service.updateProfile(UUID.randomUUID(), withLocation(null, null));
+
+            assertThat(profile.hasBaseLocation()).isFalse();
+        }
+
+        @Test
+        void onlyOneCoordinate_isRejected() {
+            UUID id = UUID.randomUUID();
+            assertThatThrownBy(() -> service.updateProfile(id, withLocation(25.5, null)))
+                    .isInstanceOf(ProviderException.class)
+                    .hasMessageContaining("together");
+            assertThatThrownBy(() -> service.updateProfile(id, withLocation(null, 84.6)))
+                    .isInstanceOf(ProviderException.class)
+                    .hasMessageContaining("together");
+            assertThat(profileRepository.findById(id)).isEmpty();
+        }
+
+        @Test
+        void outOfRangeOrNonFiniteCoordinates_areRejected() {
+            UUID id = UUID.randomUUID();
+            assertThatThrownBy(() -> service.updateProfile(id, withLocation(90.01, 84.0)))
+                    .isInstanceOf(ProviderException.class).hasMessageContaining("baseLatitude");
+            assertThatThrownBy(() -> service.updateProfile(id, withLocation(-90.01, 84.0)))
+                    .isInstanceOf(ProviderException.class).hasMessageContaining("baseLatitude");
+            assertThatThrownBy(() -> service.updateProfile(id, withLocation(25.0, 180.01)))
+                    .isInstanceOf(ProviderException.class).hasMessageContaining("baseLongitude");
+            assertThatThrownBy(() -> service.updateProfile(id, withLocation(25.0, -180.01)))
+                    .isInstanceOf(ProviderException.class).hasMessageContaining("baseLongitude");
+            assertThatThrownBy(() -> service.updateProfile(id, withLocation(Double.NaN, 84.0)))
+                    .isInstanceOf(ProviderException.class).hasMessageContaining("baseLatitude");
+        }
+
+        @Test
+        void boundaryCoordinates_areAccepted() {
+            ProviderProfile profile = service.updateProfile(UUID.randomUUID(), withLocation(-90.0, 180.0));
+
+            assertThat(profile.getBaseLatitude()).isEqualTo(-90.0);
+            assertThat(profile.getBaseLongitude()).isEqualTo(180.0);
         }
     }
 }

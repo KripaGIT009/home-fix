@@ -25,7 +25,10 @@ import com.homefix.booking.domain.BookingStatus;
  * SEARCHING_PROVIDER to PROVIDER_ACCEPTED, so the single-step request the Dispatch Engine used to
  * make was rejected with a 409 even when an endpoint existed to receive it. Both steps and the
  * provider assignment commit in one transaction, so a booking is never left resting in the
- * intermediate PROVIDER_ASSIGNED state by a partial failure.
+ * intermediate PROVIDER_ASSIGNED state by a partial failure. For the same reason the intermediate
+ * step is applied with {@link BookingTransitionService#transitionPassingThrough}: it is audited, but
+ * no ProviderAssigned event is published for a state nobody can observe. The acceptance itself is
+ * announced by the Dispatch Engine's {@code ProviderAccepted}.
  *
  * <p>Assigning {@code providerId} here is the only place it is ever set. Without it every downstream
  * provider event carried a null provider.
@@ -79,7 +82,7 @@ public class DispatchOutcomeService {
         }
 
         booking.setProviderId(providerId);
-        transitionService.transition(booking, BookingStatus.PROVIDER_ASSIGNED,
+        transitionService.transitionPassingThrough(booking, BookingStatus.PROVIDER_ASSIGNED,
                 dispatchActor(providerId), "Dispatch Engine assigned provider " + providerId);
         Booking accepted = transitionService.transition(booking, BookingStatus.PROVIDER_ACCEPTED,
                 dispatchActor(providerId), "Provider accepted the job offer");

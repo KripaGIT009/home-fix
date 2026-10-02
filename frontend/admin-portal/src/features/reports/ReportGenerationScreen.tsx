@@ -7,7 +7,6 @@ import {
   CardContent,
   Chip,
   Grid,
-  Link,
   MenuItem,
   Stack,
   TextField,
@@ -15,8 +14,9 @@ import {
 } from '@mui/material';
 import { ModuleScreen } from '@components/ModuleScreen';
 import { QueryStateView } from '@components/QueryStateView';
-import { useReportTypes, useRequestReport } from './hooks';
-import type { ReportFormat } from './api';
+import { saveBlob } from '@lib/download';
+import { useExportReport, useReportTypes, useRequestReport } from './hooks';
+import type { ReportFormat, ReportRequestPayload, ReportResult } from './api';
 
 /** Number of days between two ISO dates, inclusive-ish (for the async note). */
 function rangeDays(from: string, to: string): number {
@@ -26,15 +26,26 @@ function rangeDays(from: string, to: string): number {
   return Math.round((b - a) / (1000 * 60 * 60 * 24));
 }
 
+/** The message to show for a result, with a sensible default per mode. */
+function resultMessage(result: ReportResult): string {
+  if (result.message) return result.message;
+  return result.mode === 'QUEUED'
+    ? 'Your report is being generated and will be emailed to you when ready.'
+    : 'Your report is ready.';
+}
+
 /**
  * Report Generation module (Requirement 19.2, Requirement 20). Lets an admin
  * pick a pre-built report, date range, and export format. Ranges of 7 days or
- * fewer return a download link inline; longer ranges are generated
- * asynchronously and delivered by email (Requirement 20.2/20.3).
+ * fewer can be downloaded straight away; longer ranges are generated
+ * asynchronously and delivered by email (Requirement 20.2/20.3). The request
+ * only acknowledges; the file is fetched from the export endpoint when the
+ * user asks to download it, and only offered when the report is ready (SYNC).
  */
 export function ReportGenerationScreen() {
   const typesQuery = useReportTypes();
   const request = useRequestReport();
+  const download = useExportReport();
 
   const [reportTypeId, setReportTypeId] = useState('');
   const [fromDate, setFromDate] = useState('');
@@ -50,7 +61,16 @@ export function ReportGenerationScreen() {
   const handleGenerate = () => {
     setTouched(true);
     if (formInvalid) return;
+    download.reset();
     request.mutate({ reportTypeId, fromDate, toDate, format });
+  };
+
+  const handleDownload = (payload: ReportRequestPayload) => {
+    download.mutate(payload, {
+      onSuccess: (result) => {
+        if (result.kind === 'file') saveBlob(result.blob, result.fileName);
+      },
+    });
   };
 
   return (
@@ -146,13 +166,33 @@ export function ReportGenerationScreen() {
             ) : null}
 
             {request.isSuccess ? (
-              <Alert severity="success" sx={{ mt: 2 }}>
-                <Typography variant="body2">{request.data.message}</Typography>
-                {request.data.mode === 'SYNC' && request.data.downloadUrl ? (
-                  <Link href={request.data.downloadUrl} target="_blank" rel="noopener">
-                    Download report
-                  </Link>
+              <Alert severity={request.data.mode === 'QUEUED' ? 'info' : 'success'} sx={{ mt: 2 }}>
+                <Typography variant="body2">{resultMessage(request.data)}</Typography>
+                {request.data.mode === 'SYNC' ? (
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    sx={{ mt: 1 }}
+                    disabled={download.isPending}
+                    onClick={() => handleDownload(request.variables)}
+                  >
+                    {download.isPending ? 'Preparing…' : 'Download report'}
+                  </Button>
                 ) : null}
+              </Alert>
+            ) : null}
+
+            {download.isError ? (
+              <Alert severity="error" sx={{ mt: 2 }}>
+                {download.error.message}
+              </Alert>
+            ) : null}
+
+            {download.isSuccess ? (
+              <Alert severity={download.data.kind === 'queued' ? 'info' : 'success'} sx={{ mt: 2 }}>
+                {download.data.kind === 'queued'
+                  ? download.data.message
+                  : `Downloaded ${download.data.fileName}.`}
               </Alert>
             ) : null}
           </CardContent>

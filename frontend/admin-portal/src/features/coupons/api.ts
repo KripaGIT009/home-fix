@@ -24,12 +24,14 @@ export interface Coupon {
   discountType: DiscountType;
   discountValue: number;
   minOrderValue: number;
-  maxDiscountCap?: number;
+  /** Null for FLAT coupons, which have no cap. */
+  maxDiscountCap?: number | null;
   validFrom: string;
   expiryDate: string;
   perUserLimit: number;
   totalLimit: number;
   totalRedeemed: number;
+  /** EXPIRED is derived server-side from the expiry date; only ACTIVE can be deactivated. */
   status: CouponStatus;
 }
 

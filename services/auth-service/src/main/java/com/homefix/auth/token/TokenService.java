@@ -86,7 +86,12 @@ public class TokenService {
      */
     public String issueRefreshToken(String subject, String familyId) {
         String token = UUID.randomUUID().toString() + UUID.randomUUID().toString();
-        refreshTokenStore.save(token, subject, familyId, tokenProperties.getRefreshTtl());
+        if (!refreshTokenStore.save(token, subject, familyId, tokenProperties.getRefreshTtl())) {
+            // The family was revoked between consuming the presented token and storing its
+            // successor: a concurrent replay of the same token was detected. The successor must
+            // not be handed out, so this rotation fails like any other request on a dead family.
+            throw TokenException.invalidRefreshToken();
+        }
         return token;
     }
 
@@ -94,10 +99,15 @@ public class TokenService {
      * Validates a presented refresh token for rotation and consumes it, returning the record so
      * the caller can look up the account's current roles.
      *
+     * <p>Validation and consumption are one atomic store operation
+     * ({@link RefreshTokenStore#consume}), so of any number of concurrent refreshes presenting
+     * the same token exactly one proceeds; the others observe it already used.
+     *
      * <p>If the presented token is unknown/expired/revoked, throws a 401 {@link TokenException}
-     * (Requirement 1.15). If the token was already rotated once (replay), invalidates the entire
-     * token family and throws a 401 (Requirement 1.10, Property 26). Otherwise the token is
-     * marked used and its record returned.
+     * (Requirement 1.15). If the token was already rotated (replay, including a concurrent second
+     * refresh of the same token), invalidates the entire token family and throws a 401
+     * (Requirement 1.10, Property 26). Otherwise the token is now marked used and its record
+     * returned.
      *
      * @return the (now consumed) token record, carrying the subject and family id
      */
@@ -106,23 +116,24 @@ public class TokenService {
             throw TokenException.invalidRefreshToken();
         }
 
-        RefreshTokenRecord record = refreshTokenStore.find(presentedToken)
+        RefreshTokenRecord prior = refreshTokenStore
+                .consume(presentedToken, tokenProperties.getRefreshTtl())
                 .orElseThrow(TokenException::invalidRefreshToken);
 
         // Replay: the presented token was already rotated. Invalidate the whole family.
-        if (record.used()) {
-            refreshTokenStore.revokeFamily(record.familyId());
+        if (prior.used()) {
+            refreshTokenStore.revokeFamily(prior.familyId());
             throw TokenException.replayDetected();
         }
 
-        // Consume the presented token so any future reuse is detected as a replay.
-        refreshTokenStore.markUsed(presentedToken, tokenProperties.getRefreshTtl());
-        return record;
+        return prior.markUsed();
     }
 
     /**
      * Issues a rotated access + refresh token pair for a consumed refresh-token record, keeping
      * the successor refresh token in the same family (Requirement 1.9).
+     *
+     * @throws TokenException 401 if the family was revoked after the token was consumed
      */
     public TokenPair issueRotatedTokens(RefreshTokenRecord consumed, List<String> roles) {
         String accessToken = issueAccessToken(consumed.subject(), roles);
@@ -138,13 +149,41 @@ public class TokenService {
     }
 
     /**
-     * Revokes a refresh token on logout within the request cycle (Requirement 1.12). Idempotent:
-     * revoking an unknown/already-revoked token is a no-op.
+     * Ends the session a refresh token belongs to, on logout within the request cycle
+     * (Requirement 1.12). Idempotent: an unknown or already-revoked token is a no-op.
+     *
+     * <p>The whole token <em>family</em> is revoked, not just the presented token. A family is one
+     * login; every rotation adds a member. Deleting only the presented token left the rest of the
+     * family alive: if a stolen token had already been rotated by the thief, the victim's logout
+     * (with their now-used token, which is still on record) removed that one key and the thief's
+     * successor stayed valid for the remaining 30 days. Revoking the family also leaves the
+     * revoked marker behind, so a rotation racing the logout cannot store a live successor.
      */
     public void revokeRefreshToken(String token) {
-        if (token != null && !token.isBlank()) {
-            refreshTokenStore.revoke(token);
+        if (token == null || token.isBlank()) {
+            return;
         }
+        refreshTokenStore.find(token).ifPresentOrElse(
+                record -> refreshTokenStore.revokeFamily(record.familyId()),
+                () -> refreshTokenStore.revoke(token));
+    }
+
+    /**
+     * Revokes one token family outright, e.g. when a refresh is refused because the account has
+     * been disabled. Idempotent.
+     */
+    public void revokeTokenFamily(String familyId) {
+        refreshTokenStore.revokeFamily(familyId);
+    }
+
+    /**
+     * Ends every session of an account by revoking all of its refresh-token families, used when
+     * an administrator suspends or deactivates it (Requirement 19.2). Access tokens already issued
+     * are not touched here: they are stateless and expire within the access TTL, and introspection
+     * reports them inactive as soon as the account's status changes. Idempotent.
+     */
+    public void revokeAllRefreshTokens(String subject) {
+        refreshTokenStore.revokeAllForSubject(subject);
     }
 
     /**
@@ -162,6 +201,9 @@ public class TokenService {
 
     /**
      * Introspects a token, returning a minimal claim map for API Gateway use.
+     *
+     * <p>This checks the token alone (signature, expiry). Whether the account behind it may still
+     * authenticate is layered on by {@link IntrospectionService}, which is what the endpoint uses.
      *
      * @return {@code {active:true, sub, roles, exp, iss}} on success; {@code {active:false}}
      *         when the token is missing, expired, or otherwise invalid.

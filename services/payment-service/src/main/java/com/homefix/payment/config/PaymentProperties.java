@@ -47,6 +47,22 @@ public class PaymentProperties {
     /** Idempotency store backend: 'redis' (production) or 'memory' (dev/test). */
     private String idempotencyStore = "redis";
 
+    /**
+     * Oldest signed gateway-callback {@code timestamp} still accepted (Requirement 12.5). Bounds how
+     * long a captured payload stays usable while leaving room for a gateway's own delivery retries,
+     * which can span days. {@code 0} disables the age check; a timestamp more than five minutes in
+     * the future is always rejected.
+     */
+    private Duration callbackMaxAge = Duration.ofHours(72);
+
+    /**
+     * How long a provider wallet credit must have been owed before the wallet-credit sweeper re-sends
+     * it (Requirement 12.10, 12.11). Keeps the sweep clear of a credit the callback thread is still
+     * retrying, so it must comfortably exceed the in-line retry window
+     * ({@code max-wallet-credit-retries} attempts with doubling {@code retry-backoff}).
+     */
+    private Duration walletCreditSweepMinAge = Duration.ofMinutes(5);
+
     public int getMaxCustomerRetries() {
         return maxCustomerRetries;
     }
@@ -101,5 +117,21 @@ public class PaymentProperties {
 
     public void setIdempotencyStore(String idempotencyStore) {
         this.idempotencyStore = idempotencyStore;
+    }
+
+    public Duration getCallbackMaxAge() {
+        return callbackMaxAge;
+    }
+
+    public void setCallbackMaxAge(Duration callbackMaxAge) {
+        this.callbackMaxAge = callbackMaxAge;
+    }
+
+    public Duration getWalletCreditSweepMinAge() {
+        return walletCreditSweepMinAge;
+    }
+
+    public void setWalletCreditSweepMinAge(Duration walletCreditSweepMinAge) {
+        this.walletCreditSweepMinAge = walletCreditSweepMinAge;
     }
 }

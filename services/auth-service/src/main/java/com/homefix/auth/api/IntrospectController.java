@@ -9,7 +9,7 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.homefix.auth.token.TokenService;
+import com.homefix.auth.token.IntrospectionService;
 
 /**
  * {@code GET /auth/introspect} — validates a JWT and returns its claims for the API Gateway
@@ -19,16 +19,19 @@ import com.homefix.auth.token.TokenService;
  * {@code token} query parameter. The response mirrors the OAuth2 token-introspection shape:
  * {@code {active:true|false, ...}}. Introspection always returns HTTP 200; the {@code active}
  * flag conveys validity so gateways can branch without handling error status codes.
+ *
+ * <p>A token is reported inactive once its account has been suspended or deactivated, even
+ * before it expires (see {@link IntrospectionService}).
  */
 @RestController
 public class IntrospectController {
 
     private static final String BEARER_PREFIX = "Bearer ";
 
-    private final TokenService tokenService;
+    private final IntrospectionService introspectionService;
 
-    public IntrospectController(TokenService tokenService) {
-        this.tokenService = tokenService;
+    public IntrospectController(IntrospectionService introspectionService) {
+        this.introspectionService = introspectionService;
     }
 
     @GetMapping("/auth/introspect")
@@ -37,7 +40,7 @@ public class IntrospectController {
             @RequestParam(value = "token", required = false) String tokenParam) {
 
         String token = resolveToken(authorization, tokenParam);
-        return ResponseEntity.ok(tokenService.introspect(token));
+        return ResponseEntity.ok(introspectionService.introspect(token));
     }
 
     private String resolveToken(String authorization, String tokenParam) {

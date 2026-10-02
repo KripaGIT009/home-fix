@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
 
@@ -22,6 +23,12 @@ import java.util.UUID;
  * is best-effort: a transport failure here must not throw the dispatch flow into retry (the booking
  * is already SEARCHING_FAILED), so the fallback is a no-op that returns after emitting the shared
  * WARN log naming the {@code notification-service} dependency (Requirement 24.4).
+ *
+ * <p>Note: notification-service does not yet expose these {@code /internal/notifications/**}
+ * endpoints. Every call therefore ends in a 4xx, which the shared resilience stack neither retries
+ * nor counts towards the breaker, and which the fallback turns into the WARN log and a no-op. The
+ * job-offer push in particular is only a nudge: a provider sees their pending offers by polling
+ * {@code GET /dispatch/offers}, so dispatch works without it.
  *
  * <p>Active only when no other {@link NotificationPort} bean is present (tests supply a fake).
  */
@@ -70,6 +77,23 @@ public class HttpNotificationAdapter implements NotificationPort {
             restClient.post()
                     .uri("/internal/notifications/dispatcher-alert")
                     .body(Map.of("bookingId", bookingId, "reason", "SEARCHING_FAILED"))
+                    .retrieve()
+                    .onStatus(status -> status.is5xxServerError(), (req, res) -> {
+                        throw new TransientFailures.ServerErrorException(
+                                res.getStatusCode().value(), "Notification Service returned 5xx");
+                    })
+                    .toBodilessEntity();
+            return null;
+        });
+    }
+
+    @Override
+    public void notifyProviderOfJobOffer(UUID bookingId, UUID providerId, Instant expiresAt) {
+        resilientCall.execute(() -> {
+            restClient.post()
+                    .uri("/internal/notifications/job-offer")
+                    .body(Map.of("bookingId", bookingId, "providerId", providerId,
+                            "expiresAt", expiresAt.toString(), "channels", new String[]{"PUSH"}))
                     .retrieve()
                     .onStatus(status -> status.is5xxServerError(), (req, res) -> {
                         throw new TransientFailures.ServerErrorException(

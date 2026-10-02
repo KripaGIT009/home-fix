@@ -59,8 +59,12 @@ export interface Coordinates {
 export interface LocationSnapshot {
   bookingId: string;
   coordinates: Coordinates;
-  /** ETA in minutes from the Provider's coordinates to the service address. */
-  etaMinutes: number;
+  /**
+   * ETA in minutes from the Provider's coordinates to the service address.
+   * The Location Service cannot compute one yet (it does not know the
+   * address), so the screen estimates it from the booking's coordinates.
+   */
+  etaMinutes?: number;
   /** ISO-8601 timestamp of the last location update (Requirement 10.7). */
   updatedAt: string;
   /** The Customer's service address coordinates, used to frame the map. */
@@ -79,17 +83,49 @@ export interface LocationSnapshot {
  * updates.
  */
 export async function fetchLocationSnapshot(bookingId: string): Promise<LocationSnapshot> {
-  const { data } = await apiClient.get<LocationSnapshot>(`/locations/${bookingId}`);
-  return data;
+  const { data } = await apiClient.get<unknown>(`/locations/${bookingId}`);
+  const snapshot = toLocationSnapshot(bookingId, data);
+  if (!snapshot) {
+    throw new Error('The Location Service answered without coordinates');
+  }
+  return snapshot;
 }
 
 /**
- * Assign a Provider to a Booking from the Available Professionals list. Some
- * flows auto-dispatch; where the Customer selects a Provider explicitly this
- * confirms the choice and moves the Booking toward PROVIDER_ACCEPTED.
+ * Reads a Location Service payload — the snapshot's flat
+ * `{latitude, longitude, lastUpdatedAt}` or a stream frame's
+ * `{coordinates: {latitude, longitude}}` — into a {@link LocationSnapshot}.
+ * The server's `etaMinutes` is dropped: its destination is a placeholder, so
+ * the number is meaningless. `null` when the payload carries no position.
  */
-export async function selectProfessional(bookingId: string, providerId: string): Promise<void> {
-  await apiClient.post(`/bookings/${bookingId}/assign`, { providerId });
+export function toLocationSnapshot(bookingId: string, raw: unknown): LocationSnapshot | null {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  const nested = (r.coordinates ?? {}) as Record<string, unknown>;
+  const latitude = typeof r.latitude === 'number' ? r.latitude : nested.latitude;
+  const longitude = typeof r.longitude === 'number' ? r.longitude : nested.longitude;
+  if (typeof latitude !== 'number' || typeof longitude !== 'number') return null;
+  const updatedAt =
+    typeof r.lastUpdatedAt === 'string'
+      ? r.lastUpdatedAt
+      : typeof r.updatedAt === 'string'
+        ? r.updatedAt
+        : new Date().toISOString();
+  return { bookingId, coordinates: { latitude, longitude }, updatedAt };
+}
+
+/** Assumed average urban travel speed, the same figure the Location Service uses. */
+const AVERAGE_SPEED_KMH = 30;
+
+/** Straight-line travel time between two points at {@link AVERAGE_SPEED_KMH}, in whole minutes. */
+export function estimateEtaMinutes(from: Coordinates, to: Coordinates): number {
+  const rad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = rad(to.latitude - from.latitude);
+  const dLon = rad(to.longitude - from.longitude);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(rad(from.latitude)) * Math.cos(rad(to.latitude)) * Math.sin(dLon / 2) ** 2;
+  const km = 2 * 6371.0088 * Math.asin(Math.sqrt(h));
+  return Math.ceil((km / AVERAGE_SPEED_KMH) * 60);
 }
 
 /** A chat channel bootstrap for an active Booking (Requirement 18.1). */

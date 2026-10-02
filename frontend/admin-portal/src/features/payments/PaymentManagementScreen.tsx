@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   Alert,
   Box,
@@ -15,7 +15,8 @@ import { ModuleScreen } from '@components/ModuleScreen';
 import { QueryStateView } from '@components/QueryStateView';
 import { DataTable, type Column } from '@components/DataTable';
 import { StatusChip } from '@components/StatusChip';
-import { formatCurrency, formatDateTime } from '@lib/format';
+import { generateIdempotencyKey } from '@lib/correlation';
+import { formatCurrency, formatDateTime, shortId } from '@lib/format';
 import { usePayments, useRefundPayment } from './hooks';
 import { refundableAmount, type AdminPayment } from './api';
 
@@ -32,8 +33,19 @@ export function PaymentManagementScreen() {
   const paymentsQuery = usePayments(search);
 
   const columns: Column<AdminPayment>[] = [
-    { key: 'booking', header: 'Booking', render: (row) => row.bookingReference },
-    { key: 'customer', header: 'Customer', render: (row) => row.customerName },
+    {
+      key: 'booking',
+      header: 'Booking',
+      render: (row) =>
+        row.bookingReference ? (
+          <Box component="span" title={row.bookingReference} sx={{ fontFamily: 'monospace' }}>
+            {shortId(row.bookingReference)}
+          </Box>
+        ) : (
+          '—'
+        ),
+    },
+    { key: 'customer', header: 'Customer', render: (row) => row.customerName ?? '—' },
     { key: 'method', header: 'Method', render: (row) => row.method },
     { key: 'gateway', header: 'Gateway', render: (row) => row.gateway },
     {
@@ -120,6 +132,14 @@ function RefundDialog({ payment, onClose }: RefundDialogProps) {
   const [amount, setAmount] = useState<number>(max);
   const [reason, setReason] = useState('');
   const [touched, setTouched] = useState(false);
+  // One idempotency key per dialog opening, tied to the submission it was sent
+  // with. Retrying the same amount and reason (e.g. after a timeout) reuses it,
+  // so the Payment Service can recognise a replay instead of refunding twice;
+  // editing either field makes it a different refund, which gets a fresh key.
+  const submission = useRef<{ key: string; fingerprint: string | null }>({
+    key: generateIdempotencyKey(),
+    fingerprint: null,
+  });
 
   const amountInvalid = !(amount > 0 && amount <= max);
   const reasonInvalid = !reason.trim();
@@ -127,15 +147,25 @@ function RefundDialog({ payment, onClose }: RefundDialogProps) {
   const handleConfirm = () => {
     setTouched(true);
     if (amountInvalid || reasonInvalid) return;
+    const payload = { amount, reason: reason.trim() };
+    const fingerprint = `${payload.amount}|${payload.reason}`;
+    if (submission.current.fingerprint !== null && submission.current.fingerprint !== fingerprint) {
+      submission.current.key = generateIdempotencyKey();
+    }
+    submission.current.fingerprint = fingerprint;
     refund.mutate(
-      { id: payment.id, payload: { amount, reason: reason.trim() } },
+      { id: payment.id, payload, idempotencyKey: submission.current.key },
       { onSuccess: onClose },
     );
   };
 
   return (
     <Dialog open onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>Refund {payment.bookingReference}</DialogTitle>
+      <DialogTitle>
+        {payment.bookingReference
+          ? `Refund booking ${shortId(payment.bookingReference)}`
+          : 'Refund payment'}
+      </DialogTitle>
       <DialogContent dividers>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
           Refundable up to {formatCurrency(max, payment.currency)}.

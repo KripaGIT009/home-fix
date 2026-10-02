@@ -15,5 +15,12 @@ export function generateCorrelationId(): string {
   });
 }
 
+/**
+ * Generates a fresh Idempotency-Key value. Same v4 UUID source, and so the same
+ * fallback, as the correlation id: crypto.randomUUID is missing outside secure
+ * contexts (e.g. the portal served over plain HTTP on a LAN address).
+ */
+export const generateIdempotencyKey = generateCorrelationId;
+
 /** Header name used to correlate a client request with backend traces. */
 export const CORRELATION_ID_HEADER = 'X-Correlation-ID';

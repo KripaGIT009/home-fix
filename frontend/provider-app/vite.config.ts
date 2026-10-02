@@ -46,6 +46,9 @@ export default defineConfig(({ mode }) => {
           // The chat WebSocket and the location SSE stream both run through
           // here; without `ws` the upgrade handshake is answered with a 400.
           ws: true,
+          // The gateway routes "/dispatch/**", "/bookings/**" etc. with no
+          // "/api" prefix; strip the mount point exactly as nginx does.
+          rewrite: (path) => path.replace(/^\/api/, ''),
         },
       },
     },

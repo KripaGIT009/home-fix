@@ -9,6 +9,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import com.homefix.chat.domain.ChatChannel;
@@ -18,10 +19,12 @@ import com.homefix.chat.support.TestDoubles.InMemoryChatStore;
 import com.homefix.chat.support.TestDoubles.RecordingDeliveryPort;
 import com.homefix.chat.support.TestDoubles.RecordingPushPort;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 
 /**
- * Behavioural tests for the Chat Service (Requirement 18, Property 23): channel lifecycle,
+ * Behavioural tests for the Chat Service (Requirement 18, Property 23): channel lifecycle
+ * (including the tombstone left by a terminal event that arrives before activation),
  * participant-only access (403), deactivated-channel rejection, 90-day retention anchoring,
  * offline-recipient push, and phone masking on stored bodies.
  */
@@ -84,7 +87,7 @@ class ChatServiceTest {
         seedActiveChannel(store);
         ChatService svc = service(store, new RecordingDeliveryPort(), new RecordingPushPort(), false);
 
-        svc.deactivateChannel(bookingId);
+        svc.deactivateChannel(bookingId, customerId, providerId, BOOKING_CREATED);
 
         assertThat(store.findChannel(bookingId)).get()
                 .satisfies(c -> {
@@ -94,20 +97,108 @@ class ChatServiceTest {
     }
 
     @Test
-    void deactivateChannelIsNoOpWhenAbsentOrAlreadyDeactivated() {
+    void deactivateChannelIsIdempotentWhenAlreadyDeactivated() {
+        InMemoryChatStore store = new InMemoryChatStore();
+        seedActiveChannel(store);
+        ChatService svc = service(store, new RecordingDeliveryPort(), new RecordingPushPort(), false);
+
+        // Second call keeps the original deactivatedAt.
+        svc.deactivateChannel(bookingId, customerId, providerId, BOOKING_CREATED);
+        Instant firstDeactivation = store.findChannel(bookingId).orElseThrow().getDeactivatedAt();
+        svc.deactivateChannel(bookingId, customerId, providerId, BOOKING_CREATED);
+        assertThat(store.findChannel(bookingId).orElseThrow().getDeactivatedAt())
+                .isEqualTo(firstDeactivation);
+    }
+
+    // ----- Terminal event before activation: tombstone (Requirement 18.1, 18.5) -----
+
+    @Test
+    void deactivateWithNoChannelRecordsADeactivatedTombstone() {
         InMemoryChatStore store = new InMemoryChatStore();
         ChatService svc = service(store, new RecordingDeliveryPort(), new RecordingPushPort(), false);
 
-        // Absent channel: no exception.
-        svc.deactivateChannel(bookingId);
+        svc.deactivateChannel(bookingId, customerId, providerId, BOOKING_CREATED);
 
-        // Already deactivated: second call keeps original deactivatedAt.
-        seedActiveChannel(store);
-        svc.deactivateChannel(bookingId);
-        Instant firstDeactivation = store.findChannel(bookingId).orElseThrow().getDeactivatedAt();
-        svc.deactivateChannel(bookingId);
-        assertThat(store.findChannel(bookingId).orElseThrow().getDeactivatedAt())
-                .isEqualTo(firstDeactivation);
+        assertThat(store.findChannel(bookingId)).get()
+                .satisfies(c -> {
+                    assertThat(c.isActive()).isFalse();
+                    assertThat(c.getCustomerId()).isEqualTo(customerId);
+                    assertThat(c.getProviderId()).isEqualTo(providerId);
+                    assertThat(c.getBookingCreatedAt()).isEqualTo(BOOKING_CREATED);
+                    assertThat(c.getDeactivatedAt()).isEqualTo(NOW);
+                });
+    }
+
+    @Test
+    void tombstoneForABookingCancelledBeforeAssignmentUsesTheNilIdAndNowForMissingFields() {
+        InMemoryChatStore store = new InMemoryChatStore();
+        ChatService svc = service(store, new RecordingDeliveryPort(), new RecordingPushPort(), false);
+
+        svc.deactivateChannel(bookingId, null, null, null);
+
+        ChatChannel tombstone = store.findChannel(bookingId).orElseThrow();
+        assertThat(tombstone.getCustomerId()).isEqualTo(ChatChannel.UNKNOWN_PARTICIPANT);
+        assertThat(tombstone.getProviderId()).isEqualTo(new UUID(0L, 0L));
+        assertThat(tombstone.getBookingCreatedAt()).isEqualTo(NOW);
+        assertThat(tombstone.participants().isParticipant(customerId)).isFalse();
+    }
+
+    @Test
+    void lateActivationDoesNotReopenATombstone() {
+        InMemoryChatStore store = new InMemoryChatStore();
+        ChatService svc = service(store, new RecordingDeliveryPort(), new RecordingPushPort(), false);
+        svc.deactivateChannel(bookingId, customerId, null, BOOKING_CREATED);
+
+        ChatChannel channel = svc.activateChannel(bookingId, customerId, providerId, BOOKING_CREATED);
+
+        assertThat(channel.isActive()).isFalse();
+        assertThat(store.findChannel(bookingId).orElseThrow().isActive()).isFalse();
+        assertThatThrownBy(() -> svc.sendMessage(bookingId, customerId, "hello?"))
+                .isInstanceOf(ChatException.class)
+                .satisfies(t -> assertThat(((ChatException) t).getStatus()).isEqualTo(HttpStatus.CONFLICT));
+    }
+
+    @Test
+    void replayedActivationDoesNotReopenAChannelClosedAfterActivation() {
+        InMemoryChatStore store = new InMemoryChatStore();
+        ChatService svc = service(store, new RecordingDeliveryPort(), new RecordingPushPort(), false);
+        svc.activateChannel(bookingId, customerId, providerId, BOOKING_CREATED);
+        svc.deactivateChannel(bookingId, customerId, providerId, BOOKING_CREATED);
+
+        assertThat(svc.activateChannel(bookingId, customerId, providerId, BOOKING_CREATED).isActive())
+                .isFalse();
+    }
+
+    @Test
+    void activationRacingATombstoneFailsOnTheKeyInsteadOfOverwritingIt() {
+        // The activation reads "no channel" just before the cancellation's tombstone is written,
+        // then tries to insert: it must collide on the primary key, not merge over the tombstone.
+        StaleReadStore store = new StaleReadStore();
+        ChatService svc = service(store, new RecordingDeliveryPort(), new RecordingPushPort(), false);
+        svc.deactivateChannel(bookingId, customerId, null, BOOKING_CREATED);
+        store.missNextRead = true;
+
+        assertThatThrownBy(() -> svc.activateChannel(bookingId, customerId, providerId, BOOKING_CREATED))
+                .isInstanceOf(DataIntegrityViolationException.class);
+        assertThat(store.findChannel(bookingId).orElseThrow().isActive()).isFalse();
+
+        // The consumer's retry then finds the tombstone and leaves it deactivated.
+        assertThat(svc.activateChannel(bookingId, customerId, providerId, BOOKING_CREATED).isActive())
+                .isFalse();
+    }
+
+    /** A store whose next channel read misses, as a read just before a concurrent insert would. */
+    private static final class StaleReadStore extends InMemoryChatStore {
+        boolean missNextRead;
+
+        @Override
+        public Optional<ChatChannel> findChannel(UUID bookingId) {
+            if (missNextRead) {
+                missNextRead = false;
+                return Optional.empty();
+            }
+            return super.findChannel(bookingId);
+        }
     }
 
     // ----- Access control: non-participant -> 403 (Requirement 18.7, Property 23) -----
@@ -160,7 +251,7 @@ class ChatServiceTest {
         InMemoryChatStore store = new InMemoryChatStore();
         seedActiveChannel(store);
         ChatService svc = service(store, new RecordingDeliveryPort(), new RecordingPushPort(), false);
-        svc.deactivateChannel(bookingId);
+        svc.deactivateChannel(bookingId, customerId, providerId, BOOKING_CREATED);
 
         ChatException ex = catchThrowableOfType(
                 () -> svc.sendMessage(bookingId, customerId, "still there?"), ChatException.class);
@@ -178,7 +269,7 @@ class ChatServiceTest {
         seedActiveChannel(store);
         ChatService svc = service(store, new RecordingDeliveryPort(), new RecordingPushPort(), true);
         svc.sendMessage(bookingId, customerId, "before close");
-        svc.deactivateChannel(bookingId);
+        svc.deactivateChannel(bookingId, customerId, providerId, BOOKING_CREATED);
 
         // Reading history after deactivation still works (Requirement 18.4).
         assertThat(svc.readMessages(bookingId, providerId)).hasSize(1);
@@ -217,7 +308,7 @@ class ChatServiceTest {
         ChatService svc = service(store, new RecordingDeliveryPort(), new RecordingPushPort(), true);
         ChatMessage message = svc.sendMessage(bookingId, customerId, "durable");
 
-        svc.deactivateChannel(bookingId);
+        svc.deactivateChannel(bookingId, customerId, providerId, BOOKING_CREATED);
 
         // The stored message and its retention window are untouched by deactivation.
         List<ChatMessage> history = svc.readMessages(bookingId, customerId);

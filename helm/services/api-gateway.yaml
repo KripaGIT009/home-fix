@@ -1,0 +1,23 @@
+# api-gateway - per-service values for helm/homefix-service.
+# Mirrors the service's entry in docker-compose.core.yml, minus dev-only settings
+# (inline secrets, ddl-auto=update, debug logging, dev seeding/OTP echo).
+# The port must equal the Dockerfile EXPOSE and compose SERVER_PORT.
+#
+# Routes to every service by its in-cluster name (auth-service:8081, ...); the
+# defaults in application.yml already match the chart's Service names, so no
+# *_SERVICE_URI overrides are needed. HTTPS_ENFORCED keeps its secure default (true):
+# TLS must terminate in front of the gateway and forward X-Forwarded-Proto.
+
+serviceName: api-gateway
+containerPort: 8080
+
+dependencies:
+  postgres: false
+  redis: true
+  kafka: false
+
+# Reads no secrets.
+secrets:
+  env: {}
+
+config: {}

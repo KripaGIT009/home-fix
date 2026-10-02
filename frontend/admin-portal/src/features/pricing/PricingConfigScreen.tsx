@@ -15,7 +15,7 @@ import { QueryStateView } from '@components/QueryStateView';
 import { DataTable, type Column } from '@components/DataTable';
 import { formatCurrency } from '@lib/format';
 import { usePricingConfigs, useUpdatePricingConfig } from './hooks';
-import type { PricingConfig } from './api';
+import { subcategoryLabel, type PricingConfig, type PricingConfigUpdate } from './api';
 
 /**
  * Pricing Configuration module (Requirement 6.11). Lists the per-subcategory
@@ -29,19 +29,19 @@ export function PricingConfigScreen() {
   const [saved, setSaved] = useState(false);
 
   const columns: Column<PricingConfig>[] = [
-    { key: 'category', header: 'Category', render: (row) => row.categoryName },
-    { key: 'subcategory', header: 'Subcategory', render: (row) => row.subcategoryName },
+    { key: 'category', header: 'Category', render: (row) => row.categoryName ?? '—' },
+    { key: 'subcategory', header: 'Subcategory', render: (row) => subcategoryLabel(row) },
     {
       key: 'base',
       header: 'Base price',
       align: 'right',
-      render: (row) => formatCurrency(row.basePrice, row.currency),
+      render: (row) => formatCurrency(row.basePrice, row.currency ?? undefined),
     },
     {
       key: 'perKm',
       header: 'Per km',
       align: 'right',
-      render: (row) => formatCurrency(row.perKmRate, row.currency),
+      render: (row) => formatCurrency(row.perKmRate, row.currency ?? undefined),
     },
     {
       key: 'platformFee',
@@ -110,7 +110,7 @@ interface PricingDialogProps {
 }
 
 /** Numeric fields exposed for editing, with labels. */
-const NUMERIC_FIELDS: ReadonlyArray<{ key: keyof PricingConfig; label: string }> = [
+const NUMERIC_FIELDS: ReadonlyArray<{ key: keyof PricingConfigUpdate; label: string }> = [
   { key: 'basePrice', label: 'Base price' },
   { key: 'perKmRate', label: 'Per-km rate' },
   { key: 'maxTravelCharge', label: 'Max travel charge' },
@@ -121,24 +121,39 @@ const NUMERIC_FIELDS: ReadonlyArray<{ key: keyof PricingConfig; label: string }>
   { key: 'surgeMultiplierCap', label: 'Surge multiplier cap' },
 ];
 
+/** The editable slice of a config, which is all the PUT sends. */
+function editableFields(config: PricingConfig): PricingConfigUpdate {
+  return {
+    basePrice: config.basePrice,
+    perKmRate: config.perKmRate,
+    maxTravelCharge: config.maxTravelCharge,
+    platformFeePercent: config.platformFeePercent,
+    nightSurcharge: config.nightSurcharge,
+    weekendSurcharge: config.weekendSurcharge,
+    emergencyMultiplierCap: config.emergencyMultiplierCap,
+    surgeMultiplierCap: config.surgeMultiplierCap,
+  };
+}
+
 function PricingDialog({ config, onClose, onSaved }: PricingDialogProps) {
   const update = useUpdatePricingConfig();
-  const [draft, setDraft] = useState<PricingConfig>(config);
+  const [draft, setDraft] = useState<PricingConfigUpdate>(() => editableFields(config));
 
-  useEffect(() => setDraft(config), [config]);
+  useEffect(() => setDraft(editableFields(config)), [config]);
 
-  const handleChange = (key: keyof PricingConfig, raw: string) => {
+  const handleChange = (key: keyof PricingConfigUpdate, raw: string) => {
     setDraft((prev) => ({ ...prev, [key]: raw === '' ? 0 : Number(raw) }));
   };
 
   const handleSave = () => {
-    update.mutate(draft, { onSuccess: onSaved });
+    update.mutate({ subcategoryId: config.subcategoryId, update: draft }, { onSuccess: onSaved });
   };
 
   return (
     <Dialog open onClose={onClose} maxWidth="sm" fullWidth>
       <DialogTitle>
-        {config.categoryName} — {config.subcategoryName}
+        {config.categoryName ? `${config.categoryName} — ` : ''}
+        {subcategoryLabel(config)}
       </DialogTitle>
       <DialogContent dividers>
         <Grid container spacing={2} sx={{ mt: 0 }}>
@@ -148,7 +163,7 @@ function PricingDialog({ config, onClose, onSaved }: PricingDialogProps) {
                 label={field.label}
                 type="number"
                 fullWidth
-                value={draft[field.key] as number}
+                value={draft[field.key] ?? ''}
                 onChange={(event) => handleChange(field.key, event.target.value)}
                 inputProps={{ min: 0, step: 0.01 }}
               />

@@ -10,12 +10,17 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.web.firewall.HttpFirewall;
+import org.springframework.security.web.firewall.RequestRejectedException;
+import org.springframework.security.web.firewall.StrictHttpFirewall;
 import org.springframework.util.AntPathMatcher;
 import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.web.util.UrlPathHelper;
 
 import java.io.IOException;
 import java.util.Collection;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -31,6 +36,8 @@ import java.util.stream.Collectors;
  *
  * <p>Decision logic:
  * <ol>
+ *   <li>If the request path is ambiguous — anything Spring Security's {@link StrictHttpFirewall}
+ *       refuses, or a malformed percent-encoding — returns 400 without evaluating any rule.</li>
  *   <li>If no pattern matches the current request, the filter passes through
  *       (endpoint is not RBAC-protected).</li>
  *   <li>If a pattern matches but the principal is unauthenticated, returns 401.</li>
@@ -40,6 +47,39 @@ import java.util.stream.Collectors;
  *       continues down the filter chain.</li>
  * </ol>
  *
+ * <h2>Which path is matched</h2>
+ * <p>Rules are matched against the path the handler mapping resolves, not the raw
+ * {@code getRequestURI()}. Matching the raw URI let a request reach a protected handler without
+ * matching its rule, and because an unmatched request passes through, that was a role bypass:
+ * {@code /admin;x/users}, {@code /%61dmin/users}, {@code /ctx/admin/users} under a servlet context
+ * path, and {@code HEAD /admin/users} (Spring MVC serves HEAD from the GET handler) all reached the
+ * {@code GET /admin/**} handler unchecked. The path is now derived in two steps:
+ * <ol>
+ *   <li><strong>Refuse anything that can be read more than one way.</strong> The request is run
+ *       through a {@link StrictHttpFirewall} with its default settings — the same check
+ *       {@code FilterChainProxy} applies before this filter runs. Path parameters ({@code ;}),
+ *       encoded {@code /}, {@code \}, {@code .} and {@code %}, empty ({@code //}), {@code .} and
+ *       {@code ..} segments, and non-printable characters are refused with 400. Re-checking here
+ *       keeps the filter safe on its own (it is a public class, and tests or future callers may
+ *       invoke it outside a {@code FilterChainProxy}), and it guarantees the decoding in the next
+ *       step cannot create a new {@code /} or {@code ..} segment.</li>
+ *   <li><strong>Normalise what remains.</strong> The path within the application is taken from
+ *       {@link UrlPathHelper#getPathWithinApplication}: percent-decoded and stripped of the servlet
+ *       context path, which is how Spring MVC sees it. A single trailing {@code /} is then removed,
+ *       so {@code /bookings/} is governed by the {@code /bookings} rule even if a service ever
+ *       enables trailing-slash matching. (Two or more trailing slashes are an empty segment and
+ *       were already refused.)</li>
+ * </ol>
+ * Pattern matching is case-insensitive, and a {@code GET} rule also governs {@code HEAD}. Both only
+ * ever make a rule match <em>more</em> requests, never fewer, so neither can open a path: the first
+ * closes the gap should a service ever enable case-insensitive MVC matching, the second closes the
+ * HEAD-to-GET fallback Spring MVC already performs.
+ *
+ * <p>The pass-through-when-unmatched semantics is kept deliberately: public paths are left unruled
+ * because a rule inside the security chain would turn them into a 401. With the path normalised as
+ * above, an unmatched request is one whose handler path genuinely has no rule, and it is still
+ * subject to the service's own {@code authorizeHttpRequests} configuration.
+ *
  * <p>This filter must be registered <em>after</em> {@link JwtValidationFilter} so
  * that the {@link SecurityContextHolder} is already populated.
  */
@@ -47,11 +87,22 @@ public class RbacEnforcementFilter extends OncePerRequestFilter {
 
     private static final Logger log = LoggerFactory.getLogger(RbacEnforcementFilter.class);
 
+    private static final String GET = "GET";
+    private static final String HEAD = "HEAD";
+
     private final RbacProperties rbacProperties;
-    private final AntPathMatcher pathMatcher = new AntPathMatcher();
+    private final AntPathMatcher pathMatcher;
+    private final HttpFirewall firewall;
+    private final UrlPathHelper urlPathHelper;
 
     public RbacEnforcementFilter(RbacProperties rbacProperties) {
         this.rbacProperties = rbacProperties;
+        this.pathMatcher = new AntPathMatcher();
+        this.pathMatcher.setCaseSensitive(false);
+        this.firewall = new StrictHttpFirewall();
+        this.urlPathHelper = new UrlPathHelper();
+        this.urlPathHelper.setUrlDecode(true);
+        this.urlPathHelper.setRemoveSemicolonContent(true);
     }
 
     @Override
@@ -61,7 +112,16 @@ public class RbacEnforcementFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
 
         String method = request.getMethod();
-        String path = request.getRequestURI();
+        String path;
+        try {
+            path = resolveLookupPath(request);
+        } catch (RequestRejectedException | IllegalArgumentException ex) {
+            // The same refusal FilterChainProxy gives: never evaluate rules against an ambiguous path.
+            log.warn("Rejected request with an ambiguous path before RBAC evaluation: {}",
+                    ex.getMessage());
+            sendError(response, HttpStatus.BAD_REQUEST, "Malformed request path");
+            return;
+        }
 
         List<String> requiredRoles = findRequiredRoles(method, path);
 
@@ -99,6 +159,24 @@ public class RbacEnforcementFilter extends OncePerRequestFilter {
     // -------------------------------------------------------------------------
 
     /**
+     * Returns the normalised path within the application that rules are matched against (see
+     * the class Javadoc).
+     *
+     * @throws RequestRejectedException if the request is one {@link StrictHttpFirewall} refuses
+     * @throws IllegalArgumentException if the path holds a malformed percent-encoding
+     */
+    private String resolveLookupPath(HttpServletRequest request) {
+        // Validation only: the firewalled wrapper is discarded and the original request continues
+        // down the chain, so nothing downstream sees a different request object.
+        firewall.getFirewalledRequest(request);
+        String path = urlPathHelper.getPathWithinApplication(request);
+        if (path.length() > 1 && path.endsWith("/")) {
+            path = path.substring(0, path.length() - 1);
+        }
+        return path;
+    }
+
+    /**
      * Returns the list of allowed roles for the first matching endpoint pattern,
      * or {@code null} if no pattern matches (endpoint is unprotected).
      */
@@ -114,15 +192,18 @@ public class RbacEnforcementFilter extends OncePerRequestFilter {
 
     /**
      * Matches a pattern of the form {@code "METHOD /path/**"} or just {@code "/path/**"}
-     * against the incoming method and path.
+     * against the incoming method and normalised path. A {@code GET} pattern also matches
+     * {@code HEAD}, because Spring MVC answers HEAD by invoking the GET handler.
      */
     private boolean matches(String pattern, String method, String path) {
         int spaceIdx = pattern.indexOf(' ');
         if (spaceIdx > 0) {
-            String patternMethod = pattern.substring(0, spaceIdx).toUpperCase();
+            String patternMethod = pattern.substring(0, spaceIdx).toUpperCase(Locale.ROOT);
             String patternPath = pattern.substring(spaceIdx + 1);
-            return patternMethod.equals(method.toUpperCase())
-                    && pathMatcher.match(patternPath, path);
+            String requestMethod = method.toUpperCase(Locale.ROOT);
+            boolean methodMatches = patternMethod.equals(requestMethod)
+                    || (HEAD.equals(requestMethod) && GET.equals(patternMethod));
+            return methodMatches && pathMatcher.match(patternPath, path);
         }
         // No method prefix — match path only
         return pathMatcher.match(pattern, path);

@@ -1,5 +1,6 @@
 import { Box, Stack, Typography } from '@mui/material';
 import type { SxProps, Theme } from '@mui/material/styles';
+import { brand } from '@lib/theme';
 
 interface BrandLogoProps {
   /** Overall mark size in pixels; the wordmark scales with it. */
@@ -32,8 +33,8 @@ export function BrandLogo({ size = 40, inverted = false, markOnly = false, sx }:
           flexShrink: 0,
           background: inverted
             ? 'rgba(255, 255, 255, 0.16)'
-            : 'linear-gradient(140deg, #3B82F6 0%, #1D4ED8 100%)',
-          boxShadow: inverted ? 'none' : '0 6px 16px -8px rgba(29, 78, 216, 0.9)',
+            : `linear-gradient(140deg, #4C74E8 0%, ${brand.accent} 55%, ${brand.accentDark} 100%)`,
+          boxShadow: inverted ? 'none' : '0 6px 14px -6px rgba(34, 81, 209, 0.55)',
         }}
       >
         <svg
@@ -70,16 +71,13 @@ export function BrandLogo({ size = 40, inverted = false, markOnly = false, sx }:
           sx={{
             fontSize: wordmarkSize,
             fontWeight: 800,
-            letterSpacing: '-0.03em',
+            letterSpacing: '-0.035em',
             lineHeight: 1,
             color: inverted ? '#FFFFFF' : 'text.primary',
           }}
         >
           Home
-          <Box
-            component="span"
-            sx={{ color: inverted ? 'rgba(255,255,255,0.75)' : 'primary.main' }}
-          >
+          <Box component="span" sx={{ color: inverted ? brand.warm : 'primary.main' }}>
             Fix
           </Box>
         </Typography>

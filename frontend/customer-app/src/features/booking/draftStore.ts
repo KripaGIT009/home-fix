@@ -11,6 +11,13 @@ import type { AddressFormValues } from './schemas';
  * abandoned.
  */
 export interface BookingDraft {
+  /**
+   * The parent category of `subcategoryId`. The Booking Service requires it on
+   * creation (`@NotNull categoryId`) and does not derive it from the
+   * subcategory, so it is carried from the catalog entry the customer picked
+   * rather than looked up again at confirmation time.
+   */
+  categoryId: string;
   subcategoryId: string;
   isEmergency: boolean;
   /** Omitted for emergency bookings. */

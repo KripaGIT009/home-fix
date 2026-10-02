@@ -47,6 +47,29 @@ public class PaymentException extends RuntimeException {
         return new PaymentException(HttpStatus.BAD_REQUEST, "INVALID_CALLBACK_SIGNATURE", message);
     }
 
+    /** Requirement 12.5: a validly signed callback whose payload is not the documented JSON contract. */
+    public static PaymentException invalidCallbackPayload(String message) {
+        return new PaymentException(HttpStatus.BAD_REQUEST, "INVALID_CALLBACK_PAYLOAD", message);
+    }
+
+    /**
+     * Requirement 12.5: the signed payload does not describe the transaction it was sent for (wrong
+     * transaction id, gateway or amount), e.g. a captured payload replayed against another payment.
+     */
+    public static PaymentException callbackMismatch(String message) {
+        return new PaymentException(HttpStatus.BAD_REQUEST, "CALLBACK_MISMATCH", message);
+    }
+
+    /** Requirement 12.5: the signed payload's timestamp is outside the accepted window. */
+    public static PaymentException callbackStale(String message) {
+        return new PaymentException(HttpStatus.BAD_REQUEST, "CALLBACK_STALE", message);
+    }
+
+    /** Requirement 12.4/12.5: a callback whose outcome contradicts the transaction's settled state. */
+    public static PaymentException callbackConflict(String message) {
+        return new PaymentException(HttpStatus.CONFLICT, "CALLBACK_CONFLICT", message);
+    }
+
     public HttpStatus getStatus() {
         return status;
     }

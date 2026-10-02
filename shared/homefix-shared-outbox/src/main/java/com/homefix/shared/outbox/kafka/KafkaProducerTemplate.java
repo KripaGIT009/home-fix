@@ -10,8 +10,11 @@ import org.springframework.kafka.support.SendResult;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.UUID;
+import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * Thin wrapper over {@link KafkaTemplate} that stamps every record with a stable
@@ -30,11 +33,26 @@ public class KafkaProducerTemplate {
 
     private static final Logger log = LoggerFactory.getLogger(KafkaProducerTemplate.class);
 
+    /** Kafka's own default for {@code max.block.ms}, used when the producer config omits it. */
+    static final Duration DEFAULT_MAX_BLOCK = Duration.ofMillis(60_000);
+
     private final KafkaTemplate<String, String> kafkaTemplate;
+    private final Duration maxBlockTime;
 
     public KafkaProducerTemplate(KafkaTemplate<String, String> kafkaTemplate) {
         verifyIdempotentConfig(kafkaTemplate);
         this.kafkaTemplate = kafkaTemplate;
+        this.maxBlockTime = maxBlockOf(kafkaTemplate.getProducerFactory().getConfigurationProperties());
+    }
+
+    /**
+     * The producer's {@code max.block.ms}: how long {@link #send} can block <em>before</em> the
+     * record is handed over (waiting for topic metadata or buffer space), which is on top of the
+     * {@code timeout} passed to {@link #send(String, String, UUID, String, Duration)}. A caller that
+     * must finish a publish within a deadline has to budget for both.
+     */
+    public Duration maxBlockTime() {
+        return maxBlockTime;
     }
 
     /**
@@ -57,12 +75,28 @@ public class KafkaProducerTemplate {
      * so a returned future completion means the write is durably committed.
      */
     public SendResult<String, String> send(String topic, String key, UUID eventId, String payload) {
+        return send(topic, key, eventId, payload, null);
+    }
+
+    /**
+     * As {@link #send(String, String, UUID, String)}, but waits at most {@code timeout} for the
+     * broker acknowledgement once the record has been handed to the producer. A timeout surfaces
+     * as a {@link KafkaPublishException}; the record may still be delivered later by the
+     * producer's own retries, so a caller that retries after a timeout must tolerate duplicates
+     * (consumers deduplicate on the {@code eventId} header).
+     *
+     * @param timeout maximum wait for the ACK; {@code null} waits indefinitely
+     */
+    public SendResult<String, String> send(String topic, String key, UUID eventId, String payload,
+                                           Duration timeout) {
         var record = new org.apache.kafka.clients.producer.ProducerRecord<>(topic, null, key, payload);
         record.headers().add(new RecordHeader(HEADER_EVENT_ID,
                 eventId.toString().getBytes(StandardCharsets.UTF_8)));
         CompletableFuture<SendResult<String, String>> future = kafkaTemplate.send(record);
         try {
-            SendResult<String, String> result = future.get();
+            SendResult<String, String> result = timeout == null
+                    ? future.get()
+                    : future.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
             log.debug("Published event {} to topic {} partition {} offset {}",
                     eventId, topic,
                     result.getRecordMetadata().partition(),
@@ -73,7 +107,21 @@ public class KafkaProducerTemplate {
             throw new KafkaPublishException("Interrupted publishing event " + eventId + " to " + topic, e);
         } catch (ExecutionException e) {
             throw new KafkaPublishException("Failed publishing event " + eventId + " to " + topic, e.getCause());
+        } catch (TimeoutException e) {
+            throw new KafkaPublishException("Timed out after " + timeout + " awaiting broker ACK for event "
+                    + eventId + " to " + topic, e);
         }
+    }
+
+    private static Duration maxBlockOf(Map<String, Object> config) {
+        Object value = config == null ? null : config.get(ProducerConfig.MAX_BLOCK_MS_CONFIG);
+        if (value == null) {
+            return DEFAULT_MAX_BLOCK;
+        }
+        long millis = value instanceof Number number
+                ? number.longValue()
+                : Long.parseLong(value.toString().trim());
+        return Duration.ofMillis(millis);
     }
 
     private static void verifyIdempotentConfig(KafkaTemplate<String, String> template) {

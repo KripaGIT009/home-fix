@@ -1,1 +1,2 @@
 com.homefix.shared.outbox.HomefixOutboxAutoConfiguration
+com.homefix.shared.outbox.kafka.HomefixKafkaConsumerAutoConfiguration

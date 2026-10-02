@@ -1,0 +1,102 @@
+name: Lint delivery config (reusable)
+
+# Lints the workflows and the Helm chart, and checks that every service's port
+# agrees across its Dockerfile, docker-compose.core.yml and its Helm values.
+# Called by ci.yml and pr-checks.yml.
+
+on:
+  workflow_call: {}
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run actionlint (with shellcheck)
+        run: |
+          docker run --rm -v "${GITHUB_WORKSPACE}:/repo" --workdir /repo \
+            rhysd/actionlint:1.7.7 -color
+
+  chart:
+    name: Helm chart and service wiring
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+
+      - name: Every service has Helm values, and ports agree everywhere
+        run: |
+          # yq (mikefarah v4) is preinstalled on ubuntu-latest runners.
+          status=0
+          for dir in services/*/; do
+            svc=$(basename "${dir}")
+            [ -f "${dir}pom.xml" ] || continue
+            values="helm/services/${svc}.yaml"
+            if [ ! -f "${values}" ]; then
+              echo "::error::${svc} has no ${values}; it cannot be deployed."
+              status=1
+              continue
+            fi
+            name=$(yq '.serviceName' "${values}")
+            helm_port=$(yq '.containerPort' "${values}")
+            docker_port=$(sed -n 's/^EXPOSE[[:space:]]\{1,\}\([0-9]\{1,\}\).*/\1/p' "${dir}Dockerfile" | head -n 1)
+            compose_port=$(yq ".services.\"${svc}\".environment.SERVER_PORT" docker-compose.core.yml)
+            echo "${svc}: helm=${helm_port} dockerfile=${docker_port} compose=${compose_port}"
+            if [ "${name}" != "${svc}" ]; then
+              echo "::error file=${values}::serviceName is '${name}', expected '${svc}'."
+              status=1
+            fi
+            if [ "${helm_port}" != "${docker_port}" ] || [ "${helm_port}" != "${compose_port}" ]; then
+              echo "::error file=${values}::Port mismatch for ${svc}: helm ${helm_port}, Dockerfile EXPOSE ${docker_port}, compose SERVER_PORT ${compose_port}."
+              status=1
+            fi
+          done
+          for values in helm/services/*.yaml; do
+            svc=$(basename "${values}" .yaml)
+            if [ ! -f "services/${svc}/pom.xml" ]; then
+              echo "::error file=${values}::No service directory services/${svc}."
+              status=1
+            fi
+          done
+          exit "${status}"
+
+      - name: Lint and render the chart for every service and environment
+        run: |
+          # Throwaway values: they only satisfy the chart's required fields so it
+          # can render; real ones come from the deploy workflow.
+          cat > /tmp/lint-values.yaml <<'EOF'
+          image:
+            repository: lint.invalid/homefix
+            tag: 0000000000000000000000000000000000000000
+          platform:
+            redis:
+              host: redis.lint.invalid
+            kafka:
+              bootstrapServers: kafka-1.lint.invalid:9092,kafka-2.lint.invalid:9092
+          EOF
+          for env in staging production; do
+            for values in helm/services/*.yaml; do
+              svc=$(basename "${values}" .yaml)
+              echo "::group::${env} / ${svc}"
+              helm lint helm/homefix-service --strict \
+                -f "helm/homefix-service/values-${env}.yaml" -f "${values}" -f /tmp/lint-values.yaml
+              helm template "homefix-${svc}" helm/homefix-service --namespace "${env}" \
+                -f "helm/homefix-service/values-${env}.yaml" -f "${values}" -f /tmp/lint-values.yaml \
+                > "/tmp/${env}-${svc}.yaml"
+              echo "::endgroup::"
+            done
+          done
+          echo "Rendered $(find /tmp -maxdepth 1 -name '*-*.yaml' ! -name lint-values.yaml | wc -l) manifests."

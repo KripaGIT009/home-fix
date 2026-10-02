@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -19,6 +20,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.springframework.test.util.ReflectionTestUtils;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -55,6 +57,7 @@ class JobExecutionServiceTest {
 
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2024-01-01T10:00:00Z"), ZoneOffset.UTC);
     private static final UUID PROVIDER = UUID.randomUUID();
+    private static final UUID CUSTOMER = UUID.randomUUID();
 
     @Mock
     private BookingRepository bookingRepository;
@@ -79,7 +82,8 @@ class JobExecutionServiceTest {
 
     private JobExecutionService newService(Clock clock, BookingProperties props) {
         BookingTransitionService transition =
-                new BookingTransitionService(new BookingStateMachine(), auditRepository, clock);
+                new BookingTransitionService(new BookingStateMachine(), auditRepository,
+                        new BookingLifecycleEventPublisher(mock(OutboxEventPublisher.class), clock), clock);
         lenient().when(auditRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         lenient().when(intervalRepository.save(any())).thenAnswer(inv -> {
             JobInterval saved = inv.getArgument(0);
@@ -101,7 +105,9 @@ class JobExecutionServiceTest {
     private Booking bookingInState(BookingStatus status) {
         Booking b = Bookings.inState(status);
         b.setProviderId(PROVIDER);
+        ReflectionTestUtils.setField(b, "customerId", CUSTOMER);
         lenient().when(bookingRepository.findByReference(b.getReference())).thenReturn(Optional.of(b));
+        lenient().when(bookingRepository.findByKey(any())).thenCallRealMethod();
         return b;
     }
 
@@ -137,8 +143,43 @@ class JobExecutionServiceTest {
         assertThat(b.getStartedAt()).isEqualTo(Instant.now(CLOCK));
         assertThat(savedIntervals).hasSize(1);
         assertThat(savedIntervals.get(0).getKind()).isEqualTo(JobInterval.Kind.WORK);
-        verify(outboxPublisher).publish(eq(JobExecutionEvents.AGGREGATE_TYPE), eq(b.getId()),
-                eq(JobExecutionEvents.JobStarted.EVENT_TYPE), any());
+        JobExecutionEvents.JobStarted event = (JobExecutionEvents.JobStarted)
+                publishedPayload(b, JobExecutionEvents.JobStarted.EVENT_TYPE);
+        assertThat(event.customerId()).isEqualTo(b.getCustomerId());
+        assertThat(event.providerId()).isEqualTo(PROVIDER);
+        assertThat(event.reference()).isEqualTo(b.getReference());
+    }
+
+    // ----- provider milestones carry the customer (Requirement 9.3, 9.4, 17.4) -----
+
+    @Test
+    void onTheWayPublishesProviderArrivingAddressedToTheCustomer() {
+        JobExecutionService service = newService();
+        Booking b = bookingInState(BookingStatus.PROVIDER_ACCEPTED);
+
+        service.markOnTheWay(b.getReference(), providerActor());
+
+        JobExecutionEvents.ProviderArriving event = (JobExecutionEvents.ProviderArriving)
+                publishedPayload(b, JobExecutionEvents.ProviderArriving.EVENT_TYPE);
+        assertThat(event.bookingId()).isEqualTo(b.getId());
+        assertThat(event.reference()).isEqualTo(b.getReference());
+        assertThat(event.customerId()).isEqualTo(b.getCustomerId());
+        assertThat(event.providerId()).isEqualTo(PROVIDER);
+    }
+
+    @Test
+    void arrivedPublishesProviderArrivedAddressedToTheCustomer() {
+        JobExecutionService service = newService();
+        Booking b = bookingInState(BookingStatus.PROVIDER_ON_THE_WAY);
+
+        service.markArrived(b.getReference(), providerActor());
+
+        JobExecutionEvents.ProviderArrived event = (JobExecutionEvents.ProviderArrived)
+                publishedPayload(b, JobExecutionEvents.ProviderArrived.EVENT_TYPE);
+        assertThat(event.bookingId()).isEqualTo(b.getId());
+        assertThat(event.reference()).isEqualTo(b.getReference());
+        assertThat(event.customerId()).isEqualTo(b.getCustomerId());
+        assertThat(event.providerId()).isEqualTo(PROVIDER);
     }
 
     // ----- after-photo gate (Requirement 9.10, 9.11, 11.4) ----------------
@@ -172,8 +213,19 @@ class JobExecutionServiceTest {
         assertThat(b.getStatus()).isEqualTo(BookingStatus.JOB_COMPLETED);
         assertThat(b.getCompletedAt()).isEqualTo(Instant.now(CLOCK));
         assertThat(b.getNetDurationSeconds()).isEqualTo(600);
+        JobExecutionEvents.JobCompleted event = (JobExecutionEvents.JobCompleted)
+                publishedPayload(b, JobExecutionEvents.JobCompleted.EVENT_TYPE);
+        assertThat(event.customerId()).isEqualTo(b.getCustomerId());
+        assertThat(event.providerId()).isEqualTo(PROVIDER);
+        assertThat(event.reference()).isEqualTo(b.getReference());
+    }
+
+    /** The payload of the single {@code eventType} outbox write for {@code b}. */
+    private Object publishedPayload(Booking b, String eventType) {
+        ArgumentCaptor<Object> payload = ArgumentCaptor.forClass(Object.class);
         verify(outboxPublisher).publish(eq(JobExecutionEvents.AGGREGATE_TYPE), eq(b.getId()),
-                eq(JobExecutionEvents.JobCompleted.EVENT_TYPE), any());
+                eq(eventType), payload.capture());
+        return payload.getValue();
     }
 
     // ----- pause reason validation & interval tracking (Requirement 11.5) --
@@ -364,7 +416,7 @@ class JobExecutionServiceTest {
     }
 
     private static Actor customerActor() {
-        return Actor.user(UUID.randomUUID(), "CUSTOMER");
+        return Actor.user(CUSTOMER, "CUSTOMER");
     }
 
     private static JobInterval openWork(Instant start) {

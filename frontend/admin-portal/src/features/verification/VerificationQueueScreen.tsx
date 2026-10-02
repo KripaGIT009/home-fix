@@ -33,9 +33,9 @@ export function VerificationQueueScreen() {
   const [selected, setSelected] = useState<VerificationQueueEntry | null>(null);
 
   const columns: Column<VerificationQueueEntry>[] = [
-    { key: 'name', header: 'Provider', render: (row) => row.displayName },
-    { key: 'mobile', header: 'Mobile', render: (row) => row.mobileNumber },
-    { key: 'skill', header: 'Primary skill', render: (row) => row.primarySkill },
+    { key: 'name', header: 'Provider', render: (row) => row.displayName ?? '—' },
+    { key: 'mobile', header: 'Mobile', render: (row) => row.mobileNumber ?? '—' },
+    { key: 'skill', header: 'Primary skill', render: (row) => row.primarySkill ?? '—' },
     {
       key: 'submitted',
       header: 'Submitted',
@@ -112,7 +112,7 @@ function ReviewDialog({ entry, onClose }: ReviewDialogProps) {
     <Dialog open onClose={onClose} maxWidth="md" fullWidth>
       <DialogTitle>
         <Stack direction="row" justifyContent="space-between" alignItems="baseline" spacing={2}>
-          <span>{entry.displayName}</span>
+          <span>{entry.displayName ?? 'Provider submission'}</span>
           <Typography variant="caption" color="text.secondary">
             Submitted {formatDateTime(entry.submittedAt)}
           </Typography>

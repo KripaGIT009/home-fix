@@ -1,6 +1,7 @@
 import { createBrowserRouter } from 'react-router-dom';
 import { PlaceholderScreen } from '@components/PlaceholderScreen';
 import { RequireAuth } from '@components/RequireAuth';
+import { RootLayout } from '@components/RootLayout';
 import { LoginScreen } from '@features/auth/LoginScreen';
 import { SplashScreen } from '@features/auth/SplashScreen';
 import { HomeScreen } from '@features/catalog/HomeScreen';
@@ -24,103 +25,113 @@ import { HelpScreen } from '@features/help/HelpScreen';
  */
 export const router = createBrowserRouter([
   {
-    path: '/',
-    element: <SplashScreen />,
-  },
-  {
-    path: '/login',
-    element: <LoginScreen />,
-  },
-  {
-    path: '/home',
-    element: (
-      <RequireAuth>
-        <HomeScreen />
-      </RequireAuth>
-    ),
-  },
-  {
-    path: '/categories/:categoryId',
-    element: (
-      <RequireAuth>
-        <SubcategoryScreen />
-      </RequireAuth>
-    ),
-  },
-  {
-    path: '/book/:subcategoryId',
-    element: (
-      <RequireAuth>
-        <ServiceRequestScreen />
-      </RequireAuth>
-    ),
-  },
-  {
-    path: '/book/:subcategoryId/estimate',
-    element: (
-      <RequireAuth>
-        <PriceEstimateScreen />
-      </RequireAuth>
-    ),
-  },
-  {
-    path: '/book/:bookingId/professionals',
-    element: (
-      <RequireAuth>
-        <AvailableProfessionalsScreen />
-      </RequireAuth>
-    ),
-  },
-  {
-    path: '/bookings/:bookingId/track',
-    element: (
-      <RequireAuth>
-        <LiveTrackingScreen />
-      </RequireAuth>
-    ),
-  },
-  {
-    path: '/bookings/:bookingId/chat',
-    element: (
-      <RequireAuth>
-        <ChatScreen />
-      </RequireAuth>
-    ),
-  },
-  {
-    path: '/bookings/:bookingId',
-    element: (
-      <RequireAuth>
-        <BookingDetailScreen />
-      </RequireAuth>
-    ),
-  },
-  {
-    path: '/history',
-    element: (
-      <RequireAuth>
-        <ServiceHistoryScreen />
-      </RequireAuth>
-    ),
-  },
-  {
-    path: '/profile',
-    element: (
-      <RequireAuth>
-        <ProfileScreen />
-      </RequireAuth>
-    ),
-  },
-  {
-    path: '/help',
-    element: (
-      <RequireAuth>
-        <HelpScreen />
-      </RequireAuth>
-    ),
-  },
-  {
-    path: '*',
-    element: <PlaceholderScreen title="Not found" description="This page does not exist." />,
+    element: <RootLayout />,
+    children: [
+      {
+        path: '/',
+        element: <SplashScreen />,
+      },
+      {
+        path: '/login',
+        element: <LoginScreen />,
+      },
+      {
+        path: '/home',
+        element: (
+          <RequireAuth>
+            <HomeScreen />
+          </RequireAuth>
+        ),
+      },
+      {
+        path: '/categories/:categoryId',
+        element: (
+          <RequireAuth>
+            <SubcategoryScreen />
+          </RequireAuth>
+        ),
+      },
+      {
+        path: '/book/:subcategoryId',
+        element: (
+          <RequireAuth>
+            <ServiceRequestScreen />
+          </RequireAuth>
+        ),
+      },
+      {
+        path: '/book/:subcategoryId/estimate',
+        element: (
+          <RequireAuth>
+            <PriceEstimateScreen />
+          </RequireAuth>
+        ),
+      },
+      {
+        path: '/book/:bookingId/professionals',
+        element: (
+          <RequireAuth>
+            <AvailableProfessionalsScreen />
+          </RequireAuth>
+        ),
+      },
+      {
+        path: '/bookings/:bookingId/track',
+        element: (
+          <RequireAuth>
+            <LiveTrackingScreen />
+          </RequireAuth>
+        ),
+      },
+      {
+        path: '/bookings/:bookingId/chat',
+        element: (
+          <RequireAuth>
+            <ChatScreen />
+          </RequireAuth>
+        ),
+      },
+      {
+        path: '/bookings/:bookingId',
+        element: (
+          <RequireAuth>
+            <BookingDetailScreen />
+          </RequireAuth>
+        ),
+      },
+      {
+        path: '/history',
+        element: (
+          <RequireAuth>
+            <ServiceHistoryScreen />
+          </RequireAuth>
+        ),
+      },
+      {
+        path: '/profile',
+        element: (
+          <RequireAuth>
+            <ProfileScreen />
+          </RequireAuth>
+        ),
+      },
+      {
+        path: '/help',
+        element: (
+          <RequireAuth>
+            <HelpScreen />
+          </RequireAuth>
+        ),
+      },
+      {
+        path: '*',
+        element: (
+          <PlaceholderScreen
+            title="Page not found"
+            description="The page you were looking for doesn’t exist or has moved."
+          />
+        ),
+      },
+    ],
   },
 ]);

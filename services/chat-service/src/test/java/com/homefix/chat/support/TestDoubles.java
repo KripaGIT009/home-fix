@@ -13,6 +13,7 @@ import com.homefix.chat.domain.ChatMessage;
 import com.homefix.chat.presence.PresenceRegistry;
 import com.homefix.chat.push.NotificationPushPort;
 import com.homefix.chat.service.ChatStore;
+import org.springframework.dao.DataIntegrityViolationException;
 
 /**
  * Small hand-written test doubles for the Chat Service ports (no Spring, no Mockito).
@@ -22,8 +23,14 @@ public final class TestDoubles {
     private TestDoubles() {
     }
 
-    /** In-memory {@link ChatStore}: one channel per bookingId, plus an ordered message list. */
-    public static final class InMemoryChatStore implements ChatStore {
+    /**
+     * In-memory {@link ChatStore}: one channel per bookingId, plus an ordered message list.
+     *
+     * <p>Models the primary key the way JPA meets it: saving a channel that reports
+     * {@link ChatChannel#isNew()} is an insert, and fails if a different channel is already stored
+     * for the booking. Re-saving the stored instance itself is an update, as for a managed entity.
+     */
+    public static class InMemoryChatStore implements ChatStore {
         private final ConcurrentHashMap<UUID, ChatChannel> channels = new ConcurrentHashMap<>();
         public final List<ChatMessage> messages = new ArrayList<>();
 
@@ -34,7 +41,13 @@ public final class TestDoubles {
 
         @Override
         public ChatChannel saveChannel(ChatChannel channel) {
-            channels.put(channel.getBookingId(), channel);
+            channels.compute(channel.getBookingId(), (id, existing) -> {
+                if (existing != null && existing != channel && channel.isNew()) {
+                    throw new DataIntegrityViolationException(
+                            "duplicate key value violates unique constraint \"chat_channel_pkey\"");
+                }
+                return channel;
+            });
             return channel;
         }
 

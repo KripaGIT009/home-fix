@@ -18,8 +18,10 @@ import com.homefix.dispatch.config.DispatchClientProperties;
 import com.homefix.dispatch.config.DispatchProperties;
 import com.homefix.dispatch.domain.DispatchRequest;
 import com.homefix.dispatch.event.ProviderAcceptedEvent;
+import com.homefix.dispatch.event.ProviderRejectedEvent;
 import com.homefix.shared.outbox.OutboxEventPublisher;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 /**
@@ -101,11 +103,40 @@ class DispatchMiscTest {
     }
 
     @Test
+    void providerRejectedPublisher_publishesEventThroughOutboxWithConsumerFieldNames() {
+        OutboxEventPublisher outbox = mock(OutboxEventPublisher.class);
+        ProviderRejectedPublisher publisher = new ProviderRejectedPublisher(outbox);
+        UUID booking = UUID.randomUUID();
+        UUID customer = UUID.randomUUID();
+        UUID provider = UUID.randomUUID();
+
+        publisher.publish(booking, customer, provider, ProviderRejectedEvent.REASON_TIMED_OUT);
+
+        ArgumentCaptor<Object> payload = ArgumentCaptor.forClass(Object.class);
+        verify(outbox).publish(eq(ProviderRejectedEvent.AGGREGATE_TYPE), eq(booking),
+                eq(ProviderRejectedEvent.EVENT_TYPE), payload.capture());
+        ProviderRejectedEvent event = (ProviderRejectedEvent) payload.getValue();
+        assertThat(event.bookingId()).isEqualTo(booking);
+        assertThat(event.customerId()).isEqualTo(customer);
+        assertThat(event.providerId()).isEqualTo(provider);
+        assertThat(event.reason()).isEqualTo("TIMED_OUT");
+        assertThat(event.rejectedAt()).isNotNull();
+        // The relay maps this event type to the topic the Notification Service listens on.
+        assertThat(ProviderRejectedEvent.EVENT_TYPE).isEqualTo("ProviderRejected");
+    }
+
+    @Test
     void dispatchClientProperties_roundTrip() {
         DispatchClientProperties p = new DispatchClientProperties();
         assertThat(p.getProviderServiceBaseUrl()).isEqualTo("http://provider-service");
         assertThat(p.getBookingServiceBaseUrl()).isEqualTo("http://booking-service");
         assertThat(p.getNotificationServiceBaseUrl()).isEqualTo("http://notification-service");
+        assertThat(p.getCustomerServiceBaseUrl()).isEqualTo("http://customer-service");
+        assertThat(p.getCatalogServiceBaseUrl()).isEqualTo("http://catalog-service");
+        p.setCustomerServiceBaseUrl("d");
+        p.setCatalogServiceBaseUrl("e");
+        assertThat(p.getCustomerServiceBaseUrl()).isEqualTo("d");
+        assertThat(p.getCatalogServiceBaseUrl()).isEqualTo("e");
         p.setProviderServiceBaseUrl("a");
         p.setBookingServiceBaseUrl("b");
         p.setNotificationServiceBaseUrl("c");

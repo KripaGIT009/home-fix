@@ -46,6 +46,7 @@ class BookingControllerTest {
     private static final UUID CUSTOMER = UUID.fromString("44444444-4444-4444-4444-444444444444");
     private static final UUID CATEGORY = UUID.randomUUID();
     private static final UUID SUB = UUID.randomUUID();
+    private static final UUID ADDRESS = UUID.randomUUID();
 
     @Mock private BookingService bookingService;
 
@@ -79,7 +80,8 @@ class BookingControllerTest {
                 .thenReturn(new BookingService.BookingCreationResult(b, estimate));
 
         String body = "{\"categoryId\":\"" + CATEGORY + "\",\"subcategoryId\":\"" + SUB
-                + "\",\"emergency\":false}";
+                + "\",\"addressId\":\"" + ADDRESS + "\",\"emergency\":false"
+                + ",\"couponCode\":\"SAVE10\"}";
 
         mvc.perform(post("/bookings").principal(customerAuth())
                         .contentType(MediaType.APPLICATION_JSON).content(body))
@@ -91,6 +93,9 @@ class BookingControllerTest {
         verify(bookingService).createScheduled(captor.capture());
         org.assertj.core.api.Assertions.assertThat(captor.getValue().customerId()).isEqualTo(CUSTOMER);
         org.assertj.core.api.Assertions.assertThat(captor.getValue().emergency()).isFalse();
+        org.assertj.core.api.Assertions.assertThat(captor.getValue().addressId()).isEqualTo(ADDRESS);
+        // The coupon the estimate was shown with must reach pricing (Requirement 6.10).
+        org.assertj.core.api.Assertions.assertThat(captor.getValue().couponCode()).isEqualTo("SAVE10");
     }
 
     @Test
@@ -100,7 +105,7 @@ class BookingControllerTest {
                 .thenReturn(new BookingService.BookingCreationResult(b, null));
 
         String body = "{\"categoryId\":\"" + CATEGORY + "\",\"subcategoryId\":\"" + SUB
-                + "\",\"emergency\":true}";
+                + "\",\"addressId\":\"" + ADDRESS + "\",\"emergency\":true}";
 
         mvc.perform(post("/bookings").principal(customerAuth())
                         .contentType(MediaType.APPLICATION_JSON).content(body))
@@ -116,6 +121,34 @@ class BookingControllerTest {
                         .contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errorCode").value("VALIDATION_ERROR"));
+    }
+
+    @Test
+    void createRejectsMissingAddressWith400() throws Exception {
+        // Dispatch resolves the service location only through the saved address; a booking
+        // without one could never be matched, so it must not be created at all.
+        String body = "{\"categoryId\":\"" + CATEGORY + "\",\"subcategoryId\":\"" + SUB
+                + "\",\"emergency\":true}";
+
+        mvc.perform(post("/bookings").principal(customerAuth())
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("VALIDATION_ERROR"));
+
+        org.mockito.Mockito.verifyNoInteractions(bookingService);
+    }
+
+    @Test
+    void createRejectsOverlongCouponWith400() throws Exception {
+        String body = "{\"categoryId\":\"" + CATEGORY + "\",\"subcategoryId\":\"" + SUB
+                + "\",\"addressId\":\"" + ADDRESS + "\",\"emergency\":true"
+                + ",\"couponCode\":\"" + "X".repeat(33) + "\"}";
+
+        mvc.perform(post("/bookings").principal(customerAuth())
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest());
+
+        org.mockito.Mockito.verifyNoInteractions(bookingService);
     }
 
     @Test
@@ -172,9 +205,11 @@ class BookingControllerTest {
         mvc.perform(multipart("/bookings/media").file(media)
                         .param("categoryId", CATEGORY.toString())
                         .param("subcategoryId", SUB.toString())
+                        .param("addressId", ADDRESS.toString())
                         .param("emergency", "false")
                         .param("scheduledAt", "2024-06-15T10:00:00Z")
                         .param("description", "leaky tap")
+                        .param("couponCode", "SAVE10")
                         .principal(customerAuth()))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.reference").value("HFX-100"));
@@ -185,6 +220,20 @@ class BookingControllerTest {
         org.assertj.core.api.Assertions.assertThat(cmd.getValue().customerId()).isEqualTo(CUSTOMER);
         org.assertj.core.api.Assertions.assertThat(cmd.getValue().scheduledAt())
                 .isEqualTo(java.time.Instant.parse("2024-06-15T10:00:00Z"));
+        org.assertj.core.api.Assertions.assertThat(cmd.getValue().addressId()).isEqualTo(ADDRESS);
+        org.assertj.core.api.Assertions.assertThat(cmd.getValue().couponCode()).isEqualTo("SAVE10");
+    }
+
+    @Test
+    void createWithMediaRejectsMissingAddressWith400() throws Exception {
+        mvc.perform(multipart("/bookings/media")
+                        .param("categoryId", CATEGORY.toString())
+                        .param("subcategoryId", SUB.toString())
+                        .param("emergency", "true")
+                        .principal(customerAuth()))
+                .andExpect(status().isBadRequest());
+
+        org.mockito.Mockito.verifyNoInteractions(bookingService);
     }
 
     @Test

@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react';
-import { Alert, Box, Button, CircularProgress, Stack, Typography } from '@mui/material';
+import { Skeleton, Stack } from '@mui/material';
 import InboxRoundedIcon from '@mui/icons-material/InboxRounded';
-import RefreshRoundedIcon from '@mui/icons-material/RefreshRounded';
-import { isApiError } from '@api/client';
+import { radius } from '@lib/theme';
+import { EmptyState, InlineError } from './StateViews';
 
 interface QueryStateViewProps {
   isLoading: boolean;
@@ -12,12 +12,21 @@ interface QueryStateViewProps {
   /** Shown when not loading, not error, and there is no data. */
   isEmpty?: boolean;
   emptyMessage?: string;
+  /** Headline for the empty state; the message becomes its supporting copy. */
+  emptyTitle?: string;
+  /** Optional action (e.g. "Book a service") under the empty state. */
+  emptyAction?: ReactNode;
+  emptyIcon?: ReactNode;
+  /** Number and height of skeleton rows while loading. */
+  skeletonRows?: number;
+  skeletonHeight?: number;
   children: ReactNode;
 }
 
 /**
- * Small helper that renders the standard loading / error / empty states around
- * query-backed content, so screens don't repeat the boilerplate.
+ * Renders the standard loading / error / empty states around query-backed
+ * content, so screens don't repeat the boilerplate. Loading shows skeleton
+ * rows shaped like the content; errors are a calm inline notice with a retry.
  */
 export function QueryStateView({
   isLoading,
@@ -26,52 +35,40 @@ export function QueryStateView({
   onRetry,
   isEmpty,
   emptyMessage = 'Nothing to show yet.',
+  emptyTitle,
+  emptyAction,
+  emptyIcon,
+  skeletonRows = 3,
+  skeletonHeight = 88,
   children,
 }: QueryStateViewProps) {
   if (isLoading) {
     return (
-      <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}>
-        <CircularProgress aria-label="Loading" />
-      </Box>
+      <Stack spacing={1.5} aria-busy="true" aria-label="Loading">
+        {Array.from({ length: skeletonRows }, (_, index) => (
+          <Skeleton
+            key={index}
+            variant="rounded"
+            height={skeletonHeight}
+            sx={{ borderRadius: `${radius.lg}px` }}
+          />
+        ))}
+      </Stack>
     );
   }
 
   if (isError) {
-    const message = isApiError(error) ? error.message : 'Something went wrong. Please try again.';
-    return (
-      <Stack spacing={2} sx={{ py: 3 }} alignItems="flex-start">
-        <Alert severity="error" sx={{ width: '100%' }}>
-          {message}
-        </Alert>
-        {onRetry ? (
-          <Button variant="outlined" startIcon={<RefreshRoundedIcon />} onClick={onRetry}>
-            Try again
-          </Button>
-        ) : null}
-      </Stack>
-    );
+    return <InlineError error={error} {...(onRetry ? { onRetry } : {})} />;
   }
 
   if (isEmpty) {
     return (
-      <Stack spacing={1} alignItems="center" sx={{ py: 7, textAlign: 'center' }}>
-        <Box
-          sx={{
-            width: 56,
-            height: 56,
-            borderRadius: '50%',
-            display: 'grid',
-            placeItems: 'center',
-            bgcolor: 'action.hover',
-            color: 'text.secondary',
-          }}
-        >
-          <InboxRoundedIcon aria-hidden />
-        </Box>
-        <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 280 }}>
-          {emptyMessage}
-        </Typography>
-      </Stack>
+      <EmptyState
+        icon={emptyIcon ?? <InboxRoundedIcon />}
+        title={emptyTitle ?? emptyMessage}
+        {...(emptyTitle ? { description: emptyMessage } : {})}
+        {...(emptyAction ? { action: emptyAction } : {})}
+      />
     );
   }
 

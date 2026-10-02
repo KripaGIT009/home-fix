@@ -2,39 +2,51 @@ package com.homefix.notification.consumer;
 
 import java.util.UUID;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.homefix.notification.domain.EventParticipants;
 
 /**
- * Inbound view of any of the 11 booking-lifecycle events consumed by the Notification Service
- * (Requirement 17.5). Producers publish richer payloads; only the fields needed to address and
- * render a notification are modelled here, and unknown fields are ignored so producers can evolve
- * their payloads independently.
+ * Inbound view of any event consumed by the Notification Service (Requirements 16.2, 16.3, 17.5).
+ * Producers publish richer payloads; only the user ids needed to address a notification and the
+ * non-PII attributes needed to render it are modelled here, and unknown fields are ignored so
+ * producers can evolve their payloads independently.
  *
- * <p>The stable {@code eventId} used for deduplication is carried on the Kafka record header, not
- * in this body; this payload supplies the recipient and non-PII rendering attributes.
+ * <p>Events carry user ids, never contact details: who is notified is decided by the
+ * {@code RecipientPolicy}, and their phone number or email is resolved from the Auth Service at
+ * send time. The stable {@code eventId} used for deduplication is carried on the Kafka record
+ * header, not in this body.
  *
- * @param bookingId        the booking the event relates to
- * @param bookingReference human-readable booking reference used in message text (non-PII)
- * @param recipientUserId  explicit recipient; falls back to {@code customerId} when absent
- * @param customerId       the customer on the booking
- * @param providerId       the provider on the booking (may be null early in the lifecycle)
- * @param mobileNumber     recipient mobile number for the SMS channel (PII)
- * @param emailAddress     recipient email for the email channel (PII)
- * @param deviceToken      recipient device token for the push channel
+ * <p>Field names follow the producers: booking-service publishes the booking reference as
+ * {@code reference} (the older {@code bookingReference} spelling is still accepted),
+ * rating-review-service names {@code reviewerId}/{@code revieweeId}, and complaint-service names
+ * the new status {@code newStatus}; booking-service's {@code BookingCancelled} carries the terminal
+ * booking {@code status} ({@code CANCELLED} or {@code SEARCHING_FAILED}).
+ *
+ * @param bookingId   the booking the event relates to
+ * @param reference   human-readable booking reference used in message text (non-PII)
+ * @param customerId  the customer on the booking or complaint
+ * @param providerId  the provider on the booking (null early in the lifecycle)
+ * @param reviewerId  the author of a review
+ * @param revieweeId  the subject of a review
+ * @param complaintId the complaint a complaint event relates to
+ * @param newStatus   a complaint's new status (enum name, non-PII)
+ * @param status      a booking's status on a booking event (enum name, non-PII)
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record LifecycleEventPayload(
         UUID bookingId,
-        String bookingReference,
-        UUID recipientUserId,
+        @JsonAlias("bookingReference") String reference,
         UUID customerId,
         UUID providerId,
-        String mobileNumber,
-        String emailAddress,
-        String deviceToken) {
+        UUID reviewerId,
+        UUID revieweeId,
+        UUID complaintId,
+        String newStatus,
+        String status) {
 
-    /** The user the notification should be addressed to. */
-    public UUID resolveRecipient() {
-        return recipientUserId != null ? recipientUserId : customerId;
+    /** The user ids this event names, for the recipient policy. */
+    public EventParticipants participants() {
+        return new EventParticipants(customerId, providerId, reviewerId, revieweeId);
     }
 }

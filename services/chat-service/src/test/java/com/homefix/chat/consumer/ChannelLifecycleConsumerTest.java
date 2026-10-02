@@ -134,6 +134,33 @@ class ChannelLifecycleConsumerTest {
     }
 
     @Test
+    void bookingCancelledBeforeProviderAcceptedLeavesATombstoneTheLateAcceptCannotOpen()
+            throws Exception {
+        InMemoryChatStore store = new InMemoryChatStore();
+        ChatService svc = service(store, new RecordingDeliveryPort(), new RecordingPushPort(),
+                FixedPresenceRegistry.allOnline());
+        TestableConsumer consumer = consumer(svc);
+        UUID bookingId = UUID.randomUUID();
+        UUID customerId = UUID.randomUUID();
+        UUID providerId = UUID.randomUUID();
+        Instant created = Instant.parse("2024-05-30T09:00:00Z");
+
+        // The Booking Service's BookingCancelled carries the participants and creation time.
+        consumer.invoke(record("BookingCancelled", MAPPER.writeValueAsString(
+                new LifecycleEventPayload(bookingId, customerId, providerId, created))));
+        consumer.invoke(record("ProviderAccepted", MAPPER.writeValueAsString(
+                new LifecycleEventPayload(bookingId, customerId, providerId, created))));
+
+        assertThat(store.findChannel(bookingId)).get()
+                .satisfies(c -> {
+                    assertThat(c.isActive()).isFalse();
+                    assertThat(c.getCustomerId()).isEqualTo(customerId);
+                    assertThat(c.getProviderId()).isEqualTo(providerId);
+                    assertThat(c.getBookingCreatedAt()).isEqualTo(created);
+                });
+    }
+
+    @Test
     void providerAcceptedWithoutParticipantsIsRejectedAsPoison() throws Exception {
         InMemoryChatStore store = new InMemoryChatStore();
         ChatService svc = service(store, new RecordingDeliveryPort(), new RecordingPushPort(),

@@ -1,11 +1,15 @@
 package com.homefix.payment.support;
 
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 import org.springframework.data.domain.Example;
 import org.springframework.data.domain.Page;
@@ -42,6 +46,69 @@ public class InMemoryPaymentTransactionRepository implements PaymentTransactionR
     @Override
     public Optional<PaymentTransaction> findById(UUID id) {
         return Optional.ofNullable(store.get(id));
+    }
+
+    /** No real row lock in memory; tests run single-threaded. */
+    @Override
+    public Optional<PaymentTransaction> findByIdForUpdate(UUID id) {
+        return findById(id);
+    }
+
+    @Override
+    public List<PaymentTransaction> findWalletCreditsDue(Instant cutoff, Pageable page) {
+        return store.values().stream()
+                .filter(t -> t.getWalletCreditPendingSince() != null
+                        && !t.getWalletCreditPendingSince().isAfter(cutoff))
+                .sorted(Comparator.comparing(PaymentTransaction::getWalletCreditPendingSince))
+                .limit(page.getPageSize())
+                .toList();
+    }
+
+    /**
+     * Interprets the LIKE pattern the way the database does ({@code %}, {@code _}, {@code !}
+     * escape), over the same three columns, newest first with the id as tie-breaker.
+     */
+    @Override
+    public List<PaymentTransaction> searchForAdmin(String pattern, Pageable page) {
+        Pattern regex = likeToRegex(pattern);
+        return store.values().stream()
+                .filter(t -> regex.matcher(t.getId().toString()).matches()
+                        || regex.matcher(t.getBookingId().toString()).matches()
+                        || (t.getGatewayReference() != null
+                                && regex.matcher(t.getGatewayReference().toLowerCase(Locale.ROOT)).matches()))
+                .sorted(Comparator.comparing(PaymentTransaction::getCreatedAt)
+                        .thenComparing(PaymentTransaction::getId).reversed())
+                .skip(page.getOffset())
+                .limit(page.getPageSize())
+                .toList();
+    }
+
+    private static Pattern likeToRegex(String like) {
+        StringBuilder regex = new StringBuilder();
+        for (int i = 0; i < like.length(); i++) {
+            char c = like.charAt(i);
+            if (c == '!' && i + 1 < like.length()) {
+                regex.append(Pattern.quote(String.valueOf(like.charAt(++i))));
+            } else if (c == '%') {
+                regex.append(".*");
+            } else if (c == '_') {
+                regex.append('.');
+            } else {
+                regex.append(Pattern.quote(String.valueOf(c)));
+            }
+        }
+        return Pattern.compile(regex.toString(), Pattern.DOTALL);
+    }
+
+    /** Like the real bulk update, changes only the marker column and leaves the entity otherwise alone. */
+    @Override
+    public int clearWalletCreditPending(UUID id) {
+        PaymentTransaction tx = store.get(id);
+        if (tx == null) {
+            return 0;
+        }
+        tx.clearWalletCreditPending();
+        return 1;
     }
 
     @Override

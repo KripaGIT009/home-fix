@@ -1,5 +1,6 @@
 package com.homefix.pricing.api;
 
+import java.util.List;
 import java.util.UUID;
 
 import org.springframework.http.ResponseEntity;
@@ -10,7 +11,9 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.homefix.pricing.api.dto.PricingConfigDto;
 import com.homefix.pricing.api.dto.PricingParametersDto;
+import com.homefix.pricing.service.PricingException;
 import com.homefix.pricing.service.PricingConfigService;
 
 import jakarta.validation.Valid;
@@ -45,5 +48,33 @@ public class AdminPricingController {
             @Valid @RequestBody PricingParametersDto request) {
         return ResponseEntity.ok(
                 PricingParametersDto.from(configService.updateParameters(request.toDomain())));
+    }
+
+    /**
+     * Admin Portal pricing table: every configured subcategory in the portal's
+     * {@code PricingConfig} shape (platform fee as a percent, currency INR).
+     */
+    @GetMapping("/config")
+    public ResponseEntity<List<PricingConfigDto>> listConfigs() {
+        return ResponseEntity.ok(configService.listParameters().stream()
+                .map(PricingConfigDto::from)
+                .toList());
+    }
+
+    /**
+     * Admin Portal edit of one subcategory. Merges onto the stored parameters (the portal does not
+     * send {@code taxRate} or the override floor/ceiling, which must survive the edit) and shares
+     * the persistence and cache-invalidation path of {@link #updateParameters}.
+     */
+    @PutMapping("/config/{subcategoryId}")
+    public ResponseEntity<PricingConfigDto> updateConfig(
+            @PathVariable("subcategoryId") UUID subcategoryId,
+            @RequestBody PricingConfigDto request) {
+        if (request.subcategoryId() != null && !request.subcategoryId().equals(subcategoryId)) {
+            throw PricingException.validation("Body subcategoryId " + request.subcategoryId()
+                    + " does not match path subcategoryId " + subcategoryId);
+        }
+        return ResponseEntity.ok(PricingConfigDto.from(
+                configService.mergeParameters(request.toChanges(subcategoryId))));
     }
 }

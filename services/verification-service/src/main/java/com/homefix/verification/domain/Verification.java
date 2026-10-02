@@ -51,12 +51,23 @@ public class Verification {
     @Column(name = "background_check_result", length = 2000)
     private String backgroundCheckResult;
 
+    /*
+     * Both collections are LAZY. They used to be two EAGER List "bags". Hibernate cannot join-fetch
+     * two bags in one query (and joining them would be a documents x audit-entries cartesian
+     * product), so it loaded each with its own secondary SELECT on every lookup: three statements
+     * and every child row for each verification read, 1 + 2N for a query returning N of them —
+     * including the dispatch eligibility gate, which needs only the status. Callers that need the
+     * full aggregate now load it through VerificationRepository#findWithDocumentsByProviderId
+     * (documents fetch-joined) and VerificationService initialises the audit trail with one more
+     * SELECT inside the transaction, so the response mapping never touches an uninitialised
+     * collection with open-in-view off. VerificationJpaMappingTest pins this fetch plan.
+     */
     @OneToMany(mappedBy = "verification", cascade = CascadeType.ALL, orphanRemoval = true,
-            fetch = FetchType.EAGER)
+            fetch = FetchType.LAZY)
     private List<VerificationDocument> documents = new ArrayList<>();
 
     @OneToMany(mappedBy = "verification", cascade = CascadeType.ALL, orphanRemoval = true,
-            fetch = FetchType.EAGER)
+            fetch = FetchType.LAZY)
     @OrderBy("sequence ASC")
     private List<VerificationAuditEntry> auditTrail = new ArrayList<>();
 
