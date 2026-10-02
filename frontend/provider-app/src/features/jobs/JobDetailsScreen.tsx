@@ -22,6 +22,8 @@ import { QueryStateView } from '@components/QueryStateView';
 import { describeBookingStatus } from '@lib/bookingStatus';
 import { formatCurrency, formatDateTime } from '@lib/format';
 import { useJobDetail } from './hooks';
+import { PaymentStatusNotice } from './PaymentStatusNotice';
+import { isJobFinished } from './status';
 import { buildNavigationDeepLink } from './navigation';
 import type { JobDetail } from './api';
 
@@ -66,7 +68,7 @@ function DetailContent({ job }: { job: JobDetail }) {
     job.status === 'JOB_PAUSED' ||
     job.status === 'ADDITIONAL_QUOTE_REQUIRED' ||
     job.status === 'CUSTOMER_APPROVAL_PENDING';
-  const showCompleteCta = job.status === 'JOB_COMPLETED';
+  const showCompleteCta = isJobFinished(job.status);
 
   return (
     <Stack spacing={2}>
@@ -196,6 +198,7 @@ function DetailContent({ job }: { job: JobDetail }) {
           Open active job
         </Button>
       ) : null}
+      <PaymentStatusNotice status={job.status} />
       {showCompleteCta ? (
         <Button
           variant="contained"

@@ -8,6 +8,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
@@ -39,6 +41,8 @@ import com.homefix.provider.service.ProfileUpdateCommand.CategorySelectionComman
  */
 @Service
 public class ProviderService {
+
+    private static final Logger log = LoggerFactory.getLogger(ProviderService.class);
 
     private final ProviderProfileRepository profileRepository;
     private final ProviderEarningRepository earningRepository;
@@ -242,6 +246,10 @@ public class ProviderService {
     /**
      * Credits a completed job's net earning to the wallet and records an itemised earnings
      * line showing gross, platform fee, and net (Requirement 14.1).
+     *
+     * <p>Idempotent per booking: the Payment Service delivers the credit at least once, so a
+     * second credit for a booking that already has its JOB_CREDIT line changes nothing (a unique
+     * index, migration V2, settles two deliveries that race).
      */
     @Transactional
     public ProviderProfile creditJobEarning(UUID providerId, UUID bookingId, String bookingReference,
@@ -256,6 +264,10 @@ public class ProviderService {
             throw ProviderException.validation("Platform fee cannot exceed gross earning");
         }
         ProviderProfile profile = getExisting(providerId);
+        if (bookingId != null && earningRepository.existsByBookingIdAndType(bookingId, EarningType.JOB_CREDIT)) {
+            log.info("Job credit for booking {} already applied; ignoring the repeat", bookingId);
+            return profile;
+        }
         ProviderEarning earning = ProviderEarning.jobCredit(providerId, bookingId, bookingReference, gross, platformFee);
         earningRepository.save(earning);
         profile.creditWallet(earning.getNet());

@@ -264,6 +264,8 @@ services:
       CUSTOMER_CLIENT: http
       CUSTOMER_SERVICE_URL: http://customer-service:8082
       MEDIA_STORAGE_PROVIDER: local
+      # Consumes PaymentCompleted to move a paid booking to PAYMENT_COMPLETED.
+      KAFKA_BOOTSTRAP_SERVERS: ${HOMEFIX_KAFKA_BOOTSTRAP_SERVERS:-host.docker.internal:9094}
     ports:
       - "8084:8084"
     depends_on:
@@ -453,6 +455,18 @@ services:
       # Gateway webhook signing secrets (HMAC-SHA256); no defaults any more.
       RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET:?set RAZORPAY_WEBHOOK_SECRET, see .env.example}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:?set STRIPE_WEBHOOK_SECRET, see .env.example}
+      # Payments are priced from the booking, not the client: the Booking Service's internal
+      # payment-facts and payment-pending endpoints, called with the shared service credential.
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?set INTERNAL_API_KEY, see .env.example}
+      BOOKING_SERVICE_URL: http://booking-service:8084
+      # Credits each paid booking's earning to the provider's wallet (idempotent per booking).
+      PROVIDER_WALLET_CLIENT: http
+      PROVIDER_SERVICE_URL: http://provider-service:8083
+      # Local only: no real gateway can send the signed webhook that settles a payment, so a
+      # simulator settles it through the same signed-callback path. Never enabled in Helm.
+      PAYMENT_DEFAULT_GATEWAY: simulator
+      PAYMENT_SIMULATOR_ENABLED: "true"
+      PAYMENT_SIMULATOR_SECRET: ${PAYMENT_SIMULATOR_SECRET:-local-payment-simulator-secret}
     ports:
       - "8088:8088"
     healthcheck:

@@ -98,7 +98,8 @@ const STEP_BY_STATUS: Partial<Record<BookingStatus, JourneyKey>> = {
   JOB_PAUSED: 'working',
   ADDITIONAL_QUOTE_REQUIRED: 'working',
   CUSTOMER_APPROVAL_PENDING: 'working',
-  JOB_COMPLETED: 'completed',
+  // The job is done: paying is what is left.
+  JOB_COMPLETED: 'paid',
   CUSTOMER_CONFIRMED: 'paid',
   PAYMENT_PENDING: 'paid',
   DISPUTED: 'completed',
@@ -117,8 +118,8 @@ const CURRENT_NOTE: Partial<Record<BookingStatus, string>> = {
   JOB_PAUSED: 'Work is paused for now.',
   ADDITIONAL_QUOTE_REQUIRED: 'An updated quote needs your approval.',
   CUSTOMER_APPROVAL_PENDING: 'Waiting for your approval.',
-  JOB_COMPLETED: 'Confirm the job is done to finish up.',
-  CUSTOMER_CONFIRMED: 'Payment is being processed.',
+  JOB_COMPLETED: 'Pay to finish up.',
+  CUSTOMER_CONFIRMED: 'Payment is due.',
   PAYMENT_PENDING: 'Payment is due.',
 };
 

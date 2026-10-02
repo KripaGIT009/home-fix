@@ -25,6 +25,7 @@ import {
   type JobOffer,
   type PhotoKind,
 } from './api';
+import { isWaitingOnCustomer } from './status';
 
 /** Query keys for Provider job-execution resources. */
 export const jobKeys = {
@@ -66,30 +67,42 @@ export function useJobOffer(bookingId: string): UseQueryResult<JobOffer, ApiErro
   });
 }
 
-/** How often an open job is re-read while it waits on the customer's quote decision. */
+/**
+ * How often an open job is re-read while it waits on the customer: their quote
+ * decision, or their payment once the job is done.
+ */
 export const APPROVAL_POLL_MS = 5_000;
+
+/** Poll while the job waits on the customer; stop once it moves on. */
+function pollWhileWaitingOnCustomer(status: JobDetail['status'] | undefined): number | false {
+  return status && isWaitingOnCustomer(status) ? APPROVAL_POLL_MS : false;
+}
 
 /**
  * Full job detail (Requirement 11.1). While the customer is deciding on a
- * parts quote the decision arrives from their side, so the detail is polled
- * until it moves on (Requirement 9.7-9.9).
+ * parts quote, or paying for the finished job, the change arrives from their
+ * side, so the detail is polled until it moves on (Requirement 9.7-9.9, 12).
  */
 export function useJobDetail(bookingId: string): UseQueryResult<JobDetail, ApiError> {
   return useQuery<JobDetail, ApiError>({
     queryKey: jobKeys.detail(bookingId),
     queryFn: () => fetchJobDetail(bookingId),
-    refetchInterval: (query) =>
-      query.state.data?.status === 'CUSTOMER_APPROVAL_PENDING' ? APPROVAL_POLL_MS : false,
+    refetchInterval: (query) => pollWhileWaitingOnCustomer(query.state.data?.status),
   });
 }
 
-/** Completion summary: net duration, parts, final price (Requirement 11.6). */
+/**
+ * Completion summary: net duration, parts, final price (Requirement 11.6).
+ * Polled like the job detail it is read from until the customer has paid, so
+ * the screen can say when the earnings are credited (Requirement 12).
+ */
 export function useJobCompletionSummary(
   bookingId: string,
 ): UseQueryResult<JobCompletionSummary, ApiError> {
   return useQuery<JobCompletionSummary, ApiError>({
     queryKey: jobKeys.summary(bookingId),
     queryFn: () => fetchJobCompletionSummary(bookingId),
+    refetchInterval: (query) => pollWhileWaitingOnCustomer(query.state.data?.status),
   });
 }
 

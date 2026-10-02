@@ -1079,11 +1079,8 @@ The running API gateway predated the admin routes in its own config (jar built 1
 
 1. **Provider onboarding**: no screens for profile, base location, radius, availability, skills or
    documents, so a provider who signs up in the app can never be matched.
-2. **The lifecycle ends at `JOB_COMPLETED`**: nothing moves a booking to customer confirmation or
-   payment, booking-service consumes no events, and the customer app never starts a payment — so
-   invoices, rating prompts and chat closure never fire end to end.
-3. **`PaymentCompleted` trusts client-supplied booking, provider and amount**; rating, chat and
-   invoice consume it as given.
+2. ~~**The lifecycle ends at `JOB_COMPLETED`**~~ — fixed, see 17.6.
+3. ~~**`PaymentCompleted` trusts client-supplied booking, provider and amount**~~ — fixed, see 17.6.
 4. **Dispatch failures after `BookingCreated` is acknowledged** (outage, restart mid-search) leave a
    booking in `SEARCHING_PROVIDER` with no sweeper; `ProviderAccepted` is a dual write.
 5. **Chat does not work**: wrong endpoints, a raw WebSocket against a STOMP server no route serves.
@@ -1093,3 +1090,38 @@ The running API gateway predated the admin routes in its own config (jar built 1
    provider's aggregate rating, so matching ranks on the seeded or zero value.
 8. Cross-service display fields in the admin portal (customer, provider and reviewer names, mobile
    numbers) are null; dispatch settings reset on restart.
+
+### 17.6 Payment after the job — five breaks, now one flow
+
+Reported by the user: after a job was completed, payment never came. Nothing was wrong with any
+single piece; the flow had never been joined up:
+
+1. **The customer app had no way to pay.** The booking detail said "Confirm the job is done to
+   finish up" with nothing to press. It now shows the total and a Pay button (method choice) on
+   the booking and tracking screens; paying is the confirmation.
+2. **`POST /payments` trusted the client** for the customer, provider, amount and fee. It now takes
+   only the booking and method, reads the amount, provider and customer from booking-service's new
+   internal `payment-facts`, refuses a booking that is not finished (409 `BOOKING_NOT_PAYABLE`) and
+   moves it to `PAYMENT_PENDING` through `payment-pending` before charging. A failed payment can be
+   retried as a new attempt (capped at 10).
+3. **A local payment could never succeed.** The gateway adapters accept a charge and wait for a
+   signed webhook no local gateway sends. A `simulator` gateway — off by default, enabled only in
+   Compose, never in Helm, with a startup WARN — settles each charge by passing a payload it signs
+   itself through the real `handleGatewayCallback`, so everything downstream runs the production
+   path.
+4. **booking-service consumed no events**, so a paid booking stayed `JOB_COMPLETED`. It now consumes
+   `PaymentCompleted` (shared idempotent consumer) and moves the booking to `PAYMENT_COMPLETED`.
+5. **Providers were never paid.** The wallet client was a stub that logged `WALLET_CREDIT` while
+   payment-service cleared its "credit owed" marker. It now calls provider-service's new
+   `POST /internal/providers/{id}/earnings`, which applies a booking's credit once however often it
+   is sent (check + unique index, migration V2) — needed because payment-service re-sends credits
+   it could not confirm. Settlement reversals still have no Provider Service endpoint; they are
+   logged and Finance is alerted for every failed settlement, as before.
+
+The provider app shows "Waiting for the customer to pay" and then "Paid — your earnings have been
+credited". `verify-outbox-flow.sh` now pays for the job it ran: 37/37, including a tampered amount
+in the request being ignored (the booking's ₹615.25 was charged) and the provider's wallet credited
+₹492.20 net once. `smoke-flows.sh` 78/78; booking-service 377 tests (and its `EndToEndBookingFlowsIT`,
+which surefire never runs, fixed: it completed a job with the customer's token), payment-service 224,
+provider-service 171.
+

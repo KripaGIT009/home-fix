@@ -97,6 +97,14 @@
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
 
+        <!-- ===== Kafka: PaymentCompleted consumption (Requirement 12.6) =====
+             Version from the Spring Boot BOM, matching homefix-shared-outbox. Also gives Boot's
+             auto-configured KafkaTemplate, from which the shared DlqForwarder is built. -->
+        <dependency>
+            <groupId>org.springframework.kafka</groupId>
+            <artifactId>spring-kafka</artifactId>
+        </dependency>
+
         <!-- ===== Runtime persistence driver ===== -->
         <dependency>
             <groupId>org.postgresql</groupId>

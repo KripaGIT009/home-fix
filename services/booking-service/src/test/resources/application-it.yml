@@ -27,6 +27,11 @@ spring:
         default_schema: ""
         format_sql: false
     open-in-view: false
+  # No broker in the IT. The PaymentCompleted consumer bean is still created (so its wiring is
+  # checked); its listener container is just never started, so nothing polls localhost:9092.
+  kafka:
+    listener:
+      auto-startup: false
 
 homefix:
   security:

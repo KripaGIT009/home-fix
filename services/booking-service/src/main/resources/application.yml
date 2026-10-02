@@ -22,6 +22,22 @@ spring:
     default-schema: booking
     baseline-on-migrate: true
     baseline-version: 1
+  # Consumes PaymentCompleted (Requirement 12.6). The producer side is only the shared DlqForwarder:
+  # booking events still leave through the transactional outbox, not this template.
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: booking-service
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      # Reliability contract required by the shared KafkaProducerTemplate (Task 6).
+      acks: all
+      properties:
+        enable.idempotence: true
 server:
   port: ${SERVER_PORT:8085}
 
@@ -54,6 +70,9 @@ homefix:
     # Default cancellation fee applied when a Service_Subcategory has none configured
     # (Requirement 9.18 range 0.00-999.99).
     default-cancellation-fee: 0.00
+    topics:
+      # Settles a paid booking at PAYMENT_COMPLETED (Requirement 12.6).
+      payment-completed: ${BOOKING_TOPIC_PAYMENT_COMPLETED:PaymentCompleted}
   catalog:
     # Selects the active CatalogClientPort adapter: 'http' (production) or 'stub' (dev/test).
     client: ${CATALOG_CLIENT:stub}

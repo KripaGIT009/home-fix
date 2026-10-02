@@ -20,7 +20,8 @@ import com.homefix.payment.api.dto.TransactionResponse;
 import com.homefix.payment.domain.PaymentTransaction;
 import com.homefix.payment.domain.Settlement;
 import com.homefix.payment.service.GatewayCallback;
-import com.homefix.payment.service.InitiatePaymentCommand;
+import com.homefix.payment.service.BookingPaymentService;
+import com.homefix.payment.service.PayBookingCommand;
 import com.homefix.payment.service.PaymentService;
 
 import jakarta.validation.Valid;
@@ -34,7 +35,7 @@ import jakarta.validation.Valid;
  *
  * <p>Role-based access is enforced by {@code PaymentRbacConfig}; on top of it, the customer-facing
  * endpoints assert <em>ownership</em> via {@link CallerIdentity} so a customer cannot read another
- * customer's transaction, open a payment in somebody else's name, or push another customer's
+ * customer's transaction, pay for somebody else's booking, or push another customer's
  * PENDING payment towards FAILED through the retry endpoint. The callback, refund, reconcile and
  * settlement handlers carry no ownership check: the callback has no authenticated principal at all
  * (it is HMAC-verified), and refunds/reconciliation/settlements are staff-only by role.
@@ -48,21 +49,29 @@ import jakarta.validation.Valid;
 public class PaymentController {
 
     private final PaymentService paymentService;
+    private final BookingPaymentService bookingPaymentService;
     private final CallerIdentity callerIdentity;
 
-    public PaymentController(PaymentService paymentService, CallerIdentity callerIdentity) {
+    public PaymentController(PaymentService paymentService, BookingPaymentService bookingPaymentService,
+                             CallerIdentity callerIdentity) {
         this.paymentService = paymentService;
+        this.bookingPaymentService = bookingPaymentService;
         this.callerIdentity = callerIdentity;
     }
 
-    /** Initiate a payment; idempotent on (customerId, bookingId) (Requirement 12.3). */
+    /**
+     * Pay for a completed booking; idempotent on (booking customer, bookingId) (Requirement 12.2,
+     * 12.3). The amount, provider and paying customer come from the Booking Service, see
+     * {@link BookingPaymentService}. Ownership is checked there against the booking's customer: a
+     * customer may pay only their own booking (anything else is 404), staff may pay on the customer's
+     * behalf. A staff caller's id is not needed, so it is not resolved for them.
+     */
     @PostMapping
     public ResponseEntity<TransactionResponse> initiate(@Valid @RequestBody InitiatePaymentRequest req) {
-        // A customer may only open a payment in their own name; staff may act for anybody.
-        callerIdentity.requireSelfOrStaff(req.customerId());
-        PaymentTransaction tx = paymentService.initiatePayment(new InitiatePaymentCommand(
-                req.customerId(), req.bookingId(), req.providerId(), req.amount(), req.platformFee(),
-                req.method(), req.gatewayId(), req.paymentCredential()));
+        boolean staff = callerIdentity.isStaff();
+        UUID callerId = staff ? null : callerIdentity.requireCallerId();
+        PaymentTransaction tx = bookingPaymentService.payForBooking(new PayBookingCommand(
+                req.bookingId(), req.method(), req.gatewayId(), req.paymentCredential()), callerId, staff);
         return ResponseEntity.status(HttpStatus.CREATED).body(TransactionResponse.from(tx));
     }
 

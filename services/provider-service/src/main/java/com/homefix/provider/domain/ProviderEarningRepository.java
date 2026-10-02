@@ -21,4 +21,7 @@ public interface ProviderEarningRepository extends JpaRepository<ProviderEarning
      * so the caller decides where the day starts in the provider's own zone.
      */
     List<ProviderEarning> findByProviderIdAndCreditedAtGreaterThanEqual(UUID providerId, Instant from);
+
+    /** Whether the booking's job credit has already been applied (it may be delivered twice). */
+    boolean existsByBookingIdAndType(UUID bookingId, EarningType type);
 }

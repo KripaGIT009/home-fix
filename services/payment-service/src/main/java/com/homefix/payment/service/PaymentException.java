@@ -2,6 +2,7 @@ package com.homefix.payment.service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 import org.springframework.http.HttpStatus;
 
@@ -68,6 +69,21 @@ public class PaymentException extends RuntimeException {
     /** Requirement 12.4/12.5: a callback whose outcome contradicts the transaction's settled state. */
     public static PaymentException callbackConflict(String message) {
         return new PaymentException(HttpStatus.CONFLICT, "CALLBACK_CONFLICT", message);
+    }
+
+    /**
+     * Requirement 12.2: the booking being paid for does not exist, or is not the caller's. Both answer
+     * the same 404 so a customer cannot probe other customers' booking ids.
+     */
+    public static PaymentException bookingNotFound(UUID bookingId) {
+        return new PaymentException(HttpStatus.NOT_FOUND, "BOOKING_NOT_FOUND",
+                "Booking " + bookingId + " not found");
+    }
+
+    /** Requirement 12.2: the booking's status does not allow a payment (job not done, or paid/closed). */
+    public static PaymentException bookingNotPayable(UUID bookingId) {
+        return new PaymentException(HttpStatus.CONFLICT, "BOOKING_NOT_PAYABLE",
+                "Booking " + bookingId + " cannot be paid in its current state");
     }
 
     public HttpStatus getStatus() {

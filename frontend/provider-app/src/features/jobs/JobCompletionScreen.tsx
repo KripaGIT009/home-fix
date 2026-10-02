@@ -14,6 +14,7 @@ import { AppShell } from '@components/AppShell';
 import { QueryStateView } from '@components/QueryStateView';
 import { formatCurrency } from '@lib/format';
 import { useJobCompletionSummary } from './hooks';
+import { PaymentStatusNotice } from './PaymentStatusNotice';
 import type { JobCompletionSummary } from './api';
 
 /** Format a minutes count as "1h 20m" / "45m". */
@@ -28,7 +29,8 @@ function formatDuration(totalMinutes: number): string {
 /**
  * Job Completion screen (Requirement 11.6): a summary of the net job duration,
  * recorded parts, and final price. Reached after completing the job on the
- * Active Job screen, or when revisiting a completed job.
+ * Active Job screen, or when revisiting a completed job. It also follows the
+ * customer's payment until the earnings are credited (Requirement 12).
  */
 export function JobCompletionScreen() {
   const { bookingId = '' } = useParams();
@@ -61,6 +63,8 @@ function SummaryContent({ summary }: { summary: JobCompletionSummary }) {
           {summary.reference}
         </Typography>
       </Stack>
+
+      <PaymentStatusNotice status={summary.status} />
 
       <Card variant="outlined">
         <CardContent>

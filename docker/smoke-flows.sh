@@ -241,7 +241,9 @@ check 'location requires auth' '401|403' "${LOCATION}/locations/${BOOKING_ID}"
 # ------------------------------------------------------------------ payment --
 section 'Payment — initiation and idempotency (Requirement 12)'
 IDEMPOTENCY_KEY="smoke-${STAMP}"
-check 'payment initiation' '200|201|202|400|404|422' \
+# The smoke booking is never completed, so the honest answer is 409 BOOKING_NOT_PAYABLE: payments
+# are priced from the booking and only open once the job is done (verify-outbox-flow.sh pays one).
+check 'payment initiation' '200|201|202|400|404|409|422' \
   -X POST -H "${AUTHZ}" -H "${JSON}" -H "Idempotency-Key: ${IDEMPOTENCY_KEY}" \
   -d "{\"bookingId\":\"${BOOKING_ID}\",\"amount\":388.10,\"currency\":\"INR\",\"method\":\"UPI\",\"gateway\":\"RAZORPAY\"}" \
   "${PAYMENT}/payments"

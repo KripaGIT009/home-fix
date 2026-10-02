@@ -44,7 +44,9 @@ import { useBookingDetail, useQuoteDecision } from '@features/history/hooks';
 import { StatusChip } from '@features/history/StatusChip';
 import { useBookingService } from '@features/history/useServiceName';
 import type { BookingDetail } from '@features/history/api';
+import { PaymentPanel } from '@features/payment/PaymentPanel';
 import { TrackingMap } from './TrackingMap';
+import { StatePanel } from './StatePanel';
 import { ChatButton } from './ChatButton';
 import { useLiveLocation, useNowTick } from './hooks';
 import { STALE_LOCATION_THRESHOLD_MS, TRACKING_TICK_MS } from './constants';
@@ -254,71 +256,6 @@ function BookingHeader({
   );
 }
 
-/** Shared frame for every non-map state: icon, headline, explanation, actions. */
-function StatePanel({
-  icon,
-  tone = 'primary',
-  title,
-  children,
-  actions,
-  visual,
-}: {
-  icon: ReactNode;
-  tone?: 'primary' | 'warm' | 'success' | 'neutral' | 'danger';
-  title: string;
-  children: ReactNode;
-  actions?: ReactNode;
-  /** Replaces the icon tile with a custom visual (e.g. the searching radar). */
-  visual?: ReactNode;
-}) {
-  const colors = {
-    primary: { bg: brand.accentSoft, fg: brand.accent },
-    warm: { bg: brand.warmSoft, fg: brand.warmDark },
-    success: { bg: brand.greenSoft, fg: brand.green },
-    neutral: { bg: brand.slateSoft, fg: '#475467' },
-    danger: { bg: brand.redSoft, fg: brand.red },
-  }[tone];
-  return (
-    <Card sx={{ overflow: 'hidden' }}>
-      <CardContent sx={{ py: { xs: 3, md: 5 }, px: { xs: 2.5, md: 5 } }}>
-        <Stack
-          spacing={2}
-          alignItems={{ xs: 'center', sm: 'flex-start' }}
-          textAlign={{ xs: 'center', sm: 'left' }}
-        >
-          {visual ?? (
-            <IconTile size={60} bg={colors.bg} color={colors.fg}>
-              {icon}
-            </IconTile>
-          )}
-          <Box role="status" aria-live="polite">
-            <Typography variant="h3" component="p">
-              {title}
-            </Typography>
-            <Typography
-              variant="body1"
-              color="text.secondary"
-              component="div"
-              sx={{ mt: 1, maxWidth: 560 }}
-            >
-              {children}
-            </Typography>
-          </Box>
-          {actions ? (
-            <Stack
-              direction={{ xs: 'column', sm: 'row' }}
-              spacing={1.25}
-              sx={{ pt: 1, width: { xs: '100%', sm: 'auto' } }}
-            >
-              {actions}
-            </Stack>
-          ) : null}
-        </Stack>
-      </CardContent>
-    </Card>
-  );
-}
-
 const ripple = keyframes`
   0% { transform: scale(0.6); opacity: 0.55; }
   100% { transform: scale(1.6); opacity: 0; }
@@ -456,10 +393,15 @@ function PhasePanel({
     case 'approval':
       return <QuoteApprovalPanel bookingId={bookingId} detail={detail} />;
     case 'completed':
-      return (
+    case 'paymentDue':
+      // Paying needs the booking's amount; until the booking has been read,
+      // say where things stand.
+      return detail ? (
+        <PaymentPanel detail={detail} />
+      ) : (
         <StatePanel
-          icon={<TaskAltRoundedIcon />}
-          tone="success"
+          icon={<PaymentsRoundedIcon />}
+          tone="warm"
           title="Job completed"
           actions={
             <Button variant="contained" size="large" onClick={onDetails}>
@@ -467,35 +409,33 @@ function PhasePanel({
             </Button>
           }
         >
-          Please check the work. Your invoice will be ready once payment is done.
+          The job is done and payment is due. Your invoice will be ready once payment is done.
         </StatePanel>
       );
-    case 'paymentDue':
-      return (
-        <StatePanel icon={<PaymentsRoundedIcon />} tone="warm" title="Payment pending">
-          The job is done. We&apos;ll confirm here as soon as the payment goes through.
-        </StatePanel>
+    case 'paid': {
+      const paidActions = (
+        <>
+          <Button variant="contained" size="large" onClick={onDetails}>
+            View invoice &amp; details
+          </Button>
+          <Button variant="outlined" size="large" onClick={onBookAgain}>
+            Book again
+          </Button>
+        </>
       );
-    case 'paid':
-      return (
+      return detail ? (
+        <PaymentPanel detail={detail} paidActions={paidActions} />
+      ) : (
         <StatePanel
           icon={<TaskAltRoundedIcon />}
           tone="success"
           title="All done — thank you!"
-          actions={
-            <>
-              <Button variant="contained" size="large" onClick={onDetails}>
-                View invoice &amp; details
-              </Button>
-              <Button variant="outlined" size="large" onClick={onBookAgain}>
-                Book again
-              </Button>
-            </>
-          }
+          actions={paidActions}
         >
           Your booking is complete and paid.
         </StatePanel>
       );
+    }
     case 'cancelled':
       return (
         <StatePanel

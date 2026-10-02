@@ -262,13 +262,9 @@ public class BookingQueryService {
             return booking.getScheduledAt() != null ? booking.getScheduledAt() : booking.getCreatedAt();
         }
 
-        /**
-         * What the booking costs: the final total once one is set (parts priced in, Requirement
-         * 6.8, or the job completed), otherwise the estimate the customer accepted. Null only if
-         * neither was recorded.
-         */
+        /** What the booking costs; see {@link Booking#payableTotal()}. */
         public BigDecimal amount() {
-            return booking.getFinalTotal() != null ? booking.getFinalTotal() : booking.getEstimatedTotal();
+            return booking.payableTotal();
         }
     }
 

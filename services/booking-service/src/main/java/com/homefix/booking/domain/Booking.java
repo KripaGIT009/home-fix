@@ -186,6 +186,16 @@ public class Booking {
         this.finalTotal = finalTotal;
     }
 
+    /**
+     * What the booking costs: the final total once one is set (parts priced in, Requirement 6.8,
+     * or the job completed), otherwise the estimate the customer accepted. Null only if neither
+     * was recorded. The one definition behind the amount the apps show and the amount the Payment
+     * Service charges (Requirement 12.1), so the two cannot disagree.
+     */
+    public BigDecimal payableTotal() {
+        return finalTotal != null ? finalTotal : estimatedTotal;
+    }
+
     public BigDecimal getCancellationFee() {
         return cancellationFee;
     }

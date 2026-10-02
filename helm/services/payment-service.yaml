@@ -20,5 +20,11 @@ secrets:
     KMS_DATA_KEY: kms_data_key
     RAZORPAY_WEBHOOK_SECRET: razorpay_webhook_secret
     STRIPE_WEBHOOK_SECRET: stripe_webhook_secret
+    # Presented to the Booking Service's internal payment endpoints.
+    INTERNAL_API_KEY: internal_api_key
 
-config: {}
+# The payment simulator (PAYMENT_SIMULATOR_ENABLED) is a local-only aid and is never set here.
+config:
+  BOOKING_SERVICE_URL: "http://booking-service:8084"
+  PROVIDER_WALLET_CLIENT: "http"
+  PROVIDER_SERVICE_URL: "http://provider-service:8083"

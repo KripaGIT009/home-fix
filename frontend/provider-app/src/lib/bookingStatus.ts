@@ -38,7 +38,7 @@ export interface StatusDescriptor {
 /**
  * Presentation metadata for each status, driving the coloured status indicator
  * (MUI Chip) on the active job list and the job screens. Colours progress from
- * neutral (assigned) through primary (in progress) to success (completed), with
+ * neutral (assigned) through primary (in progress) to success (paid), with
  * warning for states that need someone to act and error for terminal failures.
  */
 const STATUS_MAP: Record<BookingStatus, StatusDescriptor> = {
@@ -53,9 +53,10 @@ const STATUS_MAP: Record<BookingStatus, StatusDescriptor> = {
   JOB_PAUSED: { label: 'Paused', color: 'warning' },
   ADDITIONAL_QUOTE_REQUIRED: { label: 'Quote requested', color: 'warning' },
   CUSTOMER_APPROVAL_PENDING: { label: 'Awaiting approval', color: 'warning' },
-  JOB_COMPLETED: { label: 'Completed', color: 'success' },
-  CUSTOMER_CONFIRMED: { label: 'Confirmed', color: 'success' },
-  PAYMENT_PENDING: { label: 'Payment pending', color: 'info' },
+  // Done but unpaid: the provider waits for the customer to pay.
+  JOB_COMPLETED: { label: 'Awaiting payment', color: 'warning' },
+  CUSTOMER_CONFIRMED: { label: 'Awaiting payment', color: 'warning' },
+  PAYMENT_PENDING: { label: 'Awaiting payment', color: 'warning' },
   PAYMENT_COMPLETED: { label: 'Paid', color: 'success' },
   DISPUTED: { label: 'Disputed', color: 'error' },
   REFUNDED: { label: 'Refunded', color: 'default' },
