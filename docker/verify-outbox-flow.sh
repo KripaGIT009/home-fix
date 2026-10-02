@@ -298,8 +298,12 @@ if [ "${JOB_READY:-}" = "yes" ]; then
   # A 1x1 JPEG, enough for the content-type and size checks.
   PHOTO="$(mktemp)"
   printf '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q=='     | base64 -d > "${PHOTO}" 2>/dev/null
+  # curl on Windows is a native program and MSYS_NO_PATHCONV (set above) stops Git Bash
+  # translating "/tmp/..." for it, so hand it the native path where cygpath exists.
+  PHOTO_ARG="${PHOTO}"
+  command -v cygpath >/dev/null 2>&1 && PHOTO_ARG="$(cygpath -w "${PHOTO}")"
   upload_photo() {
-    http_code -X POST -H "${PROVIDER_AUTHZ}" -F "type=$1" -F "file=@${PHOTO};type=image/jpeg;filename=$1.jpg"       "${BOOKINGS}/photos"
+    http_code -X POST -H "${PROVIDER_AUTHZ}" -F "type=$1" -F "file=@${PHOTO_ARG};type=image/jpeg;filename=$1.jpg"       "${BOOKINGS}/photos"
   }
   CODE="$(upload_photo BEFORE_PHOTO)"
   [ "${CODE}" = "204" ] && pass 'before-photo uploaded' || fail 'before-photo uploaded' "HTTP ${CODE}"
