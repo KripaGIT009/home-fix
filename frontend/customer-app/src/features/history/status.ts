@@ -25,8 +25,9 @@ const STATUS_META: Record<BookingStatus, { label: string; tone: StatusTone }> = 
   JOB_PAUSED: { label: 'Paused', tone: 'attention' },
   ADDITIONAL_QUOTE_REQUIRED: { label: 'New quote', tone: 'attention' },
   CUSTOMER_APPROVAL_PENDING: { label: 'Needs approval', tone: 'attention' },
-  JOB_COMPLETED: { label: 'Completed', tone: 'success' },
-  CUSTOMER_CONFIRMED: { label: 'Confirmed', tone: 'success' },
+  // The job is done but unpaid: the customer still has something to do.
+  JOB_COMPLETED: { label: 'Payment due', tone: 'attention' },
+  CUSTOMER_CONFIRMED: { label: 'Payment due', tone: 'attention' },
   PAYMENT_PENDING: { label: 'Payment due', tone: 'attention' },
   PAYMENT_COMPLETED: { label: 'Paid', tone: 'success' },
   DISPUTED: { label: 'Under review', tone: 'attention' },

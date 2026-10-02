@@ -69,6 +69,14 @@ public class BookingException extends RuntimeException {
         return new BookingException(HttpStatus.UNPROCESSABLE_ENTITY, "PHOTO_REQUIRED", message);
     }
 
+    /**
+     * Payment was requested for a booking that is not awaiting one: the job is not finished yet,
+     * or the booking was paid, cancelled, disputed or refunded (Requirement 12.1).
+     */
+    public static BookingException notPayable(String message) {
+        return new BookingException(HttpStatus.CONFLICT, "BOOKING_NOT_PAYABLE", message);
+    }
+
     /** Saga failed and was compensated; the booking request was not completed (Requirement 24.7). */
     public static BookingException sagaFailed(String message) {
         return new BookingException(HttpStatus.INTERNAL_SERVER_ERROR, "BOOKING_NOT_COMPLETED", message);

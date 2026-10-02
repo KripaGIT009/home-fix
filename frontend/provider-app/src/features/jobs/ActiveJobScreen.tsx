@@ -7,6 +7,8 @@ import { describeBookingStatus } from '@lib/bookingStatus';
 import { PhotoUploadCard } from './PhotoUploadCard';
 import { PartsEntryCard } from './PartsEntryCard';
 import { PauseResumeCard } from './PauseResumeCard';
+import { PaymentStatusNotice } from './PaymentStatusNotice';
+import { isJobFinished } from './status';
 import {
   useCompleteJob,
   useJobDetail,
@@ -203,15 +205,18 @@ function ActiveContent({ job }: { job: JobDetail }) {
         </>
       ) : null}
 
-      {job.status === 'JOB_COMPLETED' ? (
-        <Button
-          variant="contained"
-          size="large"
-          fullWidth
-          onClick={() => navigate(`/jobs/${job.bookingId}/complete`)}
-        >
-          View completion summary
-        </Button>
+      {isJobFinished(job.status) ? (
+        <>
+          <PaymentStatusNotice status={job.status} />
+          <Button
+            variant="contained"
+            size="large"
+            fullWidth
+            onClick={() => navigate(`/jobs/${job.bookingId}/complete`)}
+          >
+            View completion summary
+          </Button>
+        </>
       ) : null}
     </Stack>
   );

@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -27,6 +28,7 @@ import com.homefix.provider.catalog.CatalogClientPort;
 import com.homefix.provider.config.ProviderProperties;
 import com.homefix.provider.crypto.KmsEncryptionPort;
 import com.homefix.provider.crypto.LocalAesKmsAdapter;
+import com.homefix.provider.domain.EarningType;
 import com.homefix.provider.domain.ProviderEarning;
 import com.homefix.provider.domain.ProviderEarningRepository;
 import com.homefix.provider.domain.ProviderProfile;
@@ -250,6 +252,25 @@ class ProviderServiceTest {
             ProviderProfile after = profileRepository.findById(id).orElseThrow();
             // Net = 100 - 15 = 85
             assertThat(after.getWalletBalance()).isEqualByComparingTo("85.00");
+        }
+
+        @Test
+        void aRepeatedCreditForTheSameBookingIsAppliedOnce() {
+            UUID id = UUID.randomUUID();
+            UUID booking = UUID.randomUUID();
+            seedProfile(id);
+            lenient().when(earningRepository.save(any(ProviderEarning.class)))
+                    .thenAnswer(inv -> inv.getArgument(0));
+            when(earningRepository.existsByBookingIdAndType(booking, EarningType.JOB_CREDIT))
+                    .thenReturn(false, true);
+
+            service.creditJobEarning(id, booking, "BK-001", new BigDecimal("100.00"), new BigDecimal("15.00"));
+            // The Payment Service re-sends a credit it could not confirm.
+            service.creditJobEarning(id, booking, "BK-001", new BigDecimal("100.00"), new BigDecimal("15.00"));
+
+            assertThat(profileRepository.findById(id).orElseThrow().getWalletBalance())
+                    .isEqualByComparingTo("85.00");
+            verify(earningRepository, times(1)).save(any(ProviderEarning.class));
         }
 
         @Test

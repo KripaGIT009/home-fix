@@ -58,6 +58,20 @@ homefix:
     # well above the in-line retry window), checked every sweep-interval (ISO-8601 duration).
     wallet-credit-sweep-min-age: 5m
     wallet-credit-sweep-interval: PT1M
+    # Gateway used when POST /payments names none. Compose sets 'simulator' (local only).
+    default-gateway: ${PAYMENT_DEFAULT_GATEWAY:razorpay}
+    # Payment attempts per (customer, booking); a new attempt opens only after the last FAILED.
+    max-payment-attempts: 10
+    # Booking payments are priced from the Booking Service's internal payment-facts endpoint and
+    # move the booking to PAYMENT_PENDING through it, presenting the shared service credential.
+    booking-service-url: ${BOOKING_SERVICE_URL:http://booking-service:8084}
+    # Where a paid booking's earning is credited (POST /internal/providers/{id}/earnings).
+    provider-service-url: ${PROVIDER_SERVICE_URL:http://provider-service:8083}
+    provider-wallet:
+      # 'http' credits the Provider Service wallet; 'logging' (the default, for tests and running
+      # without a Provider Service) only logs the intent and pays no one.
+      client: ${PROVIDER_WALLET_CLIENT:logging}
+    internal-api-key: ${INTERNAL_API_KEY:}
     gateways:
       razorpay:
         # Razorpay webhook signing secret (HMAC-SHA256). From AWS Secrets Manager in production.
@@ -67,6 +81,14 @@ homefix:
         # Stripe webhook signing secret (HMAC-SHA256). From AWS Secrets Manager in production.
         # Required: no default, so the service fails fast when STRIPE_WEBHOOK_SECRET is not set.
         webhook-secret: ${STRIPE_WEBHOOK_SECRET}
+      simulator:
+        # LOCAL ONLY. Registers the 'simulator' gateway, which settles every charge as SUCCESS
+        # through a self-signed callback without moving money. Off unless explicitly enabled;
+        # never enabled in Helm. A WARN is logged at startup whenever it is on.
+        enabled: ${PAYMENT_SIMULATOR_ENABLED:false}
+        # Signs the simulator's callbacks; a built-in dev secret is used when empty (only read
+        # when the simulator is enabled).
+        secret: ${PAYMENT_SIMULATOR_SECRET:}
   kms:
     # Selects the active KMS encryption adapter behind KmsEncryptionPort.
     # 'local' uses an AES-GCM adapter with a configured data key (dev/test); in production an

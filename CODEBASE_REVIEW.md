@@ -995,3 +995,133 @@ nginx does, so every gateway call 404'd under `npm run dev`; fixed.
    below it. Measure before relying on the pipeline.
 8. **The leaked JWT in commit `1b5656d`** (section 11, Phase 0) — rotate the secret that
    signed it if that has not been done.
+
+## 17. Sixth pass — 2026-10-02 (evening)
+
+A review of the running stack against all three apps, after a reboot had left Kafka stopped
+(it does not start on its own; see `docs/LOCAL_ACCESS.md` 1.1). Three parallel contract reviews
+— customer and provider apps against the gateway and controllers, Kafka producers against
+consumers, the admin portal against every service — found that the marketplace stopped at the
+moment a provider accepted a job, and that the admin portal had almost nothing behind it.
+
+### 17.1 Dispatch failed bookings in a second when the nearby provider was busy
+
+A provider whose offer lock was held by another booking was treated as having declined: dropped
+from the pool, never waited for, and every radius cycle finished in milliseconds. A booking placed
+while the only nearby provider was answering someone else's offer went to `SEARCHING_FAILED` one
+second later. Found by `verify-outbox-flow.sh` failing right after `smoke-flows.sh`, whose
+emergency booking held the provider's lock. A busy provider now stays in the pool and is retried
+for up to one offer window per radius, after the free candidates have been offered.
+
+### 17.2 Nothing after "accept" worked
+
+- **Every job command 404'd.** The provider app addresses bookings by UUID; the job endpoints
+  looked them up by reference only. All `/bookings/{key}` commands now take either.
+- **Nothing checked who was calling.** Confirm, cancel, start, pause, parts, complete and the
+  quote decisions had no ownership check, so any signed-in user who knew a reference — every
+  provider sees one in an offer — could drive any booking. Now: the assigned provider for job
+  milestones, the customer for quote decisions and confirmation, either to cancel, staff for all;
+  anyone else gets the same 404 as the read side (`service/BookingAccess`).
+- **Start was impossible.** The app never sent `on-the-way` or `arrived`, and the state machine
+  only allows `JOB_STARTED` from `PROVIDER_ARRIVED`. The Start button was also permanently
+  disabled, because the job detail carried no photos. The detail now carries the service address
+  and coordinates (new `CustomerAddressPort` over customer-service's internal lookup, which gained
+  the address label), the before/after photos, the parts and the net duration.
+- **Photo upload, completion and earnings** used shapes the API never had (multipart field names,
+  a `/summary` endpoint, `items` on a Spring `Page`); the completion and earnings screens crashed.
+- **Provider sign-up created CUSTOMER accounts**: the app never asked for the role, so a new
+  provider got "Insufficient role" on every screen. A provider who has not onboarded now sees an
+  empty dashboard instead of 404; onboarding itself still has no screens (17.5).
+- **Live tracking could not move.** The provider app never sent its position; the customer app
+  read a snapshot shape the location service does not return and relied on an SSE stream the
+  gateway cannot authenticate (EventSource sends no header). The provider app now shares its
+  position while on the way, the customer app polls until the stream connects and estimates the
+  ETA itself (the location service's destination is a `(0, 0)` placeholder). The location service
+  accepts positions only from SERVICE_PROVIDER, recorded under the token's subject rather than a
+  provider id from the body.
+- **The customer could not answer a parts quote**: the panel had no buttons. Approve / Decline
+  now call the existing endpoints.
+- **Deleting a saved address always failed**: customer-service called a booking endpoint that did
+  not exist, without the internal key, on the catalog's port. Fixed on both sides.
+
+### 17.3 The admin portal has a back end
+
+Of sixteen modules only Dashboard and Categories worked. Every portal path now has an endpoint
+in the service that owns the data, returning the shape the portal reads, with an RBAC rule
+(unmapped paths were open to any signed-in user):
+
+| Module | Service | Notes |
+|---|---|---|
+| Users | auth-service | Account status (V2): suspended/deactivated accounts cannot sign in or refresh, introspection reports their tokens inactive, refresh-token families are revoked |
+| Providers, Verification | provider-, verification-service | Queue, documents, approve/reject, suspend/reinstate; document preview unavailable (storage adapter is a stub) |
+| Bookings, Payments | booking-, payment-service | Staff cancel through the normal rules; refunds require an `Idempotency-Key` |
+| Complaints, Reviews, Coupons | complaint-, rating-review-, promotion-service | Finished complaint-service's uncompilable WIP; system-only complaint states cannot be set by hand |
+| Pricing, Dispatch, Reports | pricing-engine, dispatch-engine, reporting-service | Pricing PUT merges; dispatch settings apply at runtime but are in memory; reports download via `/admin/reports/export` |
+| Notification templates | notification-service | Templates moved to a table (V2), editable, placeholders validated; output unchanged until edited |
+| Audit log, System config | admin-service | Keyset-paged audit log; settings persisted (V2/V3); dead echo controllers removed |
+
+The portal's guards now follow the same tiers, and each staff role lands on a module it can use.
+
+The running API gateway predated the admin routes in its own config (jar built 13:04, routes added
+18:04), so ten modules still 404'd after the first restart; it has been rebuilt.
+
+### 17.4 Verification
+
+| Check | Result |
+|---|---|
+| Module tests (every changed module) | pass — e.g. booking 304, auth 237, dispatch 188, provider 166, payment 178, notification 173 |
+| `smoke-flows.sh` | 78/78 |
+| `verify-outbox-flow.sh`, extended through the whole job | 31/31: address in the detail, customer refused on a provider milestone (404), location shared and read, customer refused posting a location (403), start refused without a before-photo, photos, start, complete, net duration |
+| Every admin endpoint through the gateway | 200 for SUPER_ADMIN, 403 for a customer; finance/support/dispatcher/admin each limited to their tier |
+| Restart | all 20 services and 3 apps healthy |
+
+### 17.5 Still open (adds to 16.12)
+
+1. **Provider onboarding**: no screens for profile, base location, radius, availability, skills or
+   documents, so a provider who signs up in the app can never be matched.
+2. ~~**The lifecycle ends at `JOB_COMPLETED`**~~ — fixed, see 17.6.
+3. ~~**`PaymentCompleted` trusts client-supplied booking, provider and amount**~~ — fixed, see 17.6.
+4. **Dispatch failures after `BookingCreated` is acknowledged** (outage, restart mid-search) leave a
+   booking in `SEARCHING_PROVIDER` with no sweeper; `ProviderAccepted` is a dual write.
+5. **Chat does not work**: wrong endpoints, a raw WebSocket against a STOMP server no route serves.
+6. **Location reads have no ownership check**: any signed-in customer or provider with a booking id
+   can read its provider's position.
+7. **Ratings never reach provider-service**: reviews submitted in the app do not change a
+   provider's aggregate rating, so matching ranks on the seeded or zero value.
+8. Cross-service display fields in the admin portal (customer, provider and reviewer names, mobile
+   numbers) are null; dispatch settings reset on restart.
+
+### 17.6 Payment after the job — five breaks, now one flow
+
+Reported by the user: after a job was completed, payment never came. Nothing was wrong with any
+single piece; the flow had never been joined up:
+
+1. **The customer app had no way to pay.** The booking detail said "Confirm the job is done to
+   finish up" with nothing to press. It now shows the total and a Pay button (method choice) on
+   the booking and tracking screens; paying is the confirmation.
+2. **`POST /payments` trusted the client** for the customer, provider, amount and fee. It now takes
+   only the booking and method, reads the amount, provider and customer from booking-service's new
+   internal `payment-facts`, refuses a booking that is not finished (409 `BOOKING_NOT_PAYABLE`) and
+   moves it to `PAYMENT_PENDING` through `payment-pending` before charging. A failed payment can be
+   retried as a new attempt (capped at 10).
+3. **A local payment could never succeed.** The gateway adapters accept a charge and wait for a
+   signed webhook no local gateway sends. A `simulator` gateway — off by default, enabled only in
+   Compose, never in Helm, with a startup WARN — settles each charge by passing a payload it signs
+   itself through the real `handleGatewayCallback`, so everything downstream runs the production
+   path.
+4. **booking-service consumed no events**, so a paid booking stayed `JOB_COMPLETED`. It now consumes
+   `PaymentCompleted` (shared idempotent consumer) and moves the booking to `PAYMENT_COMPLETED`.
+5. **Providers were never paid.** The wallet client was a stub that logged `WALLET_CREDIT` while
+   payment-service cleared its "credit owed" marker. It now calls provider-service's new
+   `POST /internal/providers/{id}/earnings`, which applies a booking's credit once however often it
+   is sent (check + unique index, migration V2) — needed because payment-service re-sends credits
+   it could not confirm. Settlement reversals still have no Provider Service endpoint; they are
+   logged and Finance is alerted for every failed settlement, as before.
+
+The provider app shows "Waiting for the customer to pay" and then "Paid — your earnings have been
+credited". `verify-outbox-flow.sh` now pays for the job it ran: 37/37, including a tampered amount
+in the request being ignored (the booking's ₹615.25 was charged) and the provider's wallet credited
+₹492.20 net once. `smoke-flows.sh` 78/78; booking-service 377 tests (and its `EndToEndBookingFlowsIT`,
+which surefire never runs, fixed: it completed a job with the customer's token), payment-service 224,
+provider-service 171.
+

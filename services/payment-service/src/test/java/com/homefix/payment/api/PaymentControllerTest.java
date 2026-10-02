@@ -1,6 +1,7 @@
 package com.homefix.payment.api;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -21,6 +22,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -34,7 +36,8 @@ import com.homefix.payment.domain.PaymentTransaction;
 import com.homefix.payment.domain.Settlement;
 import com.homefix.payment.gateway.RazorpayGatewayAdapter;
 import com.homefix.payment.service.GatewayCallback;
-import com.homefix.payment.service.InitiatePaymentCommand;
+import com.homefix.payment.service.BookingPaymentService;
+import com.homefix.payment.service.PayBookingCommand;
 import com.homefix.payment.service.PaymentException;
 import com.homefix.payment.service.PaymentService;
 
@@ -55,6 +58,8 @@ class PaymentControllerTest {
 
     @Mock
     private PaymentService paymentService;
+    @Mock
+    private BookingPaymentService bookingPaymentService;
 
     private MockMvc mvc;
     private final ObjectMapper json = new ObjectMapper();
@@ -62,7 +67,7 @@ class PaymentControllerTest {
     @BeforeEach
     void setUp() {
         mvc = MockMvcBuilders
-                .standaloneSetup(new PaymentController(paymentService, new CallerIdentity()))
+                .standaloneSetup(new PaymentController(paymentService, bookingPaymentService, new CallerIdentity()))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
         // Default principal: staff, so the pre-existing DTO/envelope tests are unaffected by the
@@ -90,19 +95,16 @@ class PaymentControllerTest {
     }
 
     @Test
-    void initiate_returns201WithTransactionBody() throws Exception {
+    void initiate_returns201WithTransactionBody_andPassesOnlyBookingMethodAndGateway() throws Exception {
         UUID customerId = UUID.randomUUID();
         UUID bookingId = UUID.randomUUID();
         UUID providerId = UUID.randomUUID();
         PaymentTransaction tx = pending(customerId, bookingId, providerId);
-        when(paymentService.initiatePayment(any(InitiatePaymentCommand.class))).thenReturn(tx);
+        when(bookingPaymentService.payForBooking(any(PayBookingCommand.class), any(), anyBoolean()))
+                .thenReturn(tx);
 
         LinkedHashMap<String, Object> req = new LinkedHashMap<>();
-        req.put("customerId", customerId);
         req.put("bookingId", bookingId);
-        req.put("providerId", providerId);
-        req.put("amount", "100.00");
-        req.put("platformFee", "20.00");
         req.put("method", "UPI");
         req.put("gatewayId", RazorpayGatewayAdapter.GATEWAY_ID);
 
@@ -112,33 +114,79 @@ class PaymentControllerTest {
                 .andExpect(jsonPath("$.id").value(tx.getId().toString()))
                 .andExpect(jsonPath("$.status").value("PENDING"))
                 .andExpect(jsonPath("$.providerNetEarning").value(80.00));
+        // Default principal is staff: no caller id is needed, and the staff flag is passed on.
+        verify(bookingPaymentService).payForBooking(
+                new PayBookingCommand(bookingId, PaymentMethod.UPI, RazorpayGatewayAdapter.GATEWAY_ID, null),
+                null, true);
+    }
+
+    /** Old clients still send customerId/providerId/amount/platformFee: accepted, never trusted. */
+    @Test
+    void initiate_legacyPricingFields_areAcceptedAndIgnored() throws Exception {
+        UUID callerA = UUID.randomUUID();
+        UUID bookingId = UUID.randomUUID();
+        PaymentTransaction tx = pending(callerA, bookingId, UUID.randomUUID());
+        when(bookingPaymentService.payForBooking(any(PayBookingCommand.class), any(), anyBoolean()))
+                .thenReturn(tx);
+        authenticate(callerA, "CUSTOMER");
+
+        // Even values that used to be rejected (another customer, a 3-decimal amount) are ignored.
+        String body = """
+                {"customerId":"%s","bookingId":"%s","providerId":"%s","amount":"33.334",
+                 "platformFee":"1.00","method":"CASH"}
+                """.formatted(UUID.randomUUID(), bookingId, UUID.randomUUID());
+
+        mvc.perform(post("/payments").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").value(tx.getId().toString()));
+        verify(bookingPaymentService).payForBooking(
+                new PayBookingCommand(bookingId, PaymentMethod.CASH, null, null), callerA, false);
     }
 
     @Test
-    void initiate_missingRequiredField_returns400ValidationEnvelope() throws Exception {
-        // amount omitted -> @NotNull violation surfaced by GlobalExceptionHandler.
+    void initiate_missingMethod_returns400ValidationEnvelope() throws Exception {
         String body = """
-                {"customerId":"%s","bookingId":"%s","providerId":"%s","method":"UPI","gatewayId":"razorpay"}
-                """.formatted(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
+                {"bookingId":"%s"}
+                """.formatted(UUID.randomUUID());
 
         mvc.perform(post("/payments").contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errorCode").value("VALIDATION_ERROR"));
+        verify(bookingPaymentService, never()).payForBooking(any(), any(), anyBoolean());
+    }
+
+    @Test
+    void initiate_missingBookingId_returns400ValidationEnvelope() throws Exception {
+        mvc.perform(post("/payments").contentType(MediaType.APPLICATION_JSON).content("{\"method\":\"UPI\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("VALIDATION_ERROR"));
+        verify(bookingPaymentService, never()).payForBooking(any(), any(), anyBoolean());
     }
 
     @Test
     void initiate_unknownGateway_surfacesDomainErrorEnvelope() throws Exception {
-        when(paymentService.initiatePayment(any(InitiatePaymentCommand.class)))
+        when(bookingPaymentService.payForBooking(any(PayBookingCommand.class), any(), anyBoolean()))
                 .thenThrow(PaymentException.validation("Unknown gateway: paypal"));
 
         String body = """
-                {"customerId":"%s","bookingId":"%s","providerId":"%s","amount":"10.00",
-                 "method":"UPI","gatewayId":"paypal"}
-                """.formatted(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
+                {"bookingId":"%s","method":"UPI","gatewayId":"paypal"}
+                """.formatted(UUID.randomUUID());
 
         mvc.perform(post("/payments").contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errorCode").value("VALIDATION_ERROR"));
+    }
+
+    @Test
+    void initiate_bookingServiceDown_returns503Envelope() throws Exception {
+        when(bookingPaymentService.payForBooking(any(PayBookingCommand.class), any(), anyBoolean()))
+                .thenThrow(new PaymentException(HttpStatus.SERVICE_UNAVAILABLE, "BOOKING_SERVICE_UNAVAILABLE",
+                        "down"));
+
+        mvc.perform(post("/payments").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"bookingId\":\"" + UUID.randomUUID() + "\",\"method\":\"UPI\"}"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.errorCode").value("BOOKING_SERVICE_UNAVAILABLE"));
     }
 
     @Test
@@ -213,19 +261,6 @@ class PaymentControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errorCode").value("VALIDATION_ERROR"));
         verify(paymentService, never()).refund(any(), any(), any());
-    }
-
-    @Test
-    void initiate_amountWithMoreThanTwoDecimals_returns400() throws Exception {
-        String body = """
-                {"customerId":"%s","bookingId":"%s","providerId":"%s","amount":"33.334",
-                 "method":"UPI","gatewayId":"razorpay"}
-                """.formatted(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
-
-        mvc.perform(post("/payments").contentType(MediaType.APPLICATION_JSON).content(body))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.errorCode").value("VALIDATION_ERROR"));
-        verify(paymentService, never()).initiatePayment(any());
     }
 
     @Test
@@ -318,45 +353,46 @@ class PaymentControllerTest {
                 .andExpect(jsonPath("$.id").value(tx.getId().toString()));
     }
 
+    /** A customer paying somebody else's booking gets the same 404 as for a missing booking. */
     @Test
-    void initiate_forAnotherCustomer_isForbidden() throws Exception {
+    void initiate_otherCustomersBooking_is404() throws Exception {
         UUID callerA = UUID.randomUUID();
-        UUID callerB = UUID.randomUUID();
+        UUID bookingId = UUID.randomUUID();
         authenticate(callerA, "CUSTOMER");
-
-        LinkedHashMap<String, Object> req = new LinkedHashMap<>();
-        req.put("customerId", callerB);
-        req.put("bookingId", UUID.randomUUID());
-        req.put("providerId", UUID.randomUUID());
-        req.put("amount", "100.00");
-        req.put("platformFee", "20.00");
-        req.put("method", "UPI");
-        req.put("gatewayId", RazorpayGatewayAdapter.GATEWAY_ID);
+        when(bookingPaymentService.payForBooking(any(PayBookingCommand.class), eq(callerA), eq(false)))
+                .thenThrow(PaymentException.bookingNotFound(bookingId));
 
         mvc.perform(post("/payments").contentType(MediaType.APPLICATION_JSON)
-                        .content(json.writeValueAsString(req)))
-                .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.errorCode").value("FORBIDDEN"));
+                        .content("{\"bookingId\":\"" + bookingId + "\",\"method\":\"UPI\"}"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.errorCode").value("BOOKING_NOT_FOUND"));
     }
 
     @Test
-    void initiate_forSelf_returns201() throws Exception {
+    void initiate_notPayable_is409() throws Exception {
         UUID callerA = UUID.randomUUID();
-        PaymentTransaction tx = pending(callerA, UUID.randomUUID(), UUID.randomUUID());
-        when(paymentService.initiatePayment(any(InitiatePaymentCommand.class))).thenReturn(tx);
+        UUID bookingId = UUID.randomUUID();
         authenticate(callerA, "CUSTOMER");
-
-        LinkedHashMap<String, Object> req = new LinkedHashMap<>();
-        req.put("customerId", callerA);
-        req.put("bookingId", UUID.randomUUID());
-        req.put("providerId", UUID.randomUUID());
-        req.put("amount", "100.00");
-        req.put("platformFee", "20.00");
-        req.put("method", "UPI");
-        req.put("gatewayId", RazorpayGatewayAdapter.GATEWAY_ID);
+        when(bookingPaymentService.payForBooking(any(PayBookingCommand.class), eq(callerA), eq(false)))
+                .thenThrow(PaymentException.bookingNotPayable(bookingId));
 
         mvc.perform(post("/payments").contentType(MediaType.APPLICATION_JSON)
-                        .content(json.writeValueAsString(req)))
+                        .content("{\"bookingId\":\"" + bookingId + "\",\"method\":\"UPI\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errorCode").value("BOOKING_NOT_PAYABLE"));
+    }
+
+    @Test
+    void initiate_forSelf_passesCallerIdentity_andReturns201() throws Exception {
+        UUID callerA = UUID.randomUUID();
+        UUID bookingId = UUID.randomUUID();
+        PaymentTransaction tx = pending(callerA, bookingId, UUID.randomUUID());
+        when(bookingPaymentService.payForBooking(any(PayBookingCommand.class), eq(callerA), eq(false)))
+                .thenReturn(tx);
+        authenticate(callerA, "CUSTOMER");
+
+        mvc.perform(post("/payments").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"bookingId\":\"" + bookingId + "\",\"method\":\"UPI\"}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.id").value(tx.getId().toString()));
     }

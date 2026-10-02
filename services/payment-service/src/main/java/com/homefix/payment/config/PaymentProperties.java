@@ -63,6 +63,20 @@ public class PaymentProperties {
      */
     private Duration walletCreditSweepMinAge = Duration.ofMinutes(5);
 
+    /**
+     * Gateway a booking payment is sent to when the client names none ({@code POST /payments}
+     * without {@code gatewayId}). Production keeps {@code razorpay}; the local compose stack sets
+     * {@code simulator}, which exists only when {@code gateways.simulator.enabled=true}.
+     */
+    private String defaultGateway = "razorpay";
+
+    /**
+     * Payment attempts one customer may open for one booking (Requirement 12.3, 12.8). A new attempt
+     * is opened only after every earlier one FAILED; the cap stops a client from cycling cards
+     * against one booking without limit (card testing) and bounds the attempt lookup.
+     */
+    private int maxPaymentAttempts = 10;
+
     public int getMaxCustomerRetries() {
         return maxCustomerRetries;
     }
@@ -133,5 +147,21 @@ public class PaymentProperties {
 
     public void setWalletCreditSweepMinAge(Duration walletCreditSweepMinAge) {
         this.walletCreditSweepMinAge = walletCreditSweepMinAge;
+    }
+
+    public String getDefaultGateway() {
+        return defaultGateway;
+    }
+
+    public void setDefaultGateway(String defaultGateway) {
+        this.defaultGateway = defaultGateway;
+    }
+
+    public int getMaxPaymentAttempts() {
+        return maxPaymentAttempts;
+    }
+
+    public void setMaxPaymentAttempts(int maxPaymentAttempts) {
+        this.maxPaymentAttempts = maxPaymentAttempts;
     }
 }

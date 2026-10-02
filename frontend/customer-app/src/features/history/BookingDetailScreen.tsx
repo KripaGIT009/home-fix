@@ -34,6 +34,8 @@ import { formatCurrency, formatDateTime } from '@lib/format';
 import { brand, radius } from '@lib/theme';
 import { CategoryIcon } from '@features/catalog/categoryIcon';
 import { categoryArt } from '@features/catalog/categoryArt';
+import { isPayableStatus } from '@features/payment/api';
+import { PartsList, PaymentCardActions } from '@features/payment/PaymentPanel';
 import { ChatButton } from '@features/tracking/ChatButton';
 import { CHAT_STATUSES, journeySteps } from '@features/tracking/progress';
 import type { BookingDetail } from './api';
@@ -46,7 +48,8 @@ import { useBookingService } from './useServiceName';
  * Booking Detail screen (Requirement 28.7). Reached from Service History. Shows
  * the booking, its progress, and — when an invoice exists — lets the Customer
  * download the PDF via a freshly minted signed URL (Requirement 13.3). Active
- * bookings also link to live tracking and the in-app chat.
+ * bookings also link to live tracking and the in-app chat, and a completed job
+ * that is still unpaid can be paid from here (Requirement 12).
  */
 export function BookingDetailScreen() {
   const { bookingId = '' } = useParams();
@@ -151,6 +154,10 @@ function BookingDetailBody({
   const terminal = isTerminalStatus(detail.status);
   const canChat = CHAT_STATUSES.includes(detail.status);
   const when = detail.scheduledAt ?? (detail.emergency ? undefined : detail.date);
+  // A completed, unpaid job: paying is the screen's primary action, so the
+  // summary card leads with it (and comes first on a phone).
+  const payable = isPayableStatus(detail.status);
+  const paid = detail.status === 'PAYMENT_COMPLETED';
 
   return (
     <Box
@@ -158,7 +165,7 @@ function BookingDetailBody({
         display: 'grid',
         gridTemplateColumns: { xs: '1fr', md: 'minmax(0, 1fr) 360px' },
         gridTemplateAreas: {
-          xs: '"summary" "actions" "progress"',
+          xs: payable ? '"actions" "summary" "progress"' : '"summary" "actions" "progress"',
           md: '"summary actions" "progress actions"',
         },
         gap: { xs: 2, md: 3 },
@@ -233,21 +240,37 @@ function BookingDetailBody({
       <Card sx={{ gridArea: 'actions', position: { md: 'sticky' }, top: { md: 96 } }}>
         <CardContent>
           <Typography variant="body2" color="text.secondary">
-            {terminal ? 'Amount' : 'Estimated total'}
+            {paid ? 'Paid' : payable ? 'Total to pay' : terminal ? 'Amount' : 'Estimated total'}
           </Typography>
           <Typography variant="h2" component="p" sx={{ mt: 0.25 }}>
             {formatCurrency(detail.amount, detail.currency)}
           </Typography>
-          {terminal ? null : (
+          {payable && detail.parts?.length ? (
+            <Typography
+              variant="body2"
+              color="text.secondary"
+              component="div"
+              sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 0.25 }}
+            >
+              <PartsList detail={detail} />
+            </Typography>
+          ) : null}
+          {paid ? (
+            <Typography variant="caption" color="success.dark" display="block" sx={{ mt: 0.5 }}>
+              Payment received — thank you.
+            </Typography>
+          ) : null}
+          {terminal || payable ? null : (
             <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
               You approve any change before it is charged.
             </Typography>
           )}
 
           <Stack spacing={1.25} sx={{ mt: 2.5 }}>
+            {payable ? <PaymentCardActions detail={detail} /> : null}
             {terminal ? null : (
               <Button
-                variant="contained"
+                variant={payable ? 'outlined' : 'contained'}
                 size="large"
                 fullWidth
                 startIcon={<NearMeRoundedIcon />}

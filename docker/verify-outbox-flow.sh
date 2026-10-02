@@ -19,6 +19,10 @@
 #      the job detail carries the address, someone else's token cannot drive the booking,
 #      on the way -> arrived (with a location the customer can read) -> before photo ->
 #      start -> after photo -> complete, with the photo gates enforced
+#   7. the customer pays for the completed job: the amount comes from the booking (a tampered
+#      amount in the request is ignored), the local payment simulator settles it, and the
+#      booking reaches PAYMENT_COMPLETED through the PaymentCompleted event, and the provider's
+#      wallet is credited once
 #
 # Step 5 needs the seed data: docker/seed-catalog.sql and docker/seed-provider-profiles.sql
 # (an approved provider based in Ara with the plumbing skill tag). The booking is placed
@@ -298,8 +302,12 @@ if [ "${JOB_READY:-}" = "yes" ]; then
   # A 1x1 JPEG, enough for the content-type and size checks.
   PHOTO="$(mktemp)"
   printf '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q=='     | base64 -d > "${PHOTO}" 2>/dev/null
+  # curl on Windows is a native program and MSYS_NO_PATHCONV (set above) stops Git Bash
+  # translating "/tmp/..." for it, so hand it the native path where cygpath exists.
+  PHOTO_ARG="${PHOTO}"
+  command -v cygpath >/dev/null 2>&1 && PHOTO_ARG="$(cygpath -w "${PHOTO}")"
   upload_photo() {
-    http_code -X POST -H "${PROVIDER_AUTHZ}" -F "type=$1" -F "file=@${PHOTO};type=image/jpeg;filename=$1.jpg"       "${BOOKINGS}/photos"
+    http_code -X POST -H "${PROVIDER_AUTHZ}" -F "type=$1" -F "file=@${PHOTO_ARG};type=image/jpeg;filename=$1.jpg"       "${BOOKINGS}/photos"
   }
   CODE="$(upload_photo BEFORE_PHOTO)"
   [ "${CODE}" = "204" ] && pass 'before-photo uploaded' || fail 'before-photo uploaded' "HTTP ${CODE}"
@@ -323,6 +331,46 @@ if [ "${JOB_READY:-}" = "yes" ]; then
   else
     fail 'completion summary has the net duration' 'netDurationSeconds missing'
   fi
+
+  printf '
+== Paying for the job as the customer app does
+'
+  BOOKED_AMOUNT="$(psql_q "SELECT coalesce(final_total, estimated_total) FROM booking.booking WHERE id = '${BOOKING_ID}';")"
+  # amount and providerId are deliberately wrong: the service must price from the booking.
+  PAYMENT="$(curl -s -w '
+%{http_code}' -X POST -H "${AUTHZ}" -H "${JSON}"     -d "{\"bookingId\":\"${BOOKING_ID}\",\"method\":\"UPI\",\"amount\":1.00,\"providerId\":\"${CUSTOMER_ID}\"}"     "${GATEWAY}/payments")"
+  CODE="$(printf '%s' "${PAYMENT}" | tail -1)"
+  [ "${CODE}" = "201" ] && pass 'payment initiated' || fail 'payment initiated' "HTTP ${CODE}: $(printf '%s' "${PAYMENT}" | head -1 | head -c 200)"
+  PAID_AMOUNT="$(psql_q "SELECT amount FROM payment.payment_transaction WHERE booking_id = '${BOOKING_ID}' ORDER BY created_at DESC LIMIT 1;" 2>/dev/null)"
+  if [ -n "${PAID_AMOUNT}" ] && [ "${PAID_AMOUNT}" = "${BOOKED_AMOUNT}" ]; then
+    pass "charged the booking's amount (${PAID_AMOUNT}), not the client's"
+  else
+    fail "charged the booking's amount" "booking ${BOOKED_AMOUNT}, charged ${PAID_AMOUNT:-nothing}"
+  fi
+
+  STATUS=''
+  for _ in $(seq 1 30); do
+    STATUS="$(psql_q "SELECT status FROM booking.booking WHERE id = '${BOOKING_ID}';")"
+    [ "${STATUS}" = "PAYMENT_COMPLETED" ] && break
+    sleep 1
+  done
+  [ "${STATUS}" = "PAYMENT_COMPLETED" ] && pass 'booking moved to PAYMENT_COMPLETED'     || fail 'booking moved to PAYMENT_COMPLETED' "status: ${STATUS:-unknown}"
+  PAID_EVENTS="$(psql_q "SELECT count(*) FROM outbox.outbox_event WHERE event_type = 'PaymentCompleted' AND payload LIKE '%${BOOKING_ID}%';")"
+  [ "${PAID_EVENTS:-0}" -gt 0 ] && pass 'PaymentCompleted written to the outbox'     || fail 'PaymentCompleted written to the outbox' 'no row for this booking'
+
+  CREDITED=''
+  for _ in $(seq 1 15); do
+    CREDITED="$(psql_q "SELECT net FROM provider.provider_earning WHERE booking_id = '${BOOKING_ID}' AND type = 'JOB_CREDIT';")"
+    [ -n "${CREDITED}" ] && break
+    sleep 1
+  done
+  [ -n "${CREDITED}" ] && pass "provider's wallet credited (net ${CREDITED})"     || fail "provider's wallet credited" 'no JOB_CREDIT earning for this booking'
+
+  CODE="$(http_code -X POST -H "${AUTHZ}" -H "${JSON}" -d "{\"bookingId\":\"${BOOKING_ID}\",\"method\":\"UPI\"}" "${GATEWAY}/payments")"
+  case "${CODE}" in
+    200|201) pass "paying again returns the existing payment (HTTP ${CODE})" ;;
+    *) fail 'paying again returns the existing payment' "HTTP ${CODE}" ;;
+  esac
 fi
 
 # ----------------------------------------------------------------- summary --

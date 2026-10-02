@@ -367,7 +367,7 @@ class EndToEndBookingFlowsIT {
 
         // Complete at the updated price.
         attachPhoto(reference, "AFTER_PHOTO");
-        assertStatus(post(reference + "/complete", customerToken()), "JOB_COMPLETED");
+        assertStatus(post(reference + "/complete", providerToken()), "JOB_COMPLETED");
 
         Booking completed = requireBooking(reference);
         assertThat(completed.getStatus()).isEqualTo(BookingStatus.JOB_COMPLETED);

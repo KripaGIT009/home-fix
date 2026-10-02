@@ -50,6 +50,7 @@ import com.homefix.payment.gateway.HmacSignatures;
 import com.homefix.payment.gateway.PaymentGatewayPort;
 import com.homefix.payment.gateway.PaymentGatewayRegistry;
 import com.homefix.payment.gateway.RazorpayGatewayAdapter;
+import com.homefix.payment.gateway.SimulatorGatewayAdapter;
 import com.homefix.payment.gateway.StripeGatewayAdapter;
 import com.homefix.payment.idempotency.InMemoryIdempotencyStoreAdapter;
 import com.homefix.payment.invoice.InvoiceTriggerException;
@@ -1346,6 +1347,191 @@ class PaymentServiceTest {
                     .isInstanceOf(PaymentException.class)
                     .satisfies(ex -> assertThat(((PaymentException) ex).getStatus())
                             .isEqualTo(HttpStatus.BAD_REQUEST));
+        }
+    }
+
+    // ============================= Payment attempts after FAILED (contract item 6) ==================
+
+    @Nested
+    class PaymentAttempts {
+
+        @Test
+        void failedPayment_nextRequestOpensANewAttempt_thenThatAttemptIsIdempotent() {
+            UUID customerId = UUID.randomUUID();
+            UUID bookingId = UUID.randomUUID();
+            UUID providerId = UUID.randomUUID();
+            razorpay.chargeAccepted = false;
+            PaymentTransaction failed = service.initiatePayment(
+                    paymentCmd(customerId, bookingId, providerId, "100.00", null));
+            assertThat(failed.getStatus()).isEqualTo(TransactionStatus.FAILED);
+
+            razorpay.chargeAccepted = true;
+            PaymentTransaction second = service.initiatePayment(
+                    paymentCmd(customerId, bookingId, providerId, "100.00", null));
+            PaymentTransaction duplicate = service.initiatePayment(
+                    paymentCmd(customerId, bookingId, providerId, "100.00", null));
+
+            assertThat(second.getId()).isNotEqualTo(failed.getId());
+            assertThat(second.getStatus()).isEqualTo(TransactionStatus.PENDING);
+            assertThat(second.getIdempotencyKey())
+                    .isEqualTo(IdempotencyKeys.forPaymentAttempt(customerId, bookingId, 2))
+                    .endsWith(":attempt:2");
+            // The failed attempt keeps the original key, so rows written before attempts existed match.
+            assertThat(failed.getIdempotencyKey())
+                    .isEqualTo(IdempotencyKeys.forCustomerBooking(customerId, bookingId));
+            assertThat(duplicate.getId()).isEqualTo(second.getId());
+            assertThat(razorpay.charges).hasSize(2);
+            assertThat(stored(failed).getStatus()).isEqualTo(TransactionStatus.FAILED);
+        }
+
+        @Test
+        void paymentFailedByItsCallback_canAlsoBePaidAgain() {
+            UUID customerId = UUID.randomUUID();
+            UUID bookingId = UUID.randomUUID();
+            PaymentTransaction first = service.initiatePayment(
+                    paymentCmd(customerId, bookingId, UUID.randomUUID(), "100.00", null));
+            service.handleGatewayCallback(first.getId(), razorpayCallback(failurePayload(first, "declined")));
+
+            PaymentTransaction retry = service.initiatePayment(
+                    paymentCmd(customerId, bookingId, UUID.randomUUID(), "100.00", null));
+
+            assertThat(retry.getId()).isNotEqualTo(first.getId());
+            assertThat(retry.getStatus()).isEqualTo(TransactionStatus.PENDING);
+        }
+
+        @Test
+        void findActivePayment_ignoresFailedAttempts() {
+            UUID customerId = UUID.randomUUID();
+            UUID bookingId = UUID.randomUUID();
+            assertThat(service.findActivePayment(customerId, bookingId)).isEmpty();
+
+            razorpay.chargeAccepted = false;
+            service.initiatePayment(paymentCmd(customerId, bookingId, UUID.randomUUID(), "100.00", null));
+            assertThat(service.findActivePayment(customerId, bookingId)).isEmpty();
+
+            razorpay.chargeAccepted = true;
+            PaymentTransaction live = service.initiatePayment(
+                    paymentCmd(customerId, bookingId, UUID.randomUUID(), "100.00", null));
+            assertThat(service.findActivePayment(customerId, bookingId))
+                    .hasValueSatisfying(tx -> assertThat(tx.getId()).isEqualTo(live.getId()));
+        }
+
+        @Test
+        void attemptsAreCapped() {
+            props.setMaxPaymentAttempts(2);
+            UUID customerId = UUID.randomUUID();
+            UUID bookingId = UUID.randomUUID();
+            razorpay.chargeAccepted = false;
+            service.initiatePayment(paymentCmd(customerId, bookingId, UUID.randomUUID(), "100.00", null));
+            service.initiatePayment(paymentCmd(customerId, bookingId, UUID.randomUUID(), "100.00", null));
+
+            assertThatThrownBy(() -> service.initiatePayment(
+                    paymentCmd(customerId, bookingId, UUID.randomUUID(), "100.00", null)))
+                    .satisfies(ex -> assertPaymentError(ex, HttpStatus.CONFLICT, "PAYMENT_ATTEMPTS_EXHAUSTED"));
+            assertThat(razorpay.charges).hasSize(2);
+        }
+    }
+
+    // ============================= Local simulator gateway (contract item 5) ========================
+
+    @Nested
+    class SimulatorSettlement {
+
+        private SpySimulator simulator;
+        private PaymentService simService;
+
+        @BeforeEach
+        void setUpSimulator() {
+            simulator = new SpySimulator();
+            simService = newService(transactionRepository,
+                    new PaymentGatewayRegistry(List.of(razorpay, simulator)));
+        }
+
+        private InitiatePaymentCommand simulatorCmd(UUID customerId, UUID bookingId) {
+            return new InitiatePaymentCommand(customerId, bookingId, UUID.randomUUID(),
+                    new BigDecimal("250.00"), null, PaymentMethod.UPI, SimulatorGatewayAdapter.GATEWAY_ID, null);
+        }
+
+        @Test
+        void acceptedCharge_isSettledToSuccess_throughTheSignedCallbackPath() {
+            PaymentTransaction tx = simService.initiatePayment(simulatorCmd(UUID.randomUUID(), UUID.randomUUID()));
+
+            assertThat(tx.getStatus()).isEqualTo(TransactionStatus.SUCCESS);
+            assertThat(tx.getGatewayReference()).startsWith("simulator_ch_");
+            assertThat(tx.getCallbackEventId()).startsWith("sim_evt_");
+            // Downstream effects ran on the real path: outbox event, invoice, wallet credit.
+            assertThat(publisher.published()).singleElement()
+                    .satisfies(published -> assertThat(published.getId()).isEqualTo(tx.getId()));
+            verify(invoiceTrigger).triggerInvoiceGeneration(tx.getId(), tx.getBookingId());
+            verify(walletClient).creditEarning(tx.getProviderId(), tx.getBookingId(),
+                    new BigDecimal("250.00"), new BigDecimal("50.00"), new BigDecimal("200.00"));
+            assertThat(stored(tx).isWalletCreditPending()).isFalse();
+        }
+
+        @Test
+        void settlement_runsAfterTheGatewayReferenceCommitted_withNoTransactionOpen() {
+            PaymentTransaction tx = simService.initiatePayment(simulatorCmd(UUID.randomUUID(), UUID.randomUUID()));
+
+            assertThat(simulator.referenceStoredAtSettlement).containsExactly(true);
+            assertThat(simulator.settlementInTransaction).containsExactly(false);
+            assertThat(tx.getStatus()).isEqualTo(TransactionStatus.SUCCESS);
+        }
+
+        @Test
+        void settlementFailure_leavesThePaymentPending_andDoesNotFailTheRequest() {
+            simulator.settlementError = new IllegalStateException("simulated settlement failure");
+
+            PaymentTransaction tx = simService.initiatePayment(simulatorCmd(UUID.randomUUID(), UUID.randomUUID()));
+
+            assertThat(tx.getStatus()).isEqualTo(TransactionStatus.PENDING);
+            assertThat(tx.getGatewayReference()).startsWith("simulator_ch_");
+            assertThat(publisher.published()).isEmpty();
+        }
+
+        @Test
+        void duplicateAfterSimulatedSuccess_returnsIt_withoutASecondChargeOrEvent() {
+            UUID customerId = UUID.randomUUID();
+            UUID bookingId = UUID.randomUUID();
+            PaymentTransaction first = simService.initiatePayment(simulatorCmd(customerId, bookingId));
+            PaymentTransaction again = simService.initiatePayment(simulatorCmd(customerId, bookingId));
+
+            assertThat(again.getId()).isEqualTo(first.getId());
+            assertThat(again.getStatus()).isEqualTo(TransactionStatus.SUCCESS);
+            assertThat(simulator.settlements).isEqualTo(1);
+            assertThat(publisher.published()).hasSize(1);
+        }
+
+        @Test
+        void otherGateways_areNotSelfSettled() {
+            PaymentTransaction tx = simService.initiatePayment(
+                    paymentCmd(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "100.00", null));
+
+            assertThat(tx.getStatus()).isEqualTo(TransactionStatus.PENDING);
+            assertThat(simulator.settlements).isZero();
+        }
+    }
+
+    /** The real simulator adapter, recording when and how it was asked to settle. */
+    private final class SpySimulator extends SimulatorGatewayAdapter {
+        final List<Boolean> referenceStoredAtSettlement = new ArrayList<>();
+        final List<Boolean> settlementInTransaction = new ArrayList<>();
+        int settlements;
+        RuntimeException settlementError;
+
+        SpySimulator() {
+            super("simulator-test-secret");
+        }
+
+        @Override
+        public SignedSettlement settlementFor(UUID transactionId, BigDecimal amount) {
+            settlements++;
+            referenceStoredAtSettlement.add(transactionRepository.findById(transactionId)
+                    .map(tx -> tx.getGatewayReference() != null).orElse(false));
+            settlementInTransaction.add(MarkingTransactionOperations.inTransaction());
+            if (settlementError != null) {
+                throw settlementError;
+            }
+            return super.settlementFor(transactionId, amount);
         }
     }
 

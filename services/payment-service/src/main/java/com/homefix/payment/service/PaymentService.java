@@ -38,6 +38,7 @@ import com.homefix.payment.gateway.GatewayTransferRequest;
 import com.homefix.payment.gateway.GatewayTransferResult;
 import com.homefix.payment.gateway.PaymentGatewayPort;
 import com.homefix.payment.gateway.PaymentGatewayRegistry;
+import com.homefix.payment.gateway.SelfSettlingGatewayPort;
 import com.homefix.payment.invoice.InvoiceTriggerPort;
 import com.homefix.payment.idempotency.IdempotencyStorePort;
 import com.homefix.payment.notification.ProviderNotificationPort;
@@ -132,22 +133,41 @@ public class PaymentService {
      * Initiates a payment. Idempotent on {@code (customerId, bookingId)}: a duplicate request
      * returns the original transaction without a new gateway charge (Requirement 12.3, Property 11).
      *
+     * <p>The one exception is a FAILED payment: a failed charge must not make the booking unpayable,
+     * so when every earlier attempt for the pair is FAILED a request opens the next attempt under its
+     * own idempotency key ({@link IdempotencyKeys#forPaymentAttempt}), up to
+     * {@code max-payment-attempts}. Duplicates of that attempt are idempotent in turn.
+     *
      * <p>The PENDING row is committed <em>before</em> the gateway is charged, so a charge can never
      * exist without a durable record for its callback to find, and only the request that committed
      * the row charges. If the gateway declines, the transaction is marked FAILED. If the charge call
      * itself errors, the outcome at the gateway is unknown, so the transaction stays PENDING (its
      * signed callback settles it) and the caller gets {@code 502 PAYMENT_GATEWAY_ERROR}.
+     *
+     * <p>A gateway that confirms its own charges ({@link SelfSettlingGatewayPort}, the local
+     * simulator only) is settled after the gateway reference has committed, through
+     * {@link #handleGatewayCallback}; see {@link #settleIfSelfSettling}.
      */
     public PaymentTransaction initiatePayment(InitiatePaymentCommand cmd) {
         validateInitiate(cmd);
-        String key = IdempotencyKeys.forCustomerBooking(cmd.customerId(), cmd.bookingId());
 
-        // First line of defence: an existing record for this key returns the original status.
-        Optional<PaymentTransaction> existing = transactionRepository.findByIdempotencyKey(key);
-        if (existing.isPresent()) {
-            log.info("Idempotent payment: returning existing transaction {} for key {}",
-                    existing.get().getId(), key);
-            return existing.get();
+        // First line of defence: an existing live attempt returns the original status.
+        AttemptLookup attempts = lookupAttempts(cmd.customerId(), cmd.bookingId());
+        if (attempts.current().isPresent()) {
+            log.info("Idempotent payment: returning existing transaction {} for customer {} booking {}",
+                    attempts.current().get().getId(), cmd.customerId(), cmd.bookingId());
+            return attempts.current().get();
+        }
+        if (attempts.nextAttempt() > maxPaymentAttempts()) {
+            throw new PaymentException(HttpStatus.CONFLICT, "PAYMENT_ATTEMPTS_EXHAUSTED",
+                    "Booking " + cmd.bookingId() + " already has " + maxPaymentAttempts()
+                            + " failed payment attempts; contact support");
+        }
+        String key = IdempotencyKeys.forPaymentAttempt(
+                cmd.customerId(), cmd.bookingId(), attempts.nextAttempt());
+        if (attempts.nextAttempt() > 1) {
+            log.info("Previous payment attempts for customer {} booking {} FAILED; opening attempt {}",
+                    cmd.customerId(), cmd.bookingId(), attempts.nextAttempt());
         }
 
         PaymentGatewayPort gateway = gatewayRegistry.require(cmd.gatewayId());
@@ -211,15 +231,91 @@ public class PaymentService {
         // transaction is still PENDING, so it never overwrites the state the callback settled.
         OptimisticLockingFailureException conflict = null;
         for (int attempt = 1; attempt <= CHARGE_RECORD_ATTEMPTS; attempt++) {
+            PaymentTransaction recorded;
             try {
-                return recordChargeResult(transactionId, result);
+                recorded = recordChargeResult(transactionId, result);
             } catch (OptimisticLockingFailureException e) {
                 conflict = e;
                 log.info("Concurrent update of transaction {} while recording its gateway reference "
                         + "(attempt {}); re-reading", transactionId, attempt);
+                continue;
             }
+            return settleIfSelfSettling(gateway, recorded);
         }
         throw conflict;
+    }
+
+    /**
+     * Returns the live payment for {@code (customerId, bookingId)}: the latest attempt, unless it
+     * FAILED (then there is none and the next request may open a new attempt). Read-only; the booking
+     * payment flow calls it before checking the booking status, because once a payment succeeded the
+     * booking is no longer in a payable state but the duplicate request must still get its payment.
+     */
+    public Optional<PaymentTransaction> findActivePayment(UUID customerId, UUID bookingId) {
+        return lookupAttempts(customerId, bookingId).current();
+    }
+
+    /**
+     * Walks the attempt keys 1, 2, ... of {@code (customerId, bookingId)} while they hold FAILED
+     * transactions. Attempt n+1 is only ever created after attempt n FAILED, so the walk stops at the
+     * first live attempt or the first free number; it is bounded by {@code max-payment-attempts}.
+     */
+    private AttemptLookup lookupAttempts(UUID customerId, UUID bookingId) {
+        int limit = maxPaymentAttempts();
+        for (int attempt = 1; attempt <= limit; attempt++) {
+            Optional<PaymentTransaction> tx = transactionRepository.findByIdempotencyKey(
+                    IdempotencyKeys.forPaymentAttempt(customerId, bookingId, attempt));
+            if (tx.isEmpty()) {
+                return new AttemptLookup(Optional.empty(), attempt);
+            }
+            if (tx.get().getStatus() != TransactionStatus.FAILED) {
+                return new AttemptLookup(tx, attempt);
+            }
+        }
+        return new AttemptLookup(Optional.empty(), limit + 1);
+    }
+
+    private int maxPaymentAttempts() {
+        return Math.max(1, props.getMaxPaymentAttempts());
+    }
+
+    /**
+     * The live attempt for a (customer, booking) pair, if any, and the number the next attempt would
+     * take when there is none.
+     */
+    private record AttemptLookup(Optional<PaymentTransaction> current, int nextAttempt) {
+    }
+
+    /**
+     * Settles a charge accepted by a {@link SelfSettlingGatewayPort} (the local simulator) by feeding
+     * the gateway's own signed SUCCESS callback through {@link #handleGatewayCallback}, so the
+     * SUCCESS transition, PaymentCompleted, invoice and wallet credit take the real path.
+     *
+     * <p>Runs only after phase 3 committed the PENDING row's gateway reference, with no transaction
+     * open. A settlement failure is logged and the payment simply stays PENDING: the charge itself
+     * succeeded, so the request must not fail after it.
+     */
+    private PaymentTransaction settleIfSelfSettling(PaymentGatewayPort gateway, PaymentTransaction recorded) {
+        if (!(gateway instanceof SelfSettlingGatewayPort selfSettling)
+                || recorded.getStatus() != TransactionStatus.PENDING
+                || recorded.getGatewayReference() == null) {
+            return recorded;
+        }
+        UUID transactionId = recorded.getId();
+        try {
+            SelfSettlingGatewayPort.SignedSettlement settlement =
+                    selfSettling.settlementFor(transactionId, recorded.getAmount());
+            return handleGatewayCallback(transactionId, new GatewayCallback(
+                    gateway.gatewayId(), settlement.payload(), settlement.signature()));
+        } catch (RuntimeException e) {
+            log.warn("Gateway {} could not settle transaction {}; it stays PENDING: {}",
+                    gateway.gatewayId(), transactionId, e.getMessage());
+            try {
+                return getExisting(transactionId);
+            } catch (RuntimeException readFailure) {
+                return recorded;
+            }
+        }
     }
 
     /** Phase 3 of {@link #initiatePayment}: re-reads the row and records the charge result on it. */

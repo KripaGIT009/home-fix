@@ -20,3 +20,28 @@ export function isBeforeArrival(status: BookingStatus): boolean {
     status === 'PROVIDER_ON_THE_WAY'
   );
 }
+
+/**
+ * Whether the job is done and the customer has yet to pay. Paying moves the
+ * booking JOB_COMPLETED -> CUSTOMER_CONFIRMED -> PAYMENT_PENDING ->
+ * PAYMENT_COMPLETED on the customer's side (Requirement 12), so the provider
+ * can only wait.
+ */
+export function isAwaitingPayment(status: BookingStatus): boolean {
+  return (
+    status === 'JOB_COMPLETED' || status === 'CUSTOMER_CONFIRMED' || status === 'PAYMENT_PENDING'
+  );
+}
+
+/** Whether the job is finished, paid or not — the completion summary applies. */
+export function isJobFinished(status: BookingStatus): boolean {
+  return isAwaitingPayment(status) || status === 'PAYMENT_COMPLETED';
+}
+
+/**
+ * Whether the job is waiting on something the customer does (a quote decision
+ * or the payment), so screens showing it re-read it until it moves on.
+ */
+export function isWaitingOnCustomer(status: BookingStatus): boolean {
+  return status === 'CUSTOMER_APPROVAL_PENDING' || isAwaitingPayment(status);
+}
