@@ -14,7 +14,8 @@ import com.homefix.provider.service.ProviderAdminService.AdminProviderView;
  * <p>Fields this service does not own are {@code null}: {@code mobileNumber} (Auth Service),
  * {@code completedJobs} (Booking Service) and {@code isOnline} (Location Service).
  * {@code verificationStatus} and {@code status} are derived from the Verification Service and are
- * {@code null} when it could not be asked.
+ * {@code null} when it could not be asked. {@code bankAccount} is the settlement account on file,
+ * masked, or {@code null} when the provider has not added one.
  */
 public record AdminProviderResponse(
         UUID id,
@@ -25,7 +26,17 @@ public record AdminProviderResponse(
         BigDecimal rating,
         Integer completedJobs,
         @JsonProperty("isOnline") Boolean isOnline,
-        String status) {
+        String status,
+        BankAccountSummary bankAccount) {
+
+    /**
+     * The portal's {@code bankAccount}: what an administrator needs to decide on verification.
+     *
+     * @param masked   e.g. {@code HDFC ••••6789}, never the number or the ciphertext
+     * @param verified whether the account may receive settlements
+     */
+    public record BankAccountSummary(String masked, boolean verified) {
+    }
 
     public static AdminProviderResponse from(AdminProviderView view) {
         String raw = view.verificationStatus();
@@ -39,7 +50,10 @@ public record AdminProviderResponse(
                 view.row().aggregateRating(),
                 null,
                 null,
-                known ? portalStatus(raw) : null);
+                known ? portalStatus(raw) : null,
+                view.bankAccount() == null
+                        ? null
+                        : new BankAccountSummary(view.bankAccount().masked(), view.bankAccount().verified()));
     }
 
     /**

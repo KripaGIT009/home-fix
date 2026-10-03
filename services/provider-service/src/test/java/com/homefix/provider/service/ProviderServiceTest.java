@@ -24,6 +24,11 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 
 import com.homefix.provider.alert.AdminAlertPort;
+import com.homefix.provider.bank.BankAccountCodec;
+import com.homefix.provider.bank.BankAccountVerificationPort;
+import com.homefix.provider.bank.BankAccountView;
+import com.homefix.provider.bank.ManualBankAccountVerificationAdapter;
+import com.homefix.provider.bank.SimulatorBankAccountVerificationAdapter;
 import com.homefix.provider.catalog.CatalogClientPort;
 import com.homefix.provider.config.ProviderProperties;
 import com.homefix.provider.crypto.KmsEncryptionPort;
@@ -64,6 +69,8 @@ class ProviderServiceTest {
 
     private KmsEncryptionPort kms;
     private ProviderProperties props;
+    private BankAccountCodec codec;
+    /** Wired with the simulator adapter, so a well-formed account is verified on the spot. */
     private ProviderService service;
 
     @BeforeEach
@@ -71,10 +78,23 @@ class ProviderServiceTest {
         profileRepository = new InMemoryProviderProfileRepository();
         kms = new LocalAesKmsAdapter(TEST_DATA_KEY);
         props = new ProviderProperties();
+        codec = new BankAccountCodec(kms);
 
-        service = new ProviderService(
+        service = serviceWith(new SimulatorBankAccountVerificationAdapter());
+    }
+
+    private ProviderService serviceWith(BankAccountVerificationPort bankVerification) {
+        return new ProviderService(
                 profileRepository, earningRepository, settlementRepository,
-                catalogClient, kms, adminAlert, props);
+                catalogClient, kms, adminAlert, props, codec, bankVerification);
+    }
+
+    private static final BankAccountCommand VALID_ACCOUNT =
+            new BankAccountCommand("Ravi Kumar", "50100123456789", "HDFC0001234");
+
+    /** Stores a well-formed account through the simulator-backed service: it is verified. */
+    private void addVerifiedAccount(UUID id) {
+        service.setBankAccount(id, VALID_ACCOUNT);
     }
 
     /** Creates a persisted profile for the given id with a zero wallet balance. */
@@ -324,7 +344,7 @@ class ProviderServiceTest {
             // Credit wallet and set a verified bank account.
             service.creditJobEarning(id, UUID.randomUUID(), "BK-001",
                     new BigDecimal("100.00"), BigDecimal.ZERO);
-            service.setBankAccount(id, "ACCT-12345", true);
+            addVerifiedAccount(id);
 
             Settlement settlement = service.requestSettlement(id,
                     new SettlementCommand(new BigDecimal("50.00"), "ACCT-12345"));
@@ -347,7 +367,7 @@ class ProviderServiceTest {
 
             service.creditJobEarning(id, UUID.randomUUID(), "BK-001",
                     new BigDecimal("100.00"), BigDecimal.ZERO);
-            service.setBankAccount(id, "ACCT-12345", true);
+            addVerifiedAccount(id);
 
             assertThatThrownBy(() -> service.requestSettlement(id,
                     new SettlementCommand(new BigDecimal("0.50"), "ACCT-12345")))
@@ -364,7 +384,7 @@ class ProviderServiceTest {
 
             service.creditJobEarning(id, UUID.randomUUID(), "BK-001",
                     new BigDecimal("50.00"), BigDecimal.ZERO);
-            service.setBankAccount(id, "ACCT-12345", true);
+            addVerifiedAccount(id);
 
             assertThatThrownBy(() -> service.requestSettlement(id,
                     new SettlementCommand(new BigDecimal("100.00"), "ACCT-12345")))
@@ -529,27 +549,204 @@ class ProviderServiceTest {
         }
     }
 
-    // ============================= KMS Encryption (bank account) =================
+    // ============================= Bank account (Requirements 4.9, 14.2) =========
 
     @Nested
-    class BankAccountEncryption {
+    class BankAccount {
+
+        private static final String MASKED = "HDFC \u2022\u2022\u2022\u20226789";
 
         @Test
-        void bankAccountIsStoredEncrypted() {
+        void accountIsStoredAsOneEncryptedValueHoldingHolderNumberAndIfsc() {
             UUID id = UUID.randomUUID();
             seedProfile(id);
 
-            service.setBankAccount(id, "GB33BUKB20201555555555", true);
+            service.setBankAccount(id, VALID_ACCOUNT);
 
-            ProviderProfile after = profileRepository.findById(id).orElseThrow();
-            // Stored value is ciphertext, not plaintext.
-            assertThat(after.getBankAccountEncrypted())
-                    .isNotEqualTo("GB33BUKB20201555555555")
-                    .startsWith("v1:");
-            assertThat(after.isBankAccountVerified()).isTrue();
-            // Decrypt round-trip to verify.
-            assertThat(kms.decrypt(after.getBankAccountEncrypted()))
-                    .isEqualTo("GB33BUKB20201555555555");
+            String stored = profileRepository.findById(id).orElseThrow().getBankAccountEncrypted();
+            assertThat(stored).startsWith("v1:").doesNotContain("50100123456789").doesNotContain("HDFC");
+            assertThat(kms.decrypt(stored))
+                    .contains("\"holder\":\"Ravi Kumar\"")
+                    .contains("\"number\":\"50100123456789\"")
+                    .contains("\"ifsc\":\"HDFC0001234\"");
+        }
+
+        @Test
+        void answerIsMaskedFromTheDecryptedNumberWithTheHolderName() {
+            UUID id = UUID.randomUUID();
+            seedProfile(id);
+
+            BankAccountView view = service.setBankAccount(id, VALID_ACCOUNT);
+
+            assertThat(view.masked()).isEqualTo(MASKED);
+            assertThat(view.holderName()).isEqualTo("Ravi Kumar");
+            // Computed from the decrypted number, never from the ciphertext.
+            assertThat(view.masked()).doesNotContain("v1:");
+            assertThat(service.bankAccountOf(profileRepository.findById(id).orElseThrow()))
+                    .contains(view);
+        }
+
+        @Test
+        void simulatorVerifiesAWellFormedAccount() {
+            UUID id = UUID.randomUUID();
+            seedProfile(id);
+
+            assertThat(service.setBankAccount(id, VALID_ACCOUNT).verified()).isTrue();
+            assertThat(profileRepository.findById(id).orElseThrow().isBankAccountVerified()).isTrue();
+        }
+
+        @Test
+        void manualVerificationLeavesTheAccountPending() {
+            UUID id = UUID.randomUUID();
+            seedProfile(id);
+            ProviderService manual = serviceWith(new ManualBankAccountVerificationAdapter());
+
+            assertThat(manual.setBankAccount(id, VALID_ACCOUNT).verified()).isFalse();
+            assertThat(profileRepository.findById(id).orElseThrow().isBankAccountVerified()).isFalse();
+        }
+
+        @Test
+        void replacingAVerifiedAccountUnderManualVerificationMakesItPendingAgain() {
+            UUID id = UUID.randomUUID();
+            seedProfile(id);
+            addVerifiedAccount(id);
+            ProviderService manual = serviceWith(new ManualBankAccountVerificationAdapter());
+
+            BankAccountView view = manual.setBankAccount(id,
+                    new BankAccountCommand("Ravi Kumar", "123456789012", "SBIN0000001"));
+
+            assertThat(view.verified()).isFalse();
+            assertThat(view.masked()).isEqualTo("SBIN \u2022\u2022\u2022\u20229012");
+        }
+
+        @Test
+        void inputIsNormalisedBeforeValidation() {
+            UUID id = UUID.randomUUID();
+            seedProfile(id);
+
+            BankAccountView view = service.setBankAccount(id,
+                    new BankAccountCommand("  Ravi Kumar ", " 5010 0123 4567 89 ", " hdfc0001234 "));
+
+            assertThat(view.masked()).isEqualTo(MASKED);
+            assertThat(view.holderName()).isEqualTo("Ravi Kumar");
+            assertThat(kms.decrypt(profileRepository.findById(id).orElseThrow().getBankAccountEncrypted()))
+                    .contains("\"number\":\"50100123456789\"").contains("\"ifsc\":\"HDFC0001234\"");
+        }
+
+        @Test
+        void boundaryValuesAreAccepted() {
+            for (BankAccountCommand ok : List.of(
+                    new BankAccountCommand("Al", "123456789", "ABCD0123456"),
+                    new BankAccountCommand("x".repeat(100), "1".repeat(18), "ABCD0ZZZZZZ"))) {
+                assertThat(ProviderService.validateBankAccount(ok).isWellFormed()).isTrue();
+            }
+        }
+
+        @Test
+        void eachInvalidFieldIsReportedWithItsName() {
+            assertInvalid(new BankAccountCommand("A", "50100123456789", "HDFC0001234"), "accountHolderName");
+            assertInvalid(new BankAccountCommand("x".repeat(101), "50100123456789", "HDFC0001234"),
+                    "accountHolderName");
+            assertInvalid(new BankAccountCommand(null, "50100123456789", "HDFC0001234"), "accountHolderName");
+            assertInvalid(new BankAccountCommand("Ravi", "12345678", "HDFC0001234"), "accountNumber");
+            assertInvalid(new BankAccountCommand("Ravi", "1".repeat(19), "HDFC0001234"), "accountNumber");
+            assertInvalid(new BankAccountCommand("Ravi", "50100-123456", "HDFC0001234"), "accountNumber");
+            assertInvalid(new BankAccountCommand("Ravi", null, "HDFC0001234"), "accountNumber");
+            assertInvalid(new BankAccountCommand("Ravi", "50100123456789", "HDFC1001234"), "ifsc");
+            assertInvalid(new BankAccountCommand("Ravi", "50100123456789", "HDFC000123"), "ifsc");
+            assertInvalid(new BankAccountCommand("Ravi", "50100123456789", "HDF00001234"), "ifsc");
+            assertInvalid(new BankAccountCommand("Ravi", "50100123456789", null), "ifsc");
+        }
+
+        @Test
+        void everyInvalidFieldIsReportedAtOnceAndNothingIsStored() {
+            UUID id = UUID.randomUUID();
+            seedProfile(id);
+
+            assertThatThrownBy(() -> service.setBankAccount(id, new BankAccountCommand("", "", "")))
+                    .isInstanceOfSatisfying(ProviderException.class, e -> {
+                        assertThat(e.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+                        assertThat(e.getErrorCode()).isEqualTo("VALIDATION_ERROR");
+                        assertThat(e.getDetails()).hasSize(3);
+                    });
+            assertThat(profileRepository.findById(id).orElseThrow().getBankAccountEncrypted()).isNull();
+        }
+
+        @Test
+        void aProviderWithoutAProfileGets404() {
+            assertThatThrownBy(() -> service.setBankAccount(UUID.randomUUID(), VALID_ACCOUNT))
+                    .isInstanceOfSatisfying(ProviderException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo("PROVIDER_NOT_FOUND"));
+        }
+
+        @Test
+        void noAccountOnFileIsEmpty() {
+            UUID id = UUID.randomUUID();
+            assertThat(service.bankAccountOf(seedProfile(id))).isEmpty();
+        }
+
+        private void assertInvalid(BankAccountCommand cmd, String field) {
+            assertThatThrownBy(() -> ProviderService.validateBankAccount(cmd))
+                    .isInstanceOfSatisfying(ProviderException.class, e -> {
+                        assertThat(e.getErrorCode()).isEqualTo("VALIDATION_ERROR");
+                        assertThat(e.getDetails()).hasSize(1);
+                        assertThat(e.getDetails().get(0)).startsWith(field + ": ");
+                    });
+        }
+    }
+
+    // ============================= Settlement destination ========================
+
+    @Nested
+    class SettlementDestination {
+
+        private UUID fundedProviderWithVerifiedAccount() {
+            UUID id = UUID.randomUUID();
+            seedProfile(id);
+            lenient().when(earningRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            lenient().when(settlementRepository.save(any(Settlement.class))).thenAnswer(inv -> inv.getArgument(0));
+            service.creditJobEarning(id, UUID.randomUUID(), "BK-001", new BigDecimal("100.00"), BigDecimal.ZERO);
+            addVerifiedAccount(id);
+            return id;
+        }
+
+        @Test
+        void withoutAReferenceTheStoredAccountIsUsedWithoutEncryptingItAgain() {
+            UUID id = fundedProviderWithVerifiedAccount();
+            String stored = profileRepository.findById(id).orElseThrow().getBankAccountEncrypted();
+
+            Settlement settlement = service.requestSettlement(id,
+                    new SettlementCommand(new BigDecimal("40.00"), null));
+
+            assertThat(settlement.getBankAccountRefEncrypted()).isEqualTo(stored);
+            // One layer of encryption: it decrypts straight to the account, not to ciphertext.
+            assertThat(kms.decrypt(settlement.getBankAccountRefEncrypted()))
+                    .contains("\"number\":\"50100123456789\"");
+        }
+
+        @Test
+        void theAccountsOwnIdAlsoMeansTheStoredAccount() {
+            UUID id = fundedProviderWithVerifiedAccount();
+            String stored = profileRepository.findById(id).orElseThrow().getBankAccountEncrypted();
+
+            Settlement settlement = service.requestSettlement(id,
+                    new SettlementCommand(new BigDecimal("40.00"), id.toString()));
+
+            assertThat(settlement.getBankAccountRefEncrypted()).isEqualTo(stored);
+        }
+
+        @Test
+        void aPendingAccountIsStillRefused() {
+            UUID id = UUID.randomUUID();
+            seedProfile(id);
+            lenient().when(earningRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            service.creditJobEarning(id, UUID.randomUUID(), "BK-001", new BigDecimal("100.00"), BigDecimal.ZERO);
+            serviceWith(new ManualBankAccountVerificationAdapter()).setBankAccount(id, VALID_ACCOUNT);
+
+            assertThatThrownBy(() -> service.requestSettlement(id,
+                    new SettlementCommand(new BigDecimal("10.00"), null)))
+                    .isInstanceOfSatisfying(ProviderException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo("NO_VERIFIED_BANK_ACCOUNT"));
         }
     }
 

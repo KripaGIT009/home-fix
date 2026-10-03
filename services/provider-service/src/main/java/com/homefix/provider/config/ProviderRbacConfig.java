@@ -104,6 +104,13 @@ public class ProviderRbacConfig {
     private static final List<String> ADMIN_TIER = List.of("ADMIN", "SUPER_ADMIN");
 
     /**
+     * Marking a provider's settlement bank account verified (Requirement 14.2): platform
+     * administrators and {@code FINANCE_ADMIN}, who owns payouts.
+     */
+    private static final List<String> BANK_VERIFICATION_TIER =
+            List.of("ADMIN", "SUPER_ADMIN", "FINANCE_ADMIN");
+
+    /**
      * The Tenant Portal (Requirements MT-10.1, MT-11): Tenant administrators only. Platform
      * administrators manage Tenants through {@code /admin/tenants/**} instead, so they are not
      * admitted here — {@code /tenant/**} always means "the caller's own Tenant", which a Platform
@@ -129,6 +136,11 @@ public class ProviderRbacConfig {
         // rules below cannot shadow them or be shadowed by them.
         rules.put("GET /admin/providers/**", ADMIN_TIER);
         rules.put("PATCH /admin/providers/**", ADMIN_TIER);
+        // Bank-account verification (Requirement 14.2) is a payout decision, so Finance is admitted
+        // too. Listed before the POST catch-all below, which keeps any future POST under
+        // /admin/providers from being reachable without a rule.
+        rules.put("POST /admin/providers/*/bank-account/verification", BANK_VERIFICATION_TIER);
+        rules.put("POST /admin/providers/**", ADMIN_TIER);
         // Admin Portal Tenants module (Requirements MT-1, MT-2, MT-3, MT-12). A TENANT_ADMIN is
         // refused here with 403 (Requirement MT-10.3). "/admin/tenants/**" also matches the bare
         // "/admin/tenants" list and create.
@@ -141,7 +153,10 @@ public class ProviderRbacConfig {
             rules.put(method + " /tenant/**", TENANT_ADMIN_TIER);
         }
         // Mutating provider self-service: profile, radius, availability, emergency availability
-        // (Requirements 4.1-4.6, 4.8).
+        // (Requirements 4.1-4.6, 4.8). The settlement bank account (Requirements 4.9, 14.2) is
+        // written by the same tier; it is named explicitly so its rule cannot change by accident
+        // if the catch-all below ever does.
+        rules.put("PUT /providers/*/bank-account", PROVIDER_WRITE_TIER);
         rules.put("PUT /providers/**", PROVIDER_WRITE_TIER);
         // Settlement request and earnings history also admit Finance (Requirements 14.2, 14.5, 4.9).
         rules.put("POST /providers/*/settlements", PROVIDER_FINANCE_TIER);

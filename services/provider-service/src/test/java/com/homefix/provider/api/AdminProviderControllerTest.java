@@ -8,6 +8,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -28,6 +29,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
+import com.homefix.provider.bank.BankAccountView;
 import com.homefix.provider.config.ProviderRbacConfig;
 import com.homefix.provider.config.WebSecurityConfig;
 import com.homefix.provider.domain.ProviderAdminRow;
@@ -99,7 +101,26 @@ class AdminProviderControllerTest {
                 .andExpect(jsonPath("$[0].mobileNumber").isEmpty())
                 .andExpect(jsonPath("$[0].completedJobs").isEmpty())
                 .andExpect(jsonPath("$[0].isOnline").isEmpty())
-                .andExpect(jsonPath("$[0].online").doesNotExist());
+                .andExpect(jsonPath("$[0].online").doesNotExist())
+                // No bank account on file: present and null.
+                .andExpect(jsonPath("$[0].bankAccount").isEmpty());
+    }
+
+    @Test
+    void list_showsTheBankAccountMaskedAndItsVerification() throws Exception {
+        AdminProviderView withAccount = new AdminProviderView(
+                new ProviderAdminRow(provider, "Ravi Kumar", new BigDecimal("4.60"), "v1:ciphertext", false),
+                "plumbing", true, "APPROVED", new BankAccountView("HDFC ••••6789", false, "Ravi Kumar"));
+        when(adminService.list(null)).thenReturn(List.of(withAccount));
+
+        mockMvc.perform(get("/admin/providers").header(HttpHeaders.AUTHORIZATION, token(admin, "ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].bankAccount.masked").value("HDFC ••••6789"))
+                .andExpect(jsonPath("$[0].bankAccount.verified").value(false))
+                // Neither the ciphertext nor the holder leaks into the list.
+                .andExpect(jsonPath("$[0].bankAccount.holderName").doesNotExist())
+                .andExpect(jsonPath("$[0].bankAccountEncrypted").doesNotExist())
+                .andExpect(jsonPath("$[0].row").doesNotExist());
     }
 
     @Test
@@ -201,6 +222,49 @@ class AdminProviderControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"status\":\"ACTIVE\"}"))
                 .andExpect(status().isForbidden());
+
+        verifyNoInteractions(adminService);
+    }
+
+    // ------------------------------------------------------------------ bank-account verification
+
+    private static final String VERIFY_PATH = "/admin/providers/{id}/bank-account/verification";
+
+    @Test
+    void verifyBankAccount_isAllowedForAdminsAndFinanceAndForwardsTheActor() throws Exception {
+        for (String role : List.of("ADMIN", "SUPER_ADMIN", "FINANCE_ADMIN")) {
+            UUID actor = UUID.randomUUID();
+            when(adminService.verifyBankAccount(provider, actor))
+                    .thenReturn(new BankAccountView("HDFC ••••6789", true, "Ravi Kumar"));
+
+            mockMvc.perform(post(VERIFY_PATH, provider).header(HttpHeaders.AUTHORIZATION, token(actor, role)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.id").value(provider.toString()))
+                    .andExpect(jsonPath("$.masked").value("HDFC ••••6789"))
+                    .andExpect(jsonPath("$.verified").value(true))
+                    .andExpect(jsonPath("$.holderName").value("Ravi Kumar"));
+
+            verify(adminService).verifyBankAccount(provider, actor);
+        }
+    }
+
+    @Test
+    void verifyBankAccount_withNoAccountOnFile_is404() throws Exception {
+        when(adminService.verifyBankAccount(provider, admin)).thenThrow(new ProviderException(
+                HttpStatus.NOT_FOUND, "BANK_ACCOUNT_NOT_FOUND", "no bank account on file"));
+
+        mockMvc.perform(post(VERIFY_PATH, provider).header(HttpHeaders.AUTHORIZATION, token(admin, "ADMIN")))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.errorCode").value("BANK_ACCOUNT_NOT_FOUND"));
+    }
+
+    @Test
+    void verifyBankAccount_isRefusedForOtherRolesIncludingTheProviderThemselves() throws Exception {
+        for (String role : List.of("SERVICE_PROVIDER", "CUSTOMER", "SUPPORT_AGENT", "DISPATCHER", "TENANT_ADMIN")) {
+            mockMvc.perform(post(VERIFY_PATH, provider).header(HttpHeaders.AUTHORIZATION, token(provider, role)))
+                    .andExpect(status().isForbidden());
+        }
+        mockMvc.perform(post(VERIFY_PATH, provider)).andExpect(status().isUnauthorized());
 
         verifyNoInteractions(adminService);
     }

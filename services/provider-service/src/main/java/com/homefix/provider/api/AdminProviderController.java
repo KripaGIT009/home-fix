@@ -7,12 +7,14 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.homefix.provider.api.dto.AdminProviderResponse;
+import com.homefix.provider.api.dto.BankAccountResponse;
 import com.homefix.provider.api.dto.ProviderStatusRequest;
 import com.homefix.provider.service.ProviderAdminService;
 
@@ -22,7 +24,8 @@ import jakarta.validation.Valid;
  * The Admin Portal's Provider Management endpoints (Requirement 19.2), at the paths the portal
  * calls; the API Gateway routes {@code /admin/providers} here unchanged.
  *
- * <p>Role enforcement (ADMIN / SUPER_ADMIN) is applied by the shared {@code RbacEnforcementFilter}
+ * <p>Role enforcement (ADMIN / SUPER_ADMIN; FINANCE_ADMIN additionally for bank-account
+ * verification) is applied by the shared {@code RbacEnforcementFilter}
  * using the rules in {@code ProviderRbacConfig}. These endpoints are staff-only by role, so no
  * per-provider ownership assertion applies; the acting Admin's id is still read from the principal
  * because a status change is recorded against it in the verification audit trail
@@ -67,5 +70,16 @@ public class AdminProviderController {
         UUID admin = callerIdentity.requireCallerId();
         return ResponseEntity.ok(AdminProviderResponse.from(
                 adminService.changeStatus(id, request.status(), admin)));
+    }
+
+    /**
+     * {@code POST /admin/providers/{id}/bank-account/verification} — marks the provider's bank
+     * account verified so it can receive settlements (Requirement 14.2), answering the account
+     * masked. 404 {@code BANK_ACCOUNT_NOT_FOUND} when the provider has none on file.
+     */
+    @PostMapping("/{id}/bank-account/verification")
+    public ResponseEntity<BankAccountResponse> verifyBankAccount(@PathVariable("id") UUID id) {
+        UUID actor = callerIdentity.requireCallerId();
+        return ResponseEntity.ok(BankAccountResponse.from(id, adminService.verifyBankAccount(id, actor)));
     }
 }

@@ -1,4 +1,10 @@
 spring:
+  servlet:
+    multipart:
+      # Job photos and booking media: the service checks its own 50 MB limit (homefix.booking.media),
+      # so the container must not refuse first at Spring's default 1 MB per file.
+      max-file-size: 50MB
+      max-request-size: 60MB
   application:
     name: booking-service
   datasource:

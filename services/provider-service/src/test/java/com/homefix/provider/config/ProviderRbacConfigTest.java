@@ -307,6 +307,38 @@ class ProviderRbacConfigTest {
                 .isEqualTo(HttpStatus.UNAUTHORIZED.value());
     }
 
+    // ------------------------------------------------------------------ bank account (Req 4.9, 14.2)
+
+    @Test
+    void bankAccountWriteIsForTheProviderAndPlatformAdmins() throws Exception {
+        List<String[]> put = List.<String[]>of(new String[] {"PUT", "/providers/" + providerId + "/bank-account"});
+        assertCalls(put, List.of("SERVICE_PROVIDER", "ADMIN", "SUPER_ADMIN"), HttpStatus.OK.value());
+        assertCalls(put, List.of("CUSTOMER", "DISPATCHER", "SUPPORT_AGENT", "TENANT_ADMIN", "FINANCE_ADMIN"),
+                HttpStatus.FORBIDDEN.value());
+        SecurityContextHolder.clearContext();
+        assertThat(invoke("PUT", "/providers/" + providerId + "/bank-account", mock(FilterChain.class))
+                .getStatus()).isEqualTo(HttpStatus.UNAUTHORIZED.value());
+    }
+
+    @Test
+    void bankAccountVerificationIsForAdminsAndFinance() throws Exception {
+        List<String[]> verify = List.<String[]>of(
+                new String[] {"POST", "/admin/providers/" + providerId + "/bank-account/verification"});
+        assertCalls(verify, List.of("ADMIN", "SUPER_ADMIN", "FINANCE_ADMIN"), HttpStatus.OK.value());
+        assertCalls(verify, List.of("SERVICE_PROVIDER", "CUSTOMER", "DISPATCHER", "SUPPORT_AGENT", "TENANT_ADMIN"),
+                HttpStatus.FORBIDDEN.value());
+        SecurityContextHolder.clearContext();
+        assertThat(invoke("POST", "/admin/providers/" + providerId + "/bank-account/verification",
+                mock(FilterChain.class)).getStatus()).isEqualTo(HttpStatus.UNAUTHORIZED.value());
+    }
+
+    @Test
+    void anyOtherAdminProviderPostIsForPlatformAdminsOnly() throws Exception {
+        List<String[]> other = List.<String[]>of(new String[] {"POST", "/admin/providers/" + providerId + "/other"});
+        assertCalls(other, List.of("ADMIN", "SUPER_ADMIN"), HttpStatus.OK.value());
+        assertCalls(other, List.of("FINANCE_ADMIN", "SERVICE_PROVIDER"), HttpStatus.FORBIDDEN.value());
+    }
+
     @Test
     void healthAndMetricsSurfacePassesThroughWithNoAuthentication() throws Exception {
         for (String path : List.of("/health/liveness", "/health/readiness", "/actuator/health",

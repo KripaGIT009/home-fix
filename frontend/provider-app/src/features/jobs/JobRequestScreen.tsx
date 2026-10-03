@@ -49,7 +49,11 @@ export function JobRequestScreen() {
           <OfferContent
             offer={offer.data}
             bookingId={bookingId}
-            onDone={() => navigate('/dashboard')}
+            // Straight into the job just accepted, as for an agency assignment. Back on the
+            // dashboard it is one card among the provider's other open jobs, listed by
+            // scheduled time, so it is easy to open the wrong one.
+            onAccepted={() => navigate(`/jobs/${bookingId}/active`, { replace: true })}
+            onDeclined={() => navigate('/dashboard')}
           />
         ) : null}
       </QueryStateView>
@@ -60,11 +64,13 @@ export function JobRequestScreen() {
 interface OfferContentProps {
   offer: JobOffer;
   bookingId: string;
-  /** Leave the screen once the provider has answered. */
-  onDone: () => void;
+  /** The provider accepted: continue into the active-job flow. */
+  onAccepted: () => void;
+  /** The provider declined: leave the screen. */
+  onDeclined: () => void;
 }
 
-function OfferContent({ offer, bookingId, onDone }: OfferContentProps) {
+function OfferContent({ offer, bookingId, onAccepted, onDeclined }: OfferContentProps) {
   const timer = useCountdown(0);
   const timerReset = timer.reset;
   useEffect(() => {
@@ -83,10 +89,10 @@ function OfferContent({ offer, bookingId, onDone }: OfferContentProps) {
     windowSeconds > 0 ? Math.min(100, (timer.secondsLeft / windowSeconds) * 100) : 0;
 
   const handleAccept = () => {
-    accept.mutate(undefined, { onSuccess: onDone });
+    accept.mutate(undefined, { onSuccess: onAccepted });
   };
   const handleDecline = () => {
-    decline.mutate(undefined, { onSuccess: onDone });
+    decline.mutate(undefined, { onSuccess: onDeclined });
   };
 
   const decisionError = accept.error ?? decline.error;

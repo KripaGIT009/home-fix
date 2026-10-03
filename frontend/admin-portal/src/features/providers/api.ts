@@ -6,6 +6,7 @@ import { apiClient } from '@api/client';
  * Endpoints (see design.md — Admin Service / Provider Service):
  * - GET   /admin/providers             — list/search providers
  * - PATCH /admin/providers/{id}/status — activate/deactivate a provider
+ * - POST  /admin/providers/{id}/bank-account/verification — mark the bank account verified
  */
 
 export type VerificationStatus =
@@ -29,6 +30,15 @@ export interface AdminProvider {
   isOnline?: boolean | null;
   /** Null when the Verification Service (which holds suspension) is unreachable. */
   status?: ProviderStatus | null;
+  /** The settlement bank account; null when the provider has not added one. */
+  bankAccount?: ProviderBankAccount | null;
+}
+
+/** A provider's settlement bank account, as the admin list shows it. */
+export interface ProviderBankAccount {
+  /** e.g. "HDFC ••••1234"; never the full number. */
+  masked: string;
+  verified: boolean;
 }
 
 export type ProviderStatus = 'ACTIVE' | 'SUSPENDED' | 'DEACTIVATED';
@@ -55,5 +65,17 @@ export async function updateProviderStatus(
   const { data } = await apiClient.patch<AdminProvider>(`/admin/providers/${id}/status`, {
     status,
   });
+  return data;
+}
+
+/**
+ * POST /admin/providers/{id}/bank-account/verification — record that the
+ * provider's bank account has been checked, so settlements can be paid into it.
+ * 404 BANK_ACCOUNT_NOT_FOUND when the provider has no account on file.
+ */
+export async function verifyProviderBankAccount(id: string): Promise<ProviderBankAccount> {
+  const { data } = await apiClient.post<ProviderBankAccount>(
+    `/admin/providers/${id}/bank-account/verification`,
+  );
   return data;
 }

@@ -55,7 +55,8 @@ public interface ProviderProfileRepository extends JpaRepository<ProviderProfile
      * bounded by {@code page}. A projection — no aggregate or EAGER collection is loaded.
      */
     @Query("""
-            select new com.homefix.provider.domain.ProviderAdminRow(p.id, p.displayName, p.aggregateRating)
+            select new com.homefix.provider.domain.ProviderAdminRow(p.id, p.displayName, p.aggregateRating,
+                    p.bankAccountEncrypted, p.bankAccountVerified)
             from ProviderProfile p
             order by p.createdAt desc, p.id asc
             """)
@@ -67,7 +68,8 @@ public interface ProviderProfileRepository extends JpaRepository<ProviderProfile
      * with {@code \}; the caller builds it so the search is a case-insensitive substring match.
      */
     @Query("""
-            select new com.homefix.provider.domain.ProviderAdminRow(p.id, p.displayName, p.aggregateRating)
+            select new com.homefix.provider.domain.ProviderAdminRow(p.id, p.displayName, p.aggregateRating,
+                    p.bankAccountEncrypted, p.bankAccountVerified)
             from ProviderProfile p
             where lower(p.displayName) like :pattern escape '\\'
             order by p.createdAt desc, p.id asc
@@ -76,7 +78,8 @@ public interface ProviderProfileRepository extends JpaRepository<ProviderProfile
 
     /** The admin columns of the given providers, in no particular order. {@code ids} must be non-empty. */
     @Query("""
-            select new com.homefix.provider.domain.ProviderAdminRow(p.id, p.displayName, p.aggregateRating)
+            select new com.homefix.provider.domain.ProviderAdminRow(p.id, p.displayName, p.aggregateRating,
+                    p.bankAccountEncrypted, p.bankAccountVerified)
             from ProviderProfile p
             where p.id in :ids
             """)

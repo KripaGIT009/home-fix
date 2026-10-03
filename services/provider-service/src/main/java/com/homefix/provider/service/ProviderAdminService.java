@@ -7,11 +7,17 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
+import com.homefix.provider.bank.BankAccountCodec;
+import com.homefix.provider.bank.BankAccountView;
 import com.homefix.provider.domain.ProviderAdminRow;
+import com.homefix.provider.domain.ProviderProfile;
 import com.homefix.provider.domain.ProviderProfileRepository;
 import com.homefix.provider.domain.ProviderSkillTag;
 import com.homefix.provider.verification.VerificationAdminClientPort;
@@ -26,9 +32,13 @@ import com.homefix.provider.verification.VerificationAdminClientPort;
  * There is no provider-side account status: an Admin "suspends" a provider by suspending their
  * verification, which is what removes them from dispatch (Requirement 5.9).
  *
- * <p>Deliberately not {@code @Transactional}: each read is a single projection statement in its own
- * short transaction, and holding a database transaction open across the HTTP call to the
- * Verification Service would pin a connection for no benefit.
+ * <p>Deliberately not {@code @Transactional} as a class: each read is a single projection statement
+ * in its own short transaction, and holding a database transaction open across the HTTP call to the
+ * Verification Service would pin a connection for no benefit. Only the bank-account verification,
+ * a load-and-save with no remote call, runs in one.
+ *
+ * <p>The list also carries each provider's bank account as a masked label and its verified flag
+ * (Requirement 14.2), so an administrator can see which accounts await verification.
  */
 @Service
 public class ProviderAdminService {
@@ -44,13 +54,18 @@ public class ProviderAdminService {
         ACTIVE, SUSPENDED, DEACTIVATED
     }
 
+    private static final Logger log = LoggerFactory.getLogger(ProviderAdminService.class);
+
     private final ProviderProfileRepository repository;
     private final VerificationAdminClientPort verification;
+    private final BankAccountCodec bankAccountCodec;
 
     public ProviderAdminService(ProviderProfileRepository repository,
-                                VerificationAdminClientPort verification) {
+                                VerificationAdminClientPort verification,
+                                BankAccountCodec bankAccountCodec) {
         this.repository = repository;
         this.verification = verification;
+        this.bankAccountCodec = bankAccountCodec;
     }
 
     /**
@@ -73,6 +88,31 @@ public class ProviderAdminService {
         return rows.stream()
                 .map(row -> view(row, skills.get(row.id()), statuses))
                 .toList();
+    }
+
+    /**
+     * Marks the provider's bank account verified (Requirement 14.2), after an ADMIN, SUPER_ADMIN or
+     * FINANCE_ADMIN has checked it outside the platform. Idempotent: verifying a verified account
+     * changes nothing. The account details themselves are not touched.
+     *
+     * @param actorId the acting administrator, logged for the audit trail
+     * @throws ProviderException 404 {@code PROVIDER_NOT_FOUND} for an unknown provider, 404
+     *         {@code BANK_ACCOUNT_NOT_FOUND} when the provider has no bank account on file
+     */
+    @Transactional
+    public BankAccountView verifyBankAccount(UUID providerId, UUID actorId) {
+        ProviderProfile profile = repository.findById(providerId)
+                .orElseThrow(() -> ProviderException.notFound("Provider " + providerId + " not found"));
+        if (profile.getBankAccountEncrypted() == null) {
+            throw new ProviderException(HttpStatus.NOT_FOUND, "BANK_ACCOUNT_NOT_FOUND",
+                    "Provider " + providerId + " has no bank account on file");
+        }
+        if (!profile.isBankAccountVerified()) {
+            profile.setBankAccount(profile.getBankAccountEncrypted(), true);
+            repository.save(profile);
+            log.info("Bank account of provider {} marked verified by {}", providerId, actorId);
+        }
+        return bankAccountCodec.describe(profile.getBankAccountEncrypted(), true);
     }
 
     /**
@@ -128,10 +168,11 @@ public class ProviderAdminService {
 
     // ----------------------------------------------------------------------------------------
 
-    private static AdminProviderView view(ProviderAdminRow row, String primarySkill,
-                                          Optional<Map<UUID, String>> statuses) {
+    private AdminProviderView view(ProviderAdminRow row, String primarySkill,
+                                   Optional<Map<UUID, String>> statuses) {
         return new AdminProviderView(row, primarySkill, statuses.isPresent(),
-                statuses.map(m -> m.get(row.id())).orElse(null));
+                statuses.map(m -> m.get(row.id())).orElse(null),
+                bankAccountCodec.describe(row.bankAccountEncrypted(), row.bankAccountVerified()));
     }
 
     /**
@@ -173,9 +214,17 @@ public class ProviderAdminService {
      * @param verificationKnown  {@code false} when the Verification Service could not be asked
      * @param verificationStatus the raw {@code VerificationStatus} name, or {@code null} when the
      *                           provider has no verification record (or it is unknown)
+     * @param bankAccount        the bank account on file, masked, or {@code null} when none
      */
     public record AdminProviderView(ProviderAdminRow row, String primarySkill,
-                                    boolean verificationKnown, String verificationStatus) {
+                                    boolean verificationKnown, String verificationStatus,
+                                    BankAccountView bankAccount) {
+
+        /** A view of a provider with no bank account on file. */
+        public AdminProviderView(ProviderAdminRow row, String primarySkill,
+                                 boolean verificationKnown, String verificationStatus) {
+            this(row, primarySkill, verificationKnown, verificationStatus, null);
+        }
     }
 
     /** What the Verification Service's review queue shows about a provider. */

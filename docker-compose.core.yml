@@ -389,6 +389,9 @@ services:
       # Looks accounts up by mobile number and grants/revokes TENANT_ADMIN when a platform admin
       # manages a Tenant's administrators (Requirement MT-2).
       AUTH_SERVICE_URL: http://auth-service:8081
+      # Local only: a simulator verifies a well-formed bank account immediately, standing in for the
+      # bank "penny drop" check. Deployments default to manual verification by a platform admin.
+      BANK_ACCOUNT_VERIFICATION: simulator
       # Shared service credential: presented to the Booking and Verification Services
       # /internal/** endpoints, and required on this service's own /internal/**
       # (the Dispatch Engine's eligible-provider search).
