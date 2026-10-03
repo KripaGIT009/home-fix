@@ -137,8 +137,11 @@ public final class EligibilityEvaluator {
     /**
      * Availability at {@code now}: empty when the provider is outside every slot, otherwise the
      * share of {@link #AVAILABILITY_HORIZON} left in the current run of back-to-back slots.
+     *
+     * <p>Public because the Tenant team list reads "available now" from the same rule
+     * (Requirements MT-3.4, MT-8.4): a Tenant_Admin must see exactly the availability dispatch uses.
      */
-    static OptionalDouble availabilityScore(List<AvailabilitySlot> slots, ZonedDateTime now) {
+    public static OptionalDouble availabilityScore(List<AvailabilitySlot> slots, ZonedDateTime now) {
         if (slots.isEmpty()) {
             return OptionalDouble.of(1.0);
         }

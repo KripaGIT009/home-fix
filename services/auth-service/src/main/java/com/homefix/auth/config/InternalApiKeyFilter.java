@@ -22,8 +22,9 @@ import jakarta.servlet.http.HttpServletResponse;
 /**
  * Authenticates service-to-service calls on {@code /internal/**} with a shared secret.
  *
- * <p>The Auth Service's internal endpoints exist for other platform services (today the
- * Notification Service, which resolves a recipient's contact details by user id). Those callers
+ * <p>The Auth Service's internal endpoints exist for other platform services (the Notification
+ * Service, which resolves a recipient's contact details by user id, and provider-service, which
+ * looks accounts up by mobile number and grants or revokes TENANT_ADMIN). Those callers
  * act on their own behalf and carry no end-user token, so neither the JWT filter nor the RBAC
  * filter can authorise them, and leaving them open would hand any caller every user's phone
  * number. This is the same mechanism the Booking Service uses for its internal dispatch

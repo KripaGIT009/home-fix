@@ -3,7 +3,8 @@ package com.homefix.auth.admin;
 import org.springframework.http.HttpStatus;
 
 /**
- * Refusal of an Admin Portal user-management action, carrying the HTTP status and the stable
+ * Refusal of an Admin Portal user-management action, or of an internal role change
+ * ({@link AccountRoleService}), carrying the HTTP status and the stable
  * error code the REST layer surfaces through the shared {@code ErrorResponseDto}, like the other
  * domain exceptions in this service. An unknown user id is not one of these: it is the existing
  * 404 {@code UserNotFoundException}.
@@ -35,6 +36,17 @@ public class AdminUserException extends RuntimeException {
     public static AdminUserException superAdminRequired() {
         return new AdminUserException(HttpStatus.FORBIDDEN, "SUPER_ADMIN_REQUIRED",
                 "Only a SUPER_ADMIN may change the status of an administrator account.");
+    }
+
+    /**
+     * An internal caller asked to grant or revoke a role other than TENANT_ADMIN. The internal
+     * role endpoints exist for provider-service's Tenant administrators only (Requirement
+     * MT-2.2, MT-2.4); platform staff roles stay out of band, so a leaked service credential
+     * cannot mint an ADMIN. Unknown and refused role names get the same answer.
+     */
+    public static AdminUserException roleNotManageable() {
+        return new AdminUserException(HttpStatus.BAD_REQUEST, "ROLE_NOT_MANAGEABLE",
+                "Only the TENANT_ADMIN role can be granted or revoked through this endpoint.");
     }
 
     /** The authenticated principal is not a user id this service issued. */

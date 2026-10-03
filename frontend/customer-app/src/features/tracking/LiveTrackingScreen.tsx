@@ -20,6 +20,7 @@ import StarRounded from '@mui/icons-material/StarRounded';
 import PersonSearchRoundedIcon from '@mui/icons-material/PersonSearchRounded';
 import SearchOffRoundedIcon from '@mui/icons-material/SearchOffRounded';
 import HowToRegRoundedIcon from '@mui/icons-material/HowToRegRounded';
+import HourglassTopRoundedIcon from '@mui/icons-material/HourglassTopRounded';
 import DoorFrontRoundedIcon from '@mui/icons-material/DoorFrontRounded';
 import HandymanRoundedIcon from '@mui/icons-material/HandymanRounded';
 import PauseCircleRoundedIcon from '@mui/icons-material/PauseCircleRounded';
@@ -63,6 +64,10 @@ type Provider = NonNullable<LocationSnapshot['provider']>;
  * start the trip, the live map while they travel (seeded from the Location
  * Service snapshot, then streamed over SSE), and the job and payment steps
  * after. A booking with no location yet is a waiting state, never an error.
+ * When nobody accepts automatically and a local partner takes the job over, it
+ * still reads as the search, with partner copy, and then as "assigned, waiting
+ * for their confirmation" until the professional confirms; the booking keeps
+ * being re-read throughout (Requirement MT-4.5, MT-13.1, MT-13.3).
  * Stale locations (> 60 s) are flagged with the last-updated time
  * (Requirement 10.7), and the in-app chat is one tap away (Requirement 18).
  */
@@ -148,7 +153,12 @@ export function LiveTrackingScreen() {
               onHome={() => navigate('/home')}
             />
           ) : null}
-          {provider && status && phase !== 'searching' && phase !== 'searchFailed' ? (
+          {provider &&
+          status &&
+          phase !== 'searching' &&
+          phase !== 'searchFailed' &&
+          // Not yet confirmed: the professional may still decline.
+          phase !== 'confirming' ? (
             <ProviderCard provider={provider} />
           ) : null}
         </Stack>
@@ -325,10 +335,25 @@ function PhasePanel({
         </StatePanel>
       );
     case 'searching':
-      return (
+      return status === 'AWAITING_ASSIGNMENT' ? (
+        <StatePanel icon={null} visual={<SearchingVisual />} title="Finding you a professional">
+          No one nearby could take it straight away, so a local HomeFix partner is assigning one of
+          their verified professionals to your job. We&apos;ll notify you as soon as someone is
+          assigned, so you can leave this page.
+        </StatePanel>
+      ) : (
         <StatePanel icon={null} visual={<SearchingVisual />} title="Finding you a professional">
           We&apos;re offering your job to verified pros near you. This usually takes a few minutes —
           we&apos;ll notify you as soon as someone accepts, so you can leave this page.
+        </StatePanel>
+      );
+    case 'confirming':
+      return (
+        <StatePanel icon={<HourglassTopRoundedIcon />} title="Professional assigned">
+          {detail?.tenantName
+            ? `Our local partner ${detail.tenantName} has assigned a professional to your job. `
+            : 'A local partner has assigned a professional to your job. '}
+          We&apos;re waiting for them to confirm — we&apos;ll let you know as soon as they do.
         </StatePanel>
       );
     case 'searchFailed':

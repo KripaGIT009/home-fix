@@ -148,7 +148,7 @@ class AdminUserServiceTest {
 
     @ParameterizedTest
     @EnumSource(value = Role.class, names = {"CUSTOMER", "SERVICE_PROVIDER", "FINANCE_ADMIN",
-            "DISPATCHER", "SUPPORT_AGENT"})
+            "DISPATCHER", "SUPPORT_AGENT", "TENANT_ADMIN"})
     void adminMayChangeANonAdministratorsStatus(Role role) {
         UserAccount account = stubAccount(role);
 
@@ -174,6 +174,20 @@ class AdminUserServiceTest {
         assertThat(target.getStatus()).isEqualTo(AccountStatus.ACTIVE);
         verify(userRepository, never()).save(any());
         verifyNoInteractions(tokenService);
+    }
+
+    @Test
+    void tenantAdminWhoIsAlsoAPlatformAdmin_stillNeedsASuperAdmin() {
+        // TENANT_ADMIN alone is not an administrator role (Requirement MT-12.3), but it must not
+        // dilute one the account also holds.
+        UserAccount target = stubAccount(Role.TENANT_ADMIN);
+        target.addRole(Role.ADMIN);
+
+        assertThatThrownBy(() -> service.changeStatus(target.getId(), AccountStatus.SUSPENDED, ADMIN))
+                .isInstanceOf(AdminUserException.class)
+                .satisfies(ex -> assertThat(((AdminUserException) ex).getErrorCode())
+                        .isEqualTo("SUPER_ADMIN_REQUIRED"));
+        verify(userRepository, never()).save(any());
     }
 
     @Test

@@ -77,6 +77,56 @@ class EventTemplateResolverTest {
     }
 
     @Test
+    void aTenantAssignedJobTellsTheProviderWhichAgencyAssignedIt() {
+        // Requirement MT-5.3: the provider learns who assigned the job, and that it awaits their answer.
+        RenderedMessage message = resolver.resolve(event(NotificationEventType.PROVIDER_ASSIGNED,
+                NotificationAudience.PROVIDER,
+                Map.of("bookingReference", "HFX-9", "tenantName", "Sharma Home Services")));
+
+        assertThat(message.title()).isEqualTo("New job from Sharma Home Services");
+        assertThat(message.body()).isEqualTo(
+                "HFX-9 has been assigned to you by Sharma Home Services. Open the app to accept or decline it.");
+        for (NotificationChannel channel : message.channels()) {
+            assertThat(message.bodyFor(channel)).as(channel.name()).contains("by Sharma Home Services");
+        }
+        assertThat(message.channels()).contains(NotificationChannel.PUSH, NotificationChannel.SMS);
+    }
+
+    @Test
+    void anAssignmentWithoutAnAgencyKeepsThePlainProviderText() {
+        RenderedMessage message = resolver.resolve(event(NotificationEventType.PROVIDER_ASSIGNED,
+                NotificationAudience.PROVIDER, Map.of("bookingReference", "HFX-10")));
+
+        assertThat(message.title()).isEqualTo("New job assigned");
+        assertThat(message.body()).isEqualTo("You have been assigned HFX-10. Open the app to accept or decline it.")
+                .doesNotContain("{{");
+    }
+
+    @Test
+    void theCustomerIsToldTheAssignedProfessionalStillHasToConfirm() {
+        // The booking rests in PROVIDER_ASSIGNED until the provider accepts: not "on the way" yet.
+        RenderedMessage message = resolver.resolve(event(NotificationEventType.PROVIDER_ASSIGNED,
+                NotificationAudience.CUSTOMER,
+                Map.of("bookingReference", "HFX-11", "tenantName", "Sharma Home Services")));
+
+        assertThat(message.title()).isEqualTo("Professional assigned");
+        assertThat(message.body()).isEqualTo(
+                "A professional has been assigned to HFX-11. We will let you know as soon as they confirm.");
+    }
+
+    @Test
+    void anAdminTextUsingTheAgencyNameOnThePlainVariantNamesThePlatformInstead() {
+        EventTemplateResolver edited = new EventTemplateResolver(id -> id.equals("PROVIDER_ASSIGNED.PROVIDER.PUSH")
+                ? Optional.of(new TemplateText("From {{tenantName}}", "{{bookingReference}} from {{tenantName}}"))
+                : Optional.empty());
+
+        RenderedMessage message = edited.resolve(event(NotificationEventType.PROVIDER_ASSIGNED,
+                NotificationAudience.PROVIDER, Map.of("bookingReference", "HFX-12")));
+
+        assertThat(message.bodyFor(NotificationChannel.PUSH)).isEqualTo("HFX-12 from HomeFix");
+    }
+
+    @Test
     void reviewRecipientsGetDifferentMessages() {
         RenderedMessage reviewer = resolver.resolve(
                 event(NotificationEventType.REVIEW_SUBMITTED, NotificationAudience.REVIEWER, Map.of()));

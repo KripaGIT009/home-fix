@@ -17,7 +17,12 @@ const STATUS_META: Record<BookingStatus, { label: string; tone: StatusTone }> = 
   CREATED: { label: 'Booked', tone: 'neutral' },
   SEARCHING_PROVIDER: { label: 'Finding a pro', tone: 'searching' },
   SEARCHING_FAILED: { label: 'No pro found', tone: 'attention' },
-  PROVIDER_ASSIGNED: { label: 'Pro assigned', tone: 'active' },
+  // A local partner is choosing a pro: to the customer this is still the search
+  // (Requirement MT-4.5, MT-13.1).
+  AWAITING_ASSIGNMENT: { label: 'Finding a pro', tone: 'searching' },
+  // Assigned by a partner but not yet confirmed by the pro, who may still
+  // decline — so it reads as waiting, not as confirmed (Requirement MT-13.1).
+  PROVIDER_ASSIGNED: { label: 'Awaiting confirmation', tone: 'searching' },
   PROVIDER_ACCEPTED: { label: 'Pro confirmed', tone: 'active' },
   PROVIDER_ON_THE_WAY: { label: 'On the way', tone: 'active' },
   PROVIDER_ARRIVED: { label: 'Arrived', tone: 'active' },
@@ -59,6 +64,21 @@ export const TERMINAL_STATUSES: readonly BookingStatus[] = [
   'REFUNDED',
   'CANCELLED',
 ];
+
+/**
+ * Statuses in which a local partner is assigning a professional or the assigned
+ * professional has yet to confirm. Nothing the customer does moves these on, so
+ * every screen showing such a booking keeps re-reading it until it changes
+ * (Requirement MT-13.3).
+ */
+export const ASSIGNMENT_STATUSES: readonly BookingStatus[] = [
+  'AWAITING_ASSIGNMENT',
+  'PROVIDER_ASSIGNED',
+];
+
+export function isAssignmentStatus(status: BookingStatus | undefined): boolean {
+  return status !== undefined && ASSIGNMENT_STATUSES.includes(status);
+}
 
 export function isTerminalStatus(status: BookingStatus | undefined): boolean {
   return status !== undefined && TERMINAL_STATUSES.includes(status);

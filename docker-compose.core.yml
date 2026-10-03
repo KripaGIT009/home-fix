@@ -264,6 +264,10 @@ services:
       CUSTOMER_CLIENT: http
       CUSTOMER_SERVICE_URL: http://customer-service:8082
       MEDIA_STORAGE_PROVIDER: local
+      # Routes bookings automatic matching could not place to the Tenants covering them, and
+      # checks a Tenant admin's assignments (Requirement MT-4, MT-5).
+      PROVIDER_SERVICE_URL: http://provider-service:8083
+      TENANT_ASSIGNMENT_TIMEOUT: PT60M
       # Consumes PaymentCompleted to move a paid booking to PAYMENT_COMPLETED.
       KAFKA_BOOTSTRAP_SERVERS: ${HOMEFIX_KAFKA_BOOTSTRAP_SERVERS:-host.docker.internal:9094}
     ports:
@@ -382,6 +386,9 @@ services:
       CATALOG_SERVICE_URI: http://catalog-service:8085
       # Batch APPROVED lookup behind the dispatch eligibility search (Req 5.10, 8.2).
       VERIFICATION_SERVICE_URL: http://verification-service:8094
+      # Looks accounts up by mobile number and grants/revokes TENANT_ADMIN when a platform admin
+      # manages a Tenant's administrators (Requirement MT-2).
+      AUTH_SERVICE_URL: http://auth-service:8081
       # Shared service credential: presented to the Booking and Verification Services
       # /internal/** endpoints, and required on this service's own /internal/**
       # (the Dispatch Engine's eligible-provider search).

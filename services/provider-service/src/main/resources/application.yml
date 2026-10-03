@@ -51,6 +51,10 @@ homefix:
     # i.e. the Dispatch Engine's eligible-provider search. Same INTERNAL_API_KEY as above.
     # No usable default: when unset every /internal/** request is refused (fail closed).
     internal-api-key: ${INTERNAL_API_KEY:}
+    # Auth Service internal surface used by Tenant administration (Requirements MT-2.2, MT-2.4,
+    # MT-3.2): account lookup by mobile number and the TENANT_ADMIN grant / revoke. Presents the
+    # internal-api-key above.
+    auth-service-url: ${AUTH_SERVICE_URL:http://auth-service:8081}
     # Zone the weekly availability slots are read in by the eligibility search.
     availability-zone: ${PROVIDER_AVAILABILITY_ZONE:Asia/Kolkata}
     max-active-categories: 5

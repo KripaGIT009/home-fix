@@ -274,6 +274,7 @@ class RegistrationServiceTest {
 
     @ParameterizedTest
     @ValueSource(strings = {"ADMIN", "SUPER_ADMIN", "FINANCE_ADMIN", "DISPATCHER", "SUPPORT_AGENT",
+            "TENANT_ADMIN", "tenant_admin",
             "admin", " Admin ", "sUpEr_AdMiN"})
     void staffRole_cannotBeSelfAssignedAtRegistration(String requestedRole) {
         assertThatThrownBy(() -> service.requestOtp(PHONE, requestedRole))
@@ -310,6 +311,7 @@ class RegistrationServiceTest {
         assertThat(Role.FINANCE_ADMIN.isSelfAssignable()).isFalse();
         assertThat(Role.DISPATCHER.isSelfAssignable()).isFalse();
         assertThat(Role.SUPPORT_AGENT.isSelfAssignable()).isFalse();
+        assertThat(Role.TENANT_ADMIN.isSelfAssignable()).isFalse();
     }
 
     // ----- Disabled accounts (Requirement 19.2) -----

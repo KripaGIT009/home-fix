@@ -3,11 +3,14 @@ import { create } from 'zustand';
 /**
  * Booking lifecycle states mirror the Booking_Service state machine
  * (Requirement 9). The client tracks these to drive the tracking UI.
+ * `AWAITING_ASSIGNMENT` is a booking nobody accepted automatically that a local
+ * partner agency is now assigning (Requirement MT-4.2, MT-9.1).
  */
 export type BookingStatus =
   | 'CREATED'
   | 'SEARCHING_PROVIDER'
   | 'SEARCHING_FAILED'
+  | 'AWAITING_ASSIGNMENT'
   | 'PROVIDER_ASSIGNED'
   | 'PROVIDER_ACCEPTED'
   | 'PROVIDER_ON_THE_WAY'

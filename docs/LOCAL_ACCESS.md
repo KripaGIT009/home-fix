@@ -68,6 +68,11 @@ Start-Process bin\windows\kafka-server-start.bat config\server.properties -Windo
 Do not delete topics on this broker: deletion hits the same Windows rename failure and takes
 the broker down. Topics are auto-created on first use.
 
+**After every reboot, start Kafka again** (the `cd`, `KAFKA_HEAP_OPTS` and `Start-Process` lines
+above; never the format step) before starting or restarting the stack. Nothing starts it for you, and with it down no event
+moves even where the HTTP calls succeed: bookings stop at `SEARCHING_PROVIDER` and paid
+bookings stay `PAYMENT_PENDING`. Check it with `kafka_tool kafka-topics.sh --list` (section 2).
+
 **Redis.** Install Memurai Developer (a Redis-compatible Windows service on 6379) from an
 **elevated** prompt — the installer needs administrator rights:
 
@@ -87,33 +92,38 @@ docker rm -f homefix-local-redis
 No local Postgres, Kafka or Redis at all? Use the containerised ones in
 [`docker-compose.infra.yml`](../docker-compose.infra.yml) instead; its header has the command.
 
-### 1.2 Start
+### 1.2 Build, then start
+
+The service images are runtime-only: each Dockerfile copies the fat jar already built under
+`services/<name>/target/`. `--build` does **not** compile anything, so build the jars first, and
+rebuild a service's jar after every change to it. Otherwise `--build` quietly packages the old
+jar (this once left the API gateway without the admin routes added hours earlier).
 
 ```bash
 cp .env.example .env            # first time only; Compose refuses to start without it
 
-# Start Kafka (1.1) first, then everything else. --wait gates on each container's own health
-# check and exits non-zero if anything fails to come up.
-docker compose -f docker-compose.core.yml up -d --build --wait
-```
-
-A cold start takes 4-6 minutes on a 6-core machine: twenty JVMs boot at once and are CPU-bound.
-The health checks allow a 300 s start period, so `--wait` does not give up on a service that is
-merely slow.
-
-The service images are runtime-only: each Dockerfile copies an already-built fat jar. Build
-them first, or after changing a service:
-
-```bash
 # Shared libraries must be installed before any service will resolve.
 for m in observability security resilience outbox; do
   (cd shared/homefix-shared-$m && mvn -q -DskipTests -Djacoco.skip=true install)
 done
 
-# Then each service, or just the one you changed.
+# Every service, one at a time (see Memory below), or just the one you changed.
+for s in services/*/; do
+  (cd "$s" && mvn -q -DskipTests -Djacoco.skip=true package) || break
+done
+
+# Start Kafka (1.1) first, then everything else. --wait gates on each container's own health
+# check and exits non-zero if anything fails to come up.
+docker compose -f docker-compose.core.yml up -d --build --wait
+
+# After changing one service: rebuild its jar, then its image and container.
 (cd services/auth-service && mvn -q -DskipTests -Djacoco.skip=true package)
 docker compose -f docker-compose.core.yml up -d --build --wait auth-service
 ```
+
+A cold start takes 4-6 minutes on a 6-core machine: twenty JVMs boot at once and are CPU-bound.
+The health checks allow a 300 s start period, so `--wait` does not give up on a service that is
+merely slow.
 
 ### 1.3 Seed a new database (once)
 
@@ -125,7 +135,13 @@ Run it after the stack is up, because the services' migrations create the tables
 "$PSQL" -v ON_ERROR_STOP=1 -f docker/seed-catalog.sql           # categories, skill tags
 bash docker/seed-pricing.sh                                     # pricing for every subcategory
 "$PSQL" -v ON_ERROR_STOP=1 -f docker/seed-provider-profiles.sql # 2 approved providers in Ara
+"$PSQL" -v ON_ERROR_STOP=1 -f docker/seed-tenants.sql           # demo agency: Ara Home Services
 ```
+
+Keep that order: the provider profiles need the catalog, and the Tenant seed needs the catalog,
+the two provider profiles and the `tenantadmin` account. Provider One gets the plumbing and
+electrical skills, Provider Two cleaning; both join the demo agency's team. The SQL seeds are
+idempotent.
 
 The test accounts in section 3 need no script: auth-service creates them at startup when
 `DEV_SEED_ENABLED=true`. `docker/seed-test-users.sh` remains for extra OTP-only accounts.
@@ -134,8 +150,14 @@ Two check scripts exercise the running stack end to end and exit non-zero on any
 
 ```bash
 bash docker/smoke-flows.sh          # every service's main paths: 78/78
-bash docker/verify-outbox-flow.sh   # book -> outbox -> Kafka -> dispatch match -> provider accepts: 17/17
+bash docker/verify-outbox-flow.sh   # book -> dispatch -> job -> payment -> wallet credit, then a
+                                    # booking nobody accepts falling back to the demo agency
+                                    # (sections 4 and 4.1); 53 checks at the last run
 ```
+
+Right after `smoke-flows.sh` the first match can take up to a minute: smoke's emergency booking
+may still hold Provider One's offer, and dispatch now waits for a busy provider instead of
+failing the booking.
 
 ### Memory
 
@@ -161,6 +183,10 @@ swap=2GB
 
 Kafka (heap capped at 768 MB above) and Postgres now run on the host, outside that VM.
 
+**Run Maven builds one at a time.** Each build is a JVM of its own on top of the running stack;
+six in parallel once exhausted host memory and froze the Docker engine until Docker Desktop was
+restarted. The sequential loop in 1.2 is deliberate.
+
 A readiness probe from the host is not evidence a service is down: under load Docker's port
 forwarding drops connections while the service itself is fine. Probe from inside the network:
 
@@ -179,7 +205,7 @@ docker exec homefix-core-api-gateway-1 \
 |-----|-----|---------------|
 | Customer app | http://localhost:5173 | Customers booking services |
 | Provider app | http://localhost:5174 | Service professionals |
-| Admin portal | http://localhost:5175 | Staff: operations, finance, support |
+| Admin portal | http://localhost:5175 | Staff: operations, finance, support; agency (Tenant) admins see only their agency's Requests, Team and Jobs |
 
 Each app serves its own nginx, which proxies `/api/auth` to auth-service and everything else under `/api` to the API gateway. Use these URLs rather than calling services directly, so the proxy and token handling behave as they do in a deployment.
 
@@ -254,19 +280,20 @@ account keeps its id and simply gains the roles and credentials below, so re-run
 orphans data that already references the account.
 
 Every account shares the password in `DEV_SEED_PASSWORD`, which defaults to `HomeFix@2026` in
-`.env.example`. Change it there and restart auth-service to rotate all nine at once.
+`.env.example`. Change it there and restart auth-service to rotate all ten at once.
 
 | Username | Password | Mobile number | Role | What it is for |
 |----------|----------|---------------|------|----------------|
 | `customer` | `HomeFix@2026` | `+919000000001` | CUSTOMER | Primary test customer: browse, book, pay, review |
 | `customer2` | `HomeFix@2026` | `+919000000002` | CUSTOMER | Second customer, for chat and review counterparties |
-| `provider` | `HomeFix@2026` | `+919000000011` | SERVICE_PROVIDER | Primary test provider: accept jobs, run milestones |
-| `provider2` | `HomeFix@2026` | `+919000000012` | SERVICE_PROVIDER | Second provider, so dispatch has more than one candidate |
-| `admin` | `HomeFix@2026` | `+919000000021` | ADMIN | Operations console: every admin module except system config |
+| `provider` | `HomeFix@2026` | `+919000000011` | SERVICE_PROVIDER | Primary test provider (plumbing, electrical): accept offers, run the job, get paid |
+| `provider2` | `HomeFix@2026` | `+919000000012` | SERVICE_PROVIDER | Second provider (cleaning); with Provider One, the demo agency's team |
+| `admin` | `HomeFix@2026` | `+919000000021` | ADMIN | Operations console: every admin module except system config; manages Tenants |
 | `superadmin` | `HomeFix@2026` | `+919000000022` | SUPER_ADMIN + ADMIN | Adds System Configuration to the admin surface |
 | `finance` | `HomeFix@2026` | `+919000000023` | FINANCE_ADMIN | Payment reconciliation and settlement reports |
 | `dispatcher` | `HomeFix@2026` | `+919000000024` | DISPATCHER | Manual assignment and dispatch weight tuning |
 | `support` | `HomeFix@2026` | `+919000000025` | SUPPORT_AGENT | Complaint triage, status changes, refunds |
+| `tenantadmin` | `HomeFix@2026` | `+919000000031` | TENANT_ADMIN | Administers the demo agency "Ara Home Services" in the Admin Portal: assignment queue, team, jobs |
 
 None of this is a real credential. The whole stack ships with a throwaway signing secret and a
 file-based SMS gateway, and must never be pointed at production data. The seeder is off unless
@@ -358,68 +385,153 @@ Refresh tokens rotate on every use. Presenting a token twice invalidates the who
 
 ## 4. A worked end-to-end run
 
-This is the shortest path that exercises the main flow. It assumes `seed-pricing.sh` has run.
+This is the shortest path through today's whole flow: book, match, run the job, pay, credit the
+provider. It assumes the seeds in 1.3 have run and Kafka is up. Everything goes through the
+gateway, the way the apps call it. `docker/verify-outbox-flow.sh` runs this same flow (and the
+Tenant fallback in 4.1) with assertions, so run that when you only want to know it works.
 
 ```bash
-# 1. Log in as the test customer, keep the token
-MOBILE='+919000000001'
-curl -s -X POST http://localhost:8081/auth/register/otp -H 'Content-Type: application/json' -d "{\"mobileNumber\":\"$MOBILE\"}" > /dev/null
-sleep 1
-OTP=$(grep -F "$MOBILE" docker/dev-sms/dev-sms.log | grep -o 'code is [0-9]*' | tail -1 | grep -o '[0-9]*')
-TOKEN=$(curl -s -X POST http://localhost:8081/auth/register/verify -H 'Content-Type: application/json' \
-  -d "{\"mobileNumber\":\"$MOBILE\",\"otp\":\"$OTP\"}" | sed 's/.*"accessToken":"\([^"]*\)".*/\1/')
+GW=http://localhost:8080; J='Content-Type: application/json'
+login() { curl -s -X POST http://localhost:8081/auth/login/password -H "$J" \
+  -d "{\"username\":\"$1\",\"password\":\"HomeFix@2026\"}"; }
+field() { sed "s/.*\"$1\":\"\([^\"]*\)\".*/\1/"; }
+CS=$(login customer); C="Authorization: Bearer $(echo "$CS" | field accessToken)"
+CID=$(echo "$CS" | field userId)
+P="Authorization: Bearer $(login provider | field accessToken)"
 
-# 2. Browse the catalog and pick a subcategory
-curl -s http://localhost:8085/catalog/categories | head -c 400
+# 1. A service address inside Provider One's radius in Ara (a customer may keep ten)
+ADDR=$(curl -s -X POST "$GW/customers/$CID/addresses" -H "$C" -H "$J" \
+  -d '{"label":"Home","lat":25.5571,"lng":84.6612}' | field addressId)
 
-# 3. Price it
-curl -s -X POST http://localhost:8086/pricing/estimate \
-  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"subcategoryId":"<id from step 2>","emergency":false}'
+# 2. Pick Plumbing > Tap / Faucet Repair from the catalog
+curl -s "$GW/catalog/categories" -H "$C" | head -c 600
 
-# 4. Create a scheduled booking at least the minimum lead time ahead
-curl -s -X POST http://localhost:8084/bookings \
-  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"categoryId":"<id>","subcategoryId":"<id>","emergency":false,
-       "scheduledAt":"2026-09-12T10:00:00Z","description":"Kitchen tap dripping"}'
+# 3. Create a scheduled booking (at least the minimum lead time ahead), then confirm it.
+#    Confirmation is what starts the search; the customer app does both.
+B=$(curl -s -X POST "$GW/bookings" -H "$C" -H "$J" -d "{\"addressId\":\"$ADDR\",
+  \"categoryId\":\"<id>\",\"subcategoryId\":\"<id>\",\"emergency\":false,
+  \"scheduledAt\":\"$(date -u -d '+6 hours' +%Y-%m-%dT%H:%M:%SZ)\",\"description\":\"Tap dripping\"}")
+REF=$(echo "$B" | field reference); ID=$(echo "$B" | field bookingId)
+curl -s -X POST "$GW/bookings/$REF/confirmation" -H "$C"
+
+# 4. The provider sees the offer (the app polls this every 5 s) and accepts it
+curl -s "$GW/dispatch/offers" -H "$P"
+curl -s -X POST "$GW/dispatch/offers/$ID/accept" -H "$P"        # -> PROVIDER_ACCEPTED
+
+# 5. Run the job as the provider app does
+curl -s -X POST "$GW/bookings/$ID/on-the-way" -H "$P"
+curl -s -X POST "$GW/locations/$ID" -H "$P" -H "$J" -d '{"latitude":25.559,"longitude":84.663}'
+curl -s "$GW/locations/$ID" -H "$C"                              # what the customer's map reads
+curl -s -X POST "$GW/bookings/$ID/arrived" -H "$P"
+curl -s -X POST "$GW/bookings/$ID/photos" -H "$P" -F type=BEFORE_PHOTO -F "file=@before.jpg;type=image/jpeg"
+curl -s -X POST "$GW/bookings/$ID/start" -H "$P"                 # 422 without a before-photo
+curl -s -X POST "$GW/bookings/$ID/photos" -H "$P" -F type=AFTER_PHOTO -F "file=@after.jpg;type=image/jpeg"
+curl -s -X POST "$GW/bookings/$ID/complete" -H "$P"              # 422 without an after-photo
+
+# 6. The customer pays: only the booking and the method; the amount comes from the booking
+curl -s -X POST "$GW/payments" -H "$C" -H "$J" -d "{\"bookingId\":\"$ID\",\"method\":\"UPI\"}"
+sleep 3; curl -s "$GW/bookings/$ID" -H "$C" | grep -o '"status":"[A-Z_]*"'   # PAYMENT_COMPLETED
+
+# 7. The provider's wallet was credited once for this booking
+. docker/local-infra.sh
+psql_q "SELECT gross, platform_fee, net FROM provider.provider_earning WHERE booking_id = '$ID'"
 ```
 
-The booking is created and priced correctly. It then stops: the dispatch engine cannot assign a provider because of the broken integrations described in the review, so nothing reaches `PROVIDER_ACCEPTED` yet. See [CODEBASE_REVIEW.md](../CODEBASE_REVIEW.md) section 8.3 and the roadmap in section 11.
+What happens behind each step, briefly: confirmation publishes `BookingCreated`; dispatch
+resolves the address and skill tags, finds Provider One eligible and offers the job (an offer
+lives 60 s in Redis); acceptance moves the booking to `PROVIDER_ACCEPTED`. Each milestone
+command is refused (404) for anyone but the assigned provider. Payment moves the booking to
+`PAYMENT_PENDING`, the local **payment simulator** settles the charge through the real
+signed-callback path, `PaymentCompleted` moves the booking to `PAYMENT_COMPLETED` and triggers
+the invoice, the review prompt and the notifications, and payment-service credits the
+provider's net earning (80% by default) to provider-service. In the apps the same run is:
+customer books on :5173, provider accepts on :5174 and works through On the way, Arrived,
+photos, Start and Complete; the customer presses Pay on the booking or tracking screen; the
+provider app shows "Paid — your earnings have been credited".
+
+If the provider does not accept within the window, or declines, the booking falls back to the
+demo agency (4.1); a booking nobody can take ends in `SEARCHING_FAILED`.
+
+### 4.1 Tenant Portal walkthrough
+
+A Tenant is a service agency covering an area for a set of categories, with its own team of
+providers. The seed creates **Ara Home Services**, covering 20 km around Ara for every active
+category, administered by `tenantadmin`, with both test providers on its team.
+
+1. Make a booking fall back. Book a plumbing job in Ara as above, then, as `provider` in the
+   provider app (or with `POST /dispatch/offers/{id}/decline`), **decline the offer**. Provider
+   One is the only nearby provider with the plumbing skill, so dispatch runs out of candidates
+   and booking-service routes the booking to the covering Tenant: status
+   `AWAITING_ASSIGNMENT`, no cancellation sent to the customer. (Letting the offer expire
+   works too, after the radius cycles finish.)
+2. Sign in to http://localhost:5175 as `tenantadmin` / `HomeFix@2026`. The Tenant Portal shows
+   only three pages:
+   - **Requests**: the assignment queue, refreshed every 15 s with a badge for new requests.
+     Assign opens the team picker; only members who are approved and not under review are
+     assignable. The first assignment wins; a later one gets 409 `BOOKING_NOT_ASSIGNABLE`.
+   - **Team**: the agency's providers with availability; add one by mobile number, or remove one.
+   - **Jobs**: every booking taken by the agency's providers, whichever path matched them.
+3. Assign `Provider One`. The booking goes to `PROVIDER_ASSIGNED` and the provider app shows an
+   Accept / Decline card for it. Accept moves it to `PROVIDER_ACCEPTED` and the job continues as
+   in section 4; Decline returns it to this agency's queue.
+4. An unassigned or unanswered booking fails at the deadline (`TENANT_ASSIGNMENT_TIMEOUT`, 60
+   minutes from first queuing; a decline does not reset it).
+
+Platform admins (`admin`, `superadmin`) manage agencies in the Admin Portal's **Tenants** module:
+create, edit coverage, categories and status, add or remove team providers, and add or remove
+Tenant admins by mobile number (which grants or revokes `TENANT_ADMIN`). A revoked admin's current access token keeps the role
+for up to 15 minutes.
 
 ---
 
 ## 5. What works and what does not, today
 
 Knowing this up front saves debugging time. [CODEBASE_REVIEW.md](../CODEBASE_REVIEW.md)
-section 16 has the detail and the verification behind the latest changes.
+sections 16 to 18 have the detail and the verification behind it.
 
-**Works end to end** (both check scripts in section 1.3 cover these)
+**Works end to end** (the check scripts in section 1.3 cover the first eight)
 
 - OTP and password sign-in, lockout, rate limiting; token rotation with replay detection;
-  logout that revokes the whole token family
-- Catalog browsing and admin catalog CRUD
-- Price estimates, persisted pricing parameters, and coupons quoted by promotion-service
-- Booking creation (scheduled and emergency, always with a saved address) and confirmation
-- **Provider matching**: dispatch resolves the address and skill tags, finds approved providers
-  in range through provider-service, and offers the job; the provider app lists and answers
-  offers (`/dispatch/offers` through the gateway); acceptance moves the booking to
-  `PROVIDER_ACCEPTED`; an unanswered search ends in `SEARCHING_FAILED` and is announced
-- Domain events from outbox to Kafka to every consumer, including cancellation, rejection and
-  complaint events
-- Job milestones, live location, chat channels, payments with signed callbacks and
-  idempotent refunds, invoices, reviews, complaints with recorded refunds
-- Schema migrations: every service creates and validates its schema through Flyway
+  logout that revokes the whole token family; suspended or deactivated accounts are refused
+- Catalog browsing; price estimates from persisted pricing parameters; coupons quoted by
+  promotion-service and charged
+- Booking creation (scheduled and emergency, always with a saved address) and confirmation;
+  booking history and detail for the customer
+- **Provider matching**: eligible providers in range, offers answered from the provider app, a
+  busy provider waited for rather than skipped; acceptance moves the booking to
+  `PROVIDER_ACCEPTED`
+- **Tenant fallback**: a booking nobody accepts goes to the covering agency's queue, is assigned
+  in the Tenant Portal, and accepted or declined by the provider (4.1)
+- **Job execution**: on the way, live position shared by the provider app, arrived, before and
+  after photos enforced, start, pause, parts quote with customer approve / decline, complete
+- **Payment, locally**: the customer pays from the app; the simulator settles it through the
+  signed-callback path; the booking reaches `PAYMENT_COMPLETED`; invoice, review prompt and
+  chat close-out run from `PaymentCompleted`; the provider's wallet is credited once per booking
+- Domain events from outbox to Kafka to every consumer; Flyway migrations for every schema
+- **Admin Portal**: every module has a back end in the owning service (users, providers,
+  verification, bookings, payments and refunds, complaints, reviews, coupons, pricing,
+  dispatch weights, reports, notification templates, audit log, system configuration) with
+  role tiers enforced; plus Tenants and the Tenant Portal
 - All three web apps build, serve and proxy correctly
 
 **Still not working**
 
 | Area | Symptom | Review reference |
-|------|---------|------------------|
-| Admin portal modules | Eleven of sixteen modules call list endpoints no service implements; they show "Not Found" | 13.2 |
-| Real external providers | Payment gateways, SMS/email/push, document storage and geocoding are logging or in-memory stubs | 12.3 item 9 |
-| Coupon redemption | Coupons are quoted and charged, but nothing calls promotion-service's redeem, so usage limits are never consumed | 16 |
-| Saved addresses | customer-service cannot list a customer's addresses, so the app can only reuse ones saved from that device | 16 |
-| Push and email | No device tokens or email addresses reach notification-service; SMS and in-app work | 16 |
+| --- | --- | --- |
+| Chat | The apps call the wrong endpoints and open a raw WebSocket against a STOMP server no route serves | 17.5 |
+| Provider onboarding | No screens for base location, radius, availability, skills or documents, so a provider who signs up in the app can never be matched; only the seeded providers can | 17.5 |
+| Real external providers | Payment gateways (outside the local simulator), SMS/email/push, document storage, background checks and geocoding are logging or in-memory stubs | 16.12 |
+| Notifications | Every channel is a logging adapter; push and email also have no device tokens or email addresses to send to. OTP codes go to `docker/dev-sms/dev-sms.log` | 16.12 |
+| Complaint refunds | Recorded once per complaint and shown as succeeded, but the refund adapter only logs (`stub_rf_…` reference): no money is returned through payment-service | 17.3 |
+| Ratings | Reviews never reach provider-service, so a provider's aggregate rating (used in matching) never changes | 17.5 |
+| Location privacy | Any signed-in customer or provider with a booking id can read that booking's provider position | 17.5 |
+| Stuck searches | A dispatch failure after `BookingCreated` is acknowledged (outage, restart mid-search) leaves the booking in `SEARCHING_PROVIDER` with no sweeper | 17.5 |
+| Coupon redemption | Coupons are quoted and charged, but nothing calls promotion-service's redeem, so usage limits are never consumed | 16.12 |
+| Saved addresses | customer-service cannot list a customer's addresses, so the app can only reuse ones saved from that device | 16.12 |
+| Admin display fields | Customer, provider and reviewer names and mobile numbers are blank in several admin tables; dispatch weights reset on restart | 17.5 |
+| Parts-quote timeout | The 60-minute auto-resolve exists but nothing schedules it | ARCHITECTURE 5.4 |
+| Native mobile builds | Android and iOS projects exist but were not built on this machine (no Android SDK, JDK 25 too new for Gradle 8.11; iOS needs macOS). See `frontend/MOBILE.md` | 18 |
+| Tenant alerts | Tenant admins are not pushed new requests; the portal polls every 15 s | 18 |
 
 ---
 
@@ -453,5 +565,8 @@ The local stack is deliberately insecure and several of these values are committ
 - One shared database role for every service, with a local-only password
 - OTP codes written to `docker/dev-sms/dev-sms.log` and echoed into auth-service logs
 - Test accounts with a shared, documented password (`DEV_SEED_ENABLED`)
+- One shared service credential for every `/internal/**` call (`INTERNAL_API_KEY`)
+- A payment simulator that reports every charge as paid without moving money
+  (`PAYMENT_SIMULATOR_ENABLED`, signed with a default secret); Helm never enables it
 
 Never reuse any of these outside a local machine, and never point this Compose file at a shared database. The production path for all of them is AWS Secrets Manager, described in [ARCHITECTURE.md](ARCHITECTURE.md) section 10.2.

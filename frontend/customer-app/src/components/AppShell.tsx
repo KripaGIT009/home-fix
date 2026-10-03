@@ -26,8 +26,10 @@ import PersonRoundedIcon from '@mui/icons-material/PersonRounded';
 import PlaceRoundedIcon from '@mui/icons-material/PlaceRounded';
 import ArrowBackRoundedIcon from '@mui/icons-material/ArrowBackRounded';
 import { useAuthStore } from '@stores/authStore';
+import { env } from '@config/env';
 import { brand, layout, radius, visuallyHidden } from '@lib/theme';
 import { BrandLogo } from './BrandLogo';
+import { ServiceSearchField } from './ServiceSearchField';
 
 /** Primary destinations. Four, so each stays thumb-reachable on the tab bar. */
 const NAV_ITEMS = [
@@ -40,8 +42,13 @@ const NAV_ITEMS = [
 /** The service area shown in the bar until the profile carries one. */
 export const DEFAULT_SERVICE_AREA = 'Ara, Bihar';
 
-/** Desktop shows Profile as the avatar, so the text links stop at Help. */
-const DESKTOP_LINKS = NAV_ITEMS.filter((item) => item.value !== '/profile');
+/**
+ * Desktop reaches Home through the logo and Profile through the avatar, so
+ * only Bookings and Help need text links beside the search field.
+ */
+const DESKTOP_LINKS = NAV_ITEMS.filter(
+  (item) => item.value === '/history' || item.value === '/help',
+);
 
 interface AppShellProps {
   children: ReactNode;
@@ -69,6 +76,12 @@ interface AppShellProps {
   width?: 'full' | 'content' | 'bleed';
   /** Render the site footer below the content. */
   footer?: boolean;
+  /**
+   * White page instead of the tinted canvas. Storefront pages use it: their
+   * tiles and rails sit directly on the page, like the reference storefront,
+   * while form and list screens keep the canvas their cards stand out on.
+   */
+  plain?: boolean;
 }
 
 /**
@@ -88,6 +101,7 @@ export function AppShell({
   serviceArea = DEFAULT_SERVICE_AREA,
   width = 'content',
   footer = false,
+  plain = false,
 }: AppShellProps) {
   const theme = useTheme();
   const isDesktop = useMediaQuery(theme.breakpoints.up('md'), { noSsr: true });
@@ -134,15 +148,17 @@ export function AppShell({
       alignItems="center"
       sx={{
         px: 1.25,
-        py: 0.625,
-        borderRadius: `${radius.pill}px`,
-        bgcolor: brand.slateSoft,
+        height: isDesktop ? 44 : 34,
+        borderRadius: `${radius.sm}px`,
+        border: `1px solid ${isDesktop ? brand.lineStrong : brand.line}`,
+        bgcolor: 'background.paper',
         color: 'text.primary',
         minWidth: 0,
+        flexShrink: 0,
       }}
     >
       <PlaceRoundedIcon sx={{ fontSize: 18, color: 'primary.main' }} aria-hidden />
-      <Typography variant="body2" fontWeight={600} noWrap sx={{ maxWidth: 140 }}>
+      <Typography variant="body2" fontWeight={500} noWrap sx={{ maxWidth: 140 }}>
         <Box component="span" sx={visuallyHidden}>
           Service area:{' '}
         </Box>
@@ -159,6 +175,7 @@ export function AppShell({
         minHeight: '100dvh',
         display: 'flex',
         flexDirection: 'column',
+        bgcolor: plain ? 'background.paper' : 'background.default',
         pb: showTabBar ? `calc(${layout.bottomNavHeight}px + env(safe-area-inset-bottom))` : 0,
       }}
     >
@@ -175,53 +192,54 @@ export function AppShell({
           </Toolbar>
         ) : (
           <Container maxWidth={false} sx={{ maxWidth: layout.maxWidth, px: layout.gutter }}>
-            <Toolbar disableGutters sx={{ gap: { xs: 1, md: 2 } }}>
+            <Toolbar disableGutters sx={{ gap: { xs: 1, md: 1.5 } }}>
               <ButtonBase
                 component={RouterLink}
                 to="/home"
                 aria-label="HomeFix home"
-                sx={{ borderRadius: `${radius.sm}px`, p: 0.5, ml: -0.5 }}
+                sx={{ borderRadius: `${radius.sm}px`, p: 0.5, ml: -0.5, mr: { md: 2.5 } }}
               >
-                <BrandLogo size={isDesktop ? 36 : 32} />
+                <BrandLogo size={isDesktop ? 34 : 32} />
               </ButtonBase>
 
               {isDesktop ? (
-                <Stack
-                  component="nav"
-                  aria-label="Main"
-                  direction="row"
-                  spacing={0.5}
-                  sx={{ ml: 4 }}
-                >
-                  {DESKTOP_LINKS.map((item) => {
-                    const active = activeValue === item.value;
-                    return (
-                      <Button
-                        key={item.value}
-                        component={RouterLink}
-                        to={item.value}
-                        aria-current={active ? 'page' : undefined}
-                        sx={{
-                          px: 1.75,
-                          color: active ? 'primary.main' : 'text.secondary',
-                          bgcolor: active ? brand.accentSoft : 'transparent',
-                          fontWeight: active ? 700 : 600,
-                          '&:hover': {
-                            bgcolor: active ? brand.accentSoft : brand.slateSoft,
+                <>
+                  {locationChip}
+                  <Box sx={{ flexGrow: 1, maxWidth: 440 }}>
+                    <ServiceSearchField />
+                  </Box>
+                  <Box sx={{ flexGrow: 1 }} />
+                  <Stack component="nav" aria-label="Main" direction="row" spacing={0.5}>
+                    {DESKTOP_LINKS.map((item) => {
+                      const active = activeValue === item.value;
+                      return (
+                        <Button
+                          key={item.value}
+                          component={RouterLink}
+                          to={item.value}
+                          aria-current={active ? 'page' : undefined}
+                          sx={{
+                            px: 1.5,
+                            fontSize: '0.875rem',
                             color: active ? 'primary.main' : 'text.primary',
-                          },
-                        }}
-                      >
-                        {item.label}
-                      </Button>
-                    );
-                  })}
-                </Stack>
-              ) : null}
-
-              <Box sx={{ flexGrow: 1 }} />
-              {locationChip}
-              {avatar}
+                            fontWeight: active ? 700 : 500,
+                            '&:hover': { bgcolor: brand.slateSoft },
+                          }}
+                        >
+                          {item.label}
+                        </Button>
+                      );
+                    })}
+                  </Stack>
+                  {avatar}
+                </>
+              ) : (
+                <>
+                  <Box sx={{ flexGrow: 1 }} />
+                  {locationChip}
+                  {avatar}
+                </>
+              )}
             </Toolbar>
           </Container>
         )}
@@ -307,40 +325,49 @@ export function AppShell({
   );
 }
 
-/** Simple site footer for top-level pages. */
+/** Footer links. Only routes that exist: there are no Terms or Privacy pages yet. */
+const CUSTOMER_LINKS = [
+  { label: 'Bookings', to: '/history' },
+  { label: 'Help & support', to: '/help' },
+  { label: 'Your profile', to: '/profile' },
+] as const;
+
+/** Site footer for top-level pages, on a light grey band. */
 function SiteFooter() {
-  const links = [
-    { label: 'Bookings', to: '/history' },
-    { label: 'Help & support', to: '/help' },
-    { label: 'Your profile', to: '/profile' },
-  ];
-  return (
-    <Box
-      component="footer"
-      sx={{
-        borderTop: `1px solid ${brand.line}`,
-        bgcolor: 'background.paper',
-        mt: { xs: 4, md: 8 },
-      }}
+  const heading = (text: string) => (
+    <Typography
+      component="h2"
+      sx={{ fontSize: '0.9375rem', fontWeight: 700, color: 'text.primary', mb: 1.25 }}
     >
+      {text}
+    </Typography>
+  );
+  const linkSx = { display: 'block', py: 0.5, width: 'fit-content' } as const;
+
+  return (
+    <Box component="footer" sx={{ bgcolor: brand.slateSoft, mt: { xs: 5, md: 8 } }}>
       <Container
         maxWidth={false}
         sx={{ maxWidth: layout.maxWidth, px: layout.gutter, py: { xs: 4, md: 5 } }}
       >
-        <Stack
-          direction={{ xs: 'column', md: 'row' }}
-          spacing={{ xs: 3, md: 6 }}
-          justifyContent="space-between"
+        <Box
+          sx={{
+            display: 'grid',
+            gridTemplateColumns: { xs: '1fr 1fr', md: '2fr 1fr 1fr' },
+            columnGap: { xs: 2, md: 6 },
+            rowGap: 4,
+          }}
         >
-          <Box sx={{ maxWidth: 360 }}>
+          <Box sx={{ gridColumn: { xs: '1 / -1', md: 'auto' }, maxWidth: 360 }}>
             <BrandLogo size={30} />
             <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5 }}>
-              Verified help for every home. Background-checked professionals, upfront prices and
-              live tracking, from booking to doorstep.
+              Background-checked professionals for repairs, cleaning and installations, with the
+              price shown before you book.
             </Typography>
           </Box>
-          <Stack direction="row" spacing={{ xs: 2.5, md: 4 }} flexWrap="wrap" useFlexGap>
-            {links.map((link) => (
+          <Box component="nav" aria-label="For customers">
+            {heading('For customers')}
+            {CUSTOMER_LINKS.map((link) => (
               <Link
                 key={link.to}
                 component={RouterLink}
@@ -348,16 +375,30 @@ function SiteFooter() {
                 underline="hover"
                 color="text.secondary"
                 variant="body2"
-                fontWeight={600}
+                sx={linkSx}
               >
                 {link.label}
               </Link>
             ))}
-          </Stack>
-        </Stack>
-        <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 4 }}>
-          © {new Date().getFullYear()} HomeFix. Verified Help. Anytime. Anywhere.
-        </Typography>
+          </Box>
+          <Box component="nav" aria-label="For professionals">
+            {heading('For professionals')}
+            <Link
+              href={env.providerAppUrl}
+              underline="hover"
+              color="text.secondary"
+              variant="body2"
+              sx={linkSx}
+            >
+              Join as a professional
+            </Link>
+          </Box>
+        </Box>
+        <Box sx={{ mt: { xs: 4, md: 5 }, pt: 2.5, borderTop: `1px solid ${brand.lineStrong}` }}>
+          <Typography variant="caption" color="text.secondary">
+            © {new Date().getFullYear()} HomeFix. Verified Help. Anytime. Anywhere.
+          </Typography>
+        </Box>
       </Container>
     </Box>
   );

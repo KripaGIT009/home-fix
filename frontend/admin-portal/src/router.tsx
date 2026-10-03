@@ -10,6 +10,7 @@ import {
   REPORT_ROLES,
   SUPER_ADMIN_ROLES,
   SUPPORT_ROLES,
+  TENANT_ROLES,
 } from '@config/roles';
 import { LoginScreen } from '@features/auth/LoginScreen';
 import { DashboardScreen } from '@features/dashboard/DashboardScreen';
@@ -28,6 +29,10 @@ import { NotificationTemplateScreen } from '@features/notifications/Notification
 import { ReportGenerationScreen } from '@features/reports/ReportGenerationScreen';
 import { AuditLogScreen } from '@features/audit/AuditLogScreen';
 import { SystemConfigScreen } from '@features/system/SystemConfigScreen';
+import { TenantManagementScreen } from '@features/tenants/TenantManagementScreen';
+import { RequestsScreen } from '@features/tenant-portal/RequestsScreen';
+import { TeamScreen } from '@features/tenant-portal/TeamScreen';
+import { JobsScreen } from '@features/tenant-portal/JobsScreen';
 
 /**
  * Admin Portal routes (Requirement 19). Each operational module maps to a
@@ -43,6 +48,11 @@ import { SystemConfigScreen } from '@features/system/SystemConfigScreen';
  * - Complaints, Review Moderation: + SUPPORT_AGENT
  * - Dispatch Rules: + DISPATCHER to view; saving is SUPER_ADMIN-only (in-screen)
  * - System Configuration: SUPER_ADMIN only (Requirement 19.6/19.7)
+ * - Tenants: ADMIN + SUPER_ADMIN (Requirement MT-12)
+ * - Tenant Portal (Requests, Team, Jobs): TENANT_ADMIN only (Requirement MT-11.1);
+ *   a TENANT_ADMIN holds none of the platform roles, so every platform module
+ *   above answers Forbidden for them, and platform staff — who administer no
+ *   Tenant — are kept out of these
  *
  * `/` resolves to the user's landing module (HomeRedirect), so staff without
  * the Dashboard never start on a Forbidden screen. Unauthorized-but-
@@ -91,6 +101,14 @@ export const router = createBrowserRouter([
     element: (
       <RequireAuth roles={ADMIN_ROLES}>
         <VerificationQueueScreen />
+      </RequireAuth>
+    ),
+  },
+  {
+    path: '/tenants',
+    element: (
+      <RequireAuth roles={ADMIN_ROLES}>
+        <TenantManagementScreen />
       </RequireAuth>
     ),
   },
@@ -189,6 +207,30 @@ export const router = createBrowserRouter([
     element: (
       <RequireAuth roles={SUPER_ADMIN_ROLES}>
         <SystemConfigScreen />
+      </RequireAuth>
+    ),
+  },
+  {
+    path: '/tenant/requests',
+    element: (
+      <RequireAuth roles={TENANT_ROLES}>
+        <RequestsScreen />
+      </RequireAuth>
+    ),
+  },
+  {
+    path: '/tenant/team',
+    element: (
+      <RequireAuth roles={TENANT_ROLES}>
+        <TeamScreen />
+      </RequireAuth>
+    ),
+  },
+  {
+    path: '/tenant/jobs',
+    element: (
+      <RequireAuth roles={TENANT_ROLES}>
+        <JobsScreen />
       </RequireAuth>
     ),
   },

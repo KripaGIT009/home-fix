@@ -5,3 +5,7 @@ Dockerfile
 .dockerignore
 android
 ios
+# A local .env holds a developer's native-build URLs (e.g. 10.0.2.2); the web image must not bake them in.
+.env
+.env.*
+!.env.example

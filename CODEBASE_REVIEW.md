@@ -1125,3 +1125,79 @@ in the request being ignored (the booking's ₹615.25 was charged) and the provi
 which surefire never runs, fixed: it completed a job with the customer's token), payment-service 224,
 provider-service 171.
 
+
+## 18. Multi-tenant agencies and mobile apps — 2026-10-03
+
+Built to the spec in `.kiro/specs/multi-tenant-and-mobile/` (15 requirements, 18 tasks, all done).
+A Tenant is a service agency inside the one marketplace: it covers a service area for a set of
+categories and owns a team of providers. When automatic matching finds nobody, the booking goes to
+`AWAITING_ASSIGNMENT` and appears in the queue of every covering Tenant; a Tenant admin assigns one of
+their own approved providers (`PROVIDER_ASSIGNED`), who accepts or declines. Unassigned or unanswered
+bookings fail at a deadline (default 60 minutes from first queuing). Customers, catalog and pricing stay
+shared; earnings still go to the provider.
+
+| Area | What changed |
+|---|---|
+| auth-service | `TENANT_ADMIN` role (V3); internal by-mobile lookup and role grant/revoke for provider-service; `tenantadmin` dev account |
+| provider-service | Tenants, categories, admins, membership (V3); `/admin/tenants/**`, `/tenant/**`; internal coverage, membership and lookup endpoints |
+| booking-service | `AWAITING_ASSIGNMENT` (V3), fallback in the searching-failed path, `/tenant/bookings/**` with first-assignment-wins, provider accept/decline, deadline sweeper, `tenant_id` on every booking a Tenant's provider accepts |
+| dispatch / notification | no "no provider" notice when a Tenant takes the booking; "New job from <tenant>" provider templates (V3) |
+| api-gateway | `/admin/tenants/**`, `/tenant/bookings/**`, `/tenant/**` routes, with a route-order test |
+| admin-portal | Tenant Portal for `TENANT_ADMIN` (Requests with live badge, Team, Jobs); Tenants module for platform admins |
+| customer / provider apps | new states; Accept/Decline for assigned jobs; native location via `@capacitor/geolocation`; camera capture on native; iOS projects for both apps; MOBILE.md covers iOS |
+
+Verification against the restarted stack: `smoke-flows.sh` 78/78; `verify-outbox-flow.sh` 53/53, including
+16 new checks (offer declined → fallback with no cancellation event → queue visible only to the Tenant
+admin → assign → wrong provider refused → decline → reassign → accept → `ProviderAccepted` →
+`tenant_id` recorded). Module tests: auth 285, provider 231, booking 449 (+ IT 14), dispatch 194,
+notification 182 (+ IT 2). The Tenant Portal was checked live with a real fallen-back booking.
+
+Not verified here: Android and iOS native builds (no Android SDK on this machine and its JDK 25 is too new
+for Gradle 8.11; iOS needs macOS). Known limitations: provider-service's catalog client is a stub, so an
+inactive category cannot be rejected when a Tenant is created; Tenant admins are not pushed new requests
+(the portal polls); a revoked Tenant admin's current access token keeps the role for up to 15 minutes.
+Open product questions (commission, alerts, premium coverage) are listed in the design.
+
+Found during the documentation pass, not yet fixed:
+
+1. booking-service caches a Tenant admin lookup for 60 s (`CallerTenantResolver`), so a removed Tenant
+   admin whose access token is still valid can keep reading the queue and assigning for up to a minute;
+   provider-service refuses at once.
+2. `TenantService.removeAdmin` deletes the membership, revokes the role, and restores the membership in a
+   separate write if the revoke fails; if that restore also fails, membership and role disagree.
+3. provider-service has only `StubCatalogClientAdapter`; setting `homefix.catalog.client=http` would leave
+   no `CatalogClientPort` bean and the service would not start.
+4. `SplashScreen.tsx` and `SocialLoginButtons.tsx` in the admin portal are imported nowhere.
+5. Found while auditing `docs/API_CONTRACTS.md` against the code (each still to be verified and fixed):
+   - **payment-service:** the retries endpoint can fail a PENDING payment whose charge is in flight; a second
+     attempt then opens and a late SUCCESS callback is refused, so money can be captured with no record.
+     The wallet-credit sweeper retries permanent 4xx failures forever; `SERVICE_PROVIDER` passes RBAC on
+     `GET /payments/*` but always fails the ownership check; credits send no booking reference.
+   - **booking-service:** the address-in-use check ignores `AWAITING_ASSIGNMENT`, so a queued booking's
+     address can be deleted; a late dispatch acceptance can pull a booking out of a Tenant queue; a provider
+     removed from a Tenant after assignment can still accept; confirming a non-`CREATED` booking answers 500
+     instead of 409; the provider can complete from `CUSTOMER_APPROVAL_PENDING`; the quote-approval timeout
+     is never scheduled; Spring's default 1 MB multipart limit applies before the 50 MB check; staff are
+     judged by the token's first authority only.
+   - **security (unverified):** internal-key filters and the gateway's public-prefix check match raw paths,
+     so an encoded `/%69nternal/...` path and prefixes like `/auth/loginX` may slip through; location reads
+     have no ownership check.
+   - **dispatch-engine:** `ProviderAccepted` is written after the booking call in a separate transaction
+     (lost on failure); a 401/403 from provider-service looks like an empty market.
+   - **others:** provider earnings' duplicate check ignores the provider id and racing credits answer 500;
+     a settlement without `bankAccountRef` re-encrypts the stored account; rating's legacy `/approval` can
+     republish a removed review; complaint resolution notes are stored but never returned; pricing admin
+     parameters are not range-checked; invoice-service answers 500 for an invalid month.
+6. Found while updating `docs/ARCHITECTURE.md`: a partially refunded payment can never be refunded again
+   (`PARTIALLY_REFUNDED` has no outgoing transition, though `refund` accepts it — predates this branch);
+   an unconfirmed (`CREATED`) booking cannot be cancelled although the fee policy lists it as fee-free;
+   complaint refunds report success through a logging stub without moving money; dispatch still posts to
+   notification endpoints that do not exist (logged failures); Tenant assignment checks membership and
+   approval but not skills — product decision needed (MT-5.2 allows it).
+
+Fixed in the same pass: the customer app's iOS location permission text and Android manifest comment
+claimed live tracking reads the device position (only the address form does); the three app images could
+bake a developer's local `.env` into the web build (`.dockerignore` now excludes it).
+
+Operational note: six parallel builds exhausted host memory and froze the Docker engine; it needed a
+Docker Desktop restart. Run module builds one at a time on this machine.

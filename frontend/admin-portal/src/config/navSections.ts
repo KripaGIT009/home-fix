@@ -18,9 +18,13 @@ export interface NavSection {
 
 export const NAV_SECTIONS: readonly NavSection[] = [
   { title: 'Overview', paths: ['/dashboard'] },
-  { title: 'Marketplace', paths: ['/users', '/providers', '/verification'] },
+  { title: 'Marketplace', paths: ['/users', '/providers', '/verification', '/tenants'] },
   { title: 'Catalogue', paths: ['/categories', '/pricing', '/coupons'] },
   { title: 'Operations', paths: ['/bookings', '/dispatch', '/complaints', '/reviews'] },
   { title: 'Finance', paths: ['/payments', '/reports'] },
   { title: 'Platform', paths: ['/notifications', '/audit-logs', '/system-config'] },
+  // The Tenant Portal (Requirement MT-11.1). Last, so an account that somehow
+  // holds a platform role as well still lands on its platform module; a
+  // TENANT_ADMIN sees nothing else, so lands on Requests.
+  { title: 'My agency', paths: ['/tenant/requests', '/tenant/team', '/tenant/jobs'] },
 ];

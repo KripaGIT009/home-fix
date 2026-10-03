@@ -16,6 +16,10 @@ const STATUS_COLORS: Record<string, ChipColor> = {
   OPEN: 'warning',
   IN_PROGRESS: 'info',
   SEARCHING_PROVIDER: 'info',
+  // Waiting on a Tenant to assign someone: work is pending (Requirement MT-4.2).
+  AWAITING_ASSIGNMENT: 'warning',
+  PROVIDER_ASSIGNED: 'info',
+  PROVIDER_ACCEPTED: 'info',
   FLAGGED: 'warning',
   ESCALATED: 'error',
   REFUND_FAILED: 'error',

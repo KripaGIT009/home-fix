@@ -8,6 +8,12 @@ package com.homefix.booking.domain;
 public enum BookingStatus {
     CREATED,
     SEARCHING_PROVIDER,
+    /**
+     * Automatic matching found no Provider and the booking waits in the Assignment_Queue of the
+     * Tenants that covered it, for a Tenant_Admin to assign one of their Providers
+     * (Requirement MT-4.2, MT-9.1).
+     */
+    AWAITING_ASSIGNMENT,
     SEARCHING_FAILED,
     PROVIDER_ASSIGNED,
     PROVIDER_ACCEPTED,

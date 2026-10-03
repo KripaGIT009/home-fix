@@ -40,13 +40,22 @@
     <uses-permission android:name="android.permission.INTERNET" />
 
     <!--
-        Live tracking and the "use my current location" control on the address
-        form read the device position through the WebView's navigator.geolocation,
-        which Android only grants once these are declared here. FINE is what the
-        map needs; COARSE is declared alongside it because Android 12+ lets the
-        user downgrade the grant to approximate, and a build that declares only
-        FINE cannot accept that choice.
+        The "use my current location" control on the address form reads the
+        device position through the WebView's navigator.geolocation, which
+        Android only grants once these are declared here. (Live tracking shows
+        the provider's position from the server; it never reads this device's.)
+        FINE gives an accurate address pin; COARSE is declared alongside it
+        because Android 12+ lets the user downgrade the grant to approximate, and
+        a build that declares only FINE cannot accept that choice.
     -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!--
+        Job photos / booking media: a file input marked `capture` opens the camera,
+        and Capacitor's WebView asks for this permission at runtime only because it
+        is declared here. The camera is optional hardware, so devices without one
+        can still install the app and pick photos from the gallery.
+    -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
 </manifest>

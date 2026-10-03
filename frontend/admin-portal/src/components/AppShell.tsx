@@ -27,6 +27,9 @@ import { BrandLogo } from './BrandLogo';
 import { useAuthStore } from '@stores/authStore';
 import { visibleNavItems } from '@config/navFilter';
 import { NAV_SECTIONS } from '@config/navSections';
+import type { NavBadge } from '@config/navigation';
+import { TENANT_ROLES, hasAnyRole } from '@config/roles';
+import { useMyTenant, useQueueCount } from '@features/tenant-portal/hooks';
 import { brand } from '@lib/theme';
 
 /** Fixed width of the desktop sidebar drawer. */
@@ -58,6 +61,11 @@ function isActive(pathname: string, path: string): boolean {
  * learn. The grouping is presentational only — access is still decided per item
  * by roles, so System Configuration appears for SUPER_ADMIN alone
  * (Requirement 19.6) and an empty section renders nothing at all.
+ *
+ * A TENANT_ADMIN gets the same shell scoped to their agency: only the Tenant
+ * Portal modules, the agency's name in the rail, and the number of waiting
+ * requests beside Requests, kept fresh by the queue's 15 s poll wherever they
+ * are in the portal (Requirements MT-11.1, MT-11.2).
  */
 export function AppShell({ title, children }: AppShellProps) {
   const navigate = useNavigate();
@@ -68,6 +76,11 @@ export function AppShell({ title, children }: AppShellProps) {
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
 
   const items = useMemo(() => visibleNavItems(user?.roles ?? []), [user?.roles]);
+  const isTenantAdmin = hasAnyRole(user?.roles ?? [], TENANT_ROLES);
+  // Both queries are disabled for anyone but a TENANT_ADMIN.
+  const queueCount = useQueueCount();
+  const tenant = useMyTenant().data;
+  const badges: Record<NavBadge, number | null> = { tenantQueue: queueCount };
 
   /** The visible items regrouped into their sections; empty sections drop out. */
   const sections = useMemo(
@@ -86,6 +99,7 @@ export function AppShell({ title, children }: AppShellProps) {
     if (roles.includes('FINANCE_ADMIN')) return 'Finance Admin';
     if (roles.includes('DISPATCHER')) return 'Dispatcher';
     if (roles.includes('SUPPORT_AGENT')) return 'Support Agent';
+    if (roles.includes('TENANT_ADMIN')) return 'Agency Admin';
     return 'Staff';
   }, [user?.roles]);
 
@@ -131,7 +145,7 @@ export function AppShell({ title, children }: AppShellProps) {
             variant="overline"
             sx={{ color: brand.navText, letterSpacing: '0.12em', lineHeight: 1.6, fontSize: 10 }}
           >
-            Ops
+            {isTenantAdmin ? 'Partner' : 'Ops'}
           </Typography>
         </Box>
       </Toolbar>
@@ -200,6 +214,7 @@ export function AppShell({ title, children }: AppShellProps) {
                       fontSize: '0.8125rem',
                     }}
                   />
+                  {item.badge ? <NavCount count={badges[item.badge]} /> : null}
                 </ListItemButton>
               );
             })}
@@ -208,6 +223,20 @@ export function AppShell({ title, children }: AppShellProps) {
       </Box>
 
       <Box sx={{ p: 2, borderTop: `1px solid ${brand.navLine}` }}>
+        {isTenantAdmin && tenant ? (
+          <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5 }}>
+            <Typography
+              variant="body2"
+              noWrap
+              sx={{ color: brand.navTextActive, fontWeight: 600, minWidth: 0 }}
+            >
+              {tenant.name}
+            </Typography>
+            {tenant.status === 'SUSPENDED' ? (
+              <Chip size="small" color="error" label="Suspended" sx={{ height: 20 }} />
+            ) : null}
+          </Stack>
+        ) : null}
         <Typography variant="caption" sx={{ color: 'rgba(148, 163, 184, 0.65)' }}>
           Signed in as {roleLabel}
         </Typography>
@@ -384,6 +413,36 @@ export function AppShell({ title, children }: AppShellProps) {
         <Toolbar />
         <Box sx={{ p: { xs: 2, md: 3 }, maxWidth: 1480, mx: 'auto' }}>{children}</Box>
       </Box>
+    </Box>
+  );
+}
+
+/**
+ * A live counter in the rail, e.g. waiting requests. Hidden at zero and while
+ * unknown, so an empty queue reads as calm rather than as "0" demanding a look.
+ */
+function NavCount({ count }: { count: number | null }) {
+  if (!count) return null;
+  return (
+    <Box
+      component="span"
+      aria-label={`${count} waiting`}
+      sx={{
+        ml: 1,
+        minWidth: 22,
+        height: 20,
+        px: 0.75,
+        borderRadius: 10,
+        display: 'inline-grid',
+        placeItems: 'center',
+        bgcolor: brand.amber,
+        color: '#3B2400',
+        fontSize: 11,
+        fontWeight: 800,
+        lineHeight: 1,
+      }}
+    >
+      {count > 99 ? '99+' : count}
     </Box>
   );
 }

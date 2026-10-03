@@ -28,10 +28,18 @@ public final class TemplatePlaceholders {
     /**
      * The placeholder values an event supplies, with the fallbacks the built-in text has always
      * used when an attribute is absent ("your booking", "updated").
+     *
+     * <p>{@code ProviderAssigned} supplies {@code tenantName}, the partner agency that assigned the
+     * job (Requirement MT-5.3). The built-in text uses it only in the variant picked when the
+     * event names an agency; if an admin puts it into the other variant, the platform is named
+     * instead of sending the placeholder literally.
      */
     public static Map<String, String> values(NotificationEventType eventType, Map<String, String> attributes) {
         Map<String, String> values = new LinkedHashMap<>();
         values.put("bookingReference", attributes.getOrDefault("bookingReference", "your booking"));
+        if (eventType == NotificationEventType.PROVIDER_ASSIGNED) {
+            values.put("tenantName", attributes.getOrDefault("tenantName", "HomeFix"));
+        }
         if (eventType == NotificationEventType.COMPLAINT_STATUS_CHANGED) {
             values.put("complaintStatus", humanise(attributes.getOrDefault("complaintStatus", "updated")));
         }

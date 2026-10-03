@@ -27,7 +27,7 @@ import com.homefix.shared.security.RbacEnforcementFilter;
  * permit the public surface and remain stateless.
  *
  * <p>{@code /internal/**} is the service-to-service surface (Notification Service contact
- * lookup). It is guarded by {@link InternalApiKeyFilter} — the same shared-credential mechanism
+ * lookup; provider-service account lookup and TENANT_ADMIN grant and revoke). It is guarded by {@link InternalApiKeyFilter} — the same shared-credential mechanism
  * the Booking Service uses — and additionally requires the {@code ROLE_INTERNAL} authority that
  * only that filter grants, so an end-user JWT can never reach it even if the filter's prefix
  * check were somehow bypassed. The API Gateway has no route for {@code /internal/**}.

@@ -174,7 +174,61 @@ class BookingRbacConfigTest {
         assertRejectedWith(invoke("GET", "/admin/bookings"), HttpStatus.UNAUTHORIZED);
     }
 
+    // ----- tenant portal (Requirement MT-10.1, MT-10.3) ------------------------
+
+    @Test
+    void tenantAdmin_mayReachTheQueueListAndAssignment() throws Exception {
+        authenticateAs("TENANT_ADMIN");
+        assertPassedThrough(invoke("GET", "/tenant/bookings/queue"));
+
+        chain = mock(FilterChain.class);
+        authenticateAs("TENANT_ADMIN");
+        assertPassedThrough(invoke("GET", "/tenant/bookings"));
+
+        chain = mock(FilterChain.class);
+        authenticateAs("TENANT_ADMIN");
+        assertPassedThrough(invoke("POST", "/tenant/bookings/" + UUID.randomUUID() + "/assignment"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"CUSTOMER", "SERVICE_PROVIDER", "ADMIN", "SUPER_ADMIN", "SUPPORT_AGENT", "DISPATCHER"})
+    void everyoneElse_isForbiddenFromTheTenantQueue(String role) throws Exception {
+        authenticateAs(role);
+
+        assertRejectedWith(invoke("GET", "/tenant/bookings/queue"), HttpStatus.FORBIDDEN);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"CUSTOMER", "SERVICE_PROVIDER", "ADMIN"})
+    void everyoneElse_isForbiddenFromTenantAssignment(String role) throws Exception {
+        authenticateAs(role);
+
+        assertRejectedWith(invoke("POST", "/tenant/bookings/HFX-20261002-ABC123/assignment"),
+                HttpStatus.FORBIDDEN);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"/admin/bookings", "/bookings/history"})
+    void tenantAdmin_isForbiddenFromPlatformAndCustomerPaths(String path) throws Exception {
+        authenticateAs("TENANT_ADMIN");
+
+        assertRejectedWith(invoke("GET", path), HttpStatus.FORBIDDEN);
+    }
+
+    @Test
+    void unauthenticatedTenantQueue_isUnauthorized() throws Exception {
+        assertRejectedWith(invoke("GET", "/tenant/bookings/queue"), HttpStatus.UNAUTHORIZED);
+    }
+
     // ----- paths deliberately left without a rule ------------------------------
+
+    @Test
+    void assignmentAnswers_gainNoRule() throws Exception {
+        // Ownership (assigned provider only) is ProviderAssignmentService's, as for other commands.
+        authenticateAs("SERVICE_PROVIDER");
+
+        assertPassedThrough(invoke("POST", "/bookings/HFX-20261002-ABC123/assignment/acceptance"));
+    }
 
     @Test
     void commandEndpoints_gainNoRule() throws Exception {

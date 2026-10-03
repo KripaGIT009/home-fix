@@ -41,4 +41,12 @@
     <!-- Shares the provider's position with the customer while on the way to a job. -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!--
+        Job photos / booking media: a file input marked `capture` opens the camera,
+        and Capacitor's WebView asks for this permission at runtime only because it
+        is declared here. The camera is optional hardware, so devices without one
+        can still install the app and pick photos from the gallery.
+    -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
 </manifest>

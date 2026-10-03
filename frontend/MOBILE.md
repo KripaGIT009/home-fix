@@ -39,24 +39,38 @@ Per mobile app:
   and the copied web bundle are ignored via the generated `android/.gitignore`.
 - `android/app/src/debug/AndroidManifest.xml` — debug-only cleartext override
   (see [Cleartext traffic](#cleartext-traffic-local-development-only)).
-- npm scripts: `mobile:sync`, `mobile:sync:android`, `mobile:open:android`,
-  `mobile:run:android`.
+- `ios/` — the generated native iOS project (`ios/App/App.xcodeproj`,
+  `App.xcworkspace`, `Podfile`, `App/Info.plist` with the usage descriptions).
+  It is meant to be committed like `android/`; as of 2026-10-03 it is still
+  untracked in the working tree. `Pods/`, build output, the copied web bundle
+  (`App/App/public`), the generated `capacitor.config.json`/`config.xml` and
+  `capacitor-cordova-ios-plugins/` are ignored via the generated `ios/.gitignore`.
+- npm scripts: `mobile:sync` (both platforms), `mobile:sync:android`,
+  `mobile:open:android`, `mobile:run:android`, `mobile:sync:ios`,
+  `mobile:open:ios`.
 - Dependencies: `@capacitor/core`, `@capacitor/android`, `@capacitor/ios`;
   `@capacitor/cli` as a devDependency, which is how Capacitor's own docs split
-  them.
+  them. The provider app also has `@capacitor/geolocation` (see
+  [Plugins](#plugins)).
 
-There is no `ios/` directory. It is generated on a Mac with one command — see
-[iOS](#ios-macos-only). Nothing else about the iOS setup is missing.
+The `ios/` projects were generated on Windows with `npx cap add ios`, which
+writes the Xcode project but cannot run `pod install` (no CocoaPods, no
+`xcodebuild`). On Windows or Linux, `cap sync` (and therefore `mobile:sync`)
+still copies the bundle into `ios/`, but logs "Skipping pod install because
+CocoaPods is not installed". The first `npx cap sync ios` on a Mac installs the
+pods — see [iOS](#ios-macos-only).
 
 ## Prerequisites
 
 | Tool | Version | Needed for |
 | --- | --- | --- |
 | Node.js | **≥ 20.0.0** | Capacitor 7 CLI (pinned across all four `@capacitor/*` packages) |
-| JDK | **21** | Android Gradle Plugin used by Capacitor 7 |
-| Android Studio | Ladybug (2024.2) or newer | Android SDK, emulator, `adb` |
+| JDK | **21** (17 also works) | Android Gradle Plugin 8.7.2 / Gradle 8.11.1 (`android/build.gradle`, `gradle-wrapper.properties`); Gradle 8.11 cannot run on newer JDKs such as 25 |
+| Android Studio | Ladybug (2024.2) or newer | Android SDK, emulator, `adb` (bundles a suitable JDK) |
 | Android SDK | Platform 35 (compileSdk/targetSdk 35, minSdk 23) | Android builds |
-| Xcode | 15 or newer, plus CocoaPods | iOS builds (macOS only) |
+| macOS + Xcode | **Xcode 16** or newer (iOS deployment target 14.0) | iOS builds; an iOS app cannot be built or signed on Windows or Linux |
+| CocoaPods | 1.13 or newer (`sudo gem install cocoapods` or `brew install cocoapods`) | Installs the Capacitor pods into `ios/App` |
+| Apple account | Free Apple ID for your own device; paid Apple Developer Program for TestFlight / App Store | iOS signing |
 
 Capacitor is pinned to **7.x** deliberately: Capacitor 8 requires Node ≥ 22, and
 this project was set up on Node 20. Once everyone is on Node 22+, bumping all
@@ -65,7 +79,17 @@ runtime on the same major or `cap sync` and the native project will disagree.
 
 Android Studio must know where the SDK is. If `cap run android` cannot find it,
 set `ANDROID_HOME` (Windows: `%LOCALAPPDATA%\Android\Sdk`) and add
-`platform-tools` to `PATH`.
+`platform-tools` to `PATH`. For a terminal Gradle build, point `JAVA_HOME` at a
+JDK 21 (Android Studio's own lives in `<Android Studio>/jbr`).
+
+To build a debug APK without Android Studio:
+
+```bash
+npm run mobile:sync:android
+cd android && ./gradlew assembleDebug      # Windows: gradlew.bat assembleDebug
+# -> android/app/build/outputs/apk/debug/app-debug.apk
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
 
 ## Build and run on Android
 
@@ -78,7 +102,7 @@ Everything below runs from the app directory (`frontend/customer-app` or
 cp .env.example .env      # then edit the native section
 
 # 2. Build the web app and copy it into the native project.
-npm run mobile:sync
+npm run mobile:sync:android         # or mobile:sync for Android and iOS together
 
 # 3a. Open Android Studio and press Run.
 npm run mobile:open:android
@@ -89,8 +113,10 @@ npx cap run android --list          # list available emulators/devices
 npx cap run android --target <id>   # pick one
 ```
 
-`mobile:sync` is `npm run build && cap sync`: it rebuilds `dist`, copies it into
-`android/app/src/main/assets/public`, and updates the native dependency list.
+`mobile:sync` is `npm run build && cap sync` (`mobile:sync:android` limits the
+sync to Android): it rebuilds `dist`, copies it into
+`android/app/src/main/assets/public` (and `ios/App/App/public`), and updates the
+native dependency list.
 **Re-run it after every web change** — the native project holds a *copy* of the
 bundle, so editing `src/` and pressing Run in Android Studio rebuilds the old
 assets.
@@ -132,21 +158,45 @@ Addresses that work from a device:
 
 - **Android emulator** — `10.0.2.2` is the emulator's alias for the host
   machine's loopback. `localhost` means the emulator itself.
-  ```
+
+  ```dotenv
   VITE_API_BASE_URL=http://10.0.2.2:8080
   VITE_AUTH_BASE_URL=http://10.0.2.2:8081
-  VITE_REALTIME_BASE_URL=http://10.0.2.2:8080
+  VITE_REALTIME_BASE_URL=http://10.0.2.2:8080   # customer app only
   ```
-  (Genymotion uses `10.0.3.2`.)
-- **Physical device on the same Wi-Fi** — the host's LAN address from `ipconfig`
-  / `ip addr`, e.g. `http://192.168.1.20:8080`. The backend must listen on all
-  interfaces, not just loopback, and the host firewall must allow the ports.
+
+  (Genymotion uses `10.0.3.2`.) The local Compose stack publishes the gateway
+  and Auth Service as `"8080:8080"` and `"8081:8081"`, i.e. on all interfaces.
+- **iOS simulator** — the simulator shares the Mac's network stack, so
+  `http://localhost:8080` / `http://localhost:8081` reach a backend on the same
+  Mac (not `10.0.2.2`).
+- **Physical device (Android or iPhone) on the same Wi-Fi** — the host's LAN
+  address, e.g. `http://192.168.1.20:8080`:
+  - find it with `ipconfig` (Windows, "IPv4 Address" of the Wi-Fi adapter),
+    `ipconfig getifaddr en0` (macOS) or `ip addr` (Linux);
+  - the backend must listen on all interfaces, not just loopback. A Docker
+    Compose mapping such as `"8080:8080"` publishes on `0.0.0.0`, but a
+    `127.0.0.1:8080:8080` mapping or a service bound to `localhost` is not
+    reachable from the phone;
+  - the host firewall must allow inbound TCP 8080 and 8081 (Windows: accept the
+    firewall prompt, or run `New-NetFirewallRule -DisplayName HomeFix
+    -Direction Inbound -Protocol TCP -LocalPort 8080,8081 -Action Allow
+    -Profile Private` with the Wi-Fi network set to *Private*);
+  - check from the phone's browser first: `http://192.168.1.20:8080/` should
+    answer (even with a 401/404) before you suspect the app;
+  - guest or office Wi-Fi often isolates clients from each other; use a phone
+    hotspot or USB instead;
+  - a DHCP lease can change the address; rebuild with the new one
+    (`npm run mobile:sync`) when it does. On a Mac, the Bonjour name
+    (`http://<mac-name>.local:8080`, see *System Settings → General → Sharing*)
+    survives address changes and suits the iOS ATS rule below.
 - **Physical device over USB** — `adb reverse tcp:8080 tcp:8080` and
   `adb reverse tcp:8081 tcp:8081` forward the device's `localhost` to the host,
   so `http://localhost:8080` works with no LAN exposure. Re-run after replugging.
 
 These are read at **build** time, so change `.env` → `npm run mobile:sync` →
-run again.
+run again. Sign-in calls the Auth Service at `VITE_AUTH_BASE_URL` directly, so
+both variables must use a host the device can reach.
 
 If a native build starts with a relative URL, it refuses to run and shows the
 offending variable names on screen (`assertRuntimeConfig` in `src/config/env.ts`,
@@ -180,67 +230,162 @@ server: { cleartext: true },
 
 Neither switch is needed once the backend is reachable over HTTPS.
 
+### iOS: App Transport Security
+
+iOS blocks plaintext `http://` loads through App Transport Security (ATS). The
+committed `Info.plist` deliberately has **no** ATS exception, so a release build
+cannot ship one by accident. For local work add this to
+`ios/App/App/Info.plist`, and do not commit it:
+
+```xml
+<key>NSAppTransportSecurity</key>
+<dict>
+  <key>NSAllowsLocalNetworking</key><true/>
+</dict>
+```
+
+`NSAllowsLocalNetworking` exempts `localhost`, unqualified host names and
+`*.local` names, which covers the simulator (`http://localhost:8080`) and a
+device pointed at the Mac's Bonjour name (`http://<mac-name>.local:8080`). It
+does not cover a numeric address such as `http://192.168.1.20:8080`; for that,
+use the `.local` name, or as a last resort temporarily set
+`<key>NSAllowsArbitraryLoads</key><true/>` instead (App Review rejects builds
+that keep it without a justification). Either way, remove the block before
+archiving (see the release checklist).
+
+## Plugins
+
+| Plugin | App | Used for |
+| --- | --- | --- |
+| `@capacitor/geolocation` 7.x | Provider | Sharing the provider's position while on the way to a job (`useShareLocation` → `src/features/jobs/deviceLocation.ts`). In the native apps it asks for the OS location permission and watches the platform location service; in a browser the same hook uses `navigator.geolocation`, so the web app is unchanged. A refusal shows the same "location permission is off" notice on every platform. |
+
+Keep every `@capacitor/*` package on the same major as `@capacitor/core` (7).
+After adding a plugin run `npx cap sync`: it registers the plugin in
+`android/capacitor.settings.gradle` / `android/app/capacitor.build.gradle` and
+in `ios/App/Podfile`.
+
+Photos need no plugin. The job photo card (provider) and the booking media
+picker (customer) are `<input type="file">` controls, which the native
+WebViews support. In the native apps each also shows a camera button
+(**Take photo** in the provider app, **Take a photo** in the customer app): a
+second file input marked `capture="environment"`, which makes Android's WebView
+launch the camera (Android's plain file chooser offers only the gallery) and
+opens the camera directly on iOS. The web build hides that button, because
+`capture` would take the gallery choice away from mobile browsers. If the
+capture UX ever needs more (cropping, compression, several shots in a row),
+`@capacitor/camera` 7.x is the upgrade path.
+
+The customer app reads the device position in one place only: "use my current
+location" on the service-request address form, a one-shot
+`navigator.geolocation.getCurrentPosition` in the WebView. That works with the
+permissions below and needs no plugin. Live tracking does **not** read the
+customer's position: the map shows the provider's position from the Location
+Service (snapshot, then SSE) and the service address stored on the booking.
+
 ## Permissions
 
 ### Android
 
 `android/app/src/main/AndroidManifest.xml` declares:
 
-- `INTERNET` — both apps (added by Capacitor).
-- `ACCESS_COARSE_LOCATION` and `ACCESS_FINE_LOCATION` — **customer app only**.
-  The address form and live tracking read the device position through the
-  WebView's `navigator.geolocation`, which Android grants only if these are
-  declared. Both are listed because Android 12+ lets the user downgrade a
-  location grant to "approximate", and a build declaring only `FINE` cannot
-  accept that choice.
+| Permission | App | Why |
+| --- | --- | --- |
+| `INTERNET` | both | API calls (added by Capacitor) |
+| `ACCESS_COARSE_LOCATION`, `ACCESS_FINE_LOCATION` | both | Customer: "use my current location" on the address form. Provider: sharing the position while on the way (`PROVIDER_ON_THE_WAY`). Both are listed because Android 12+ lets the user downgrade a grant to "approximate", and a build declaring only `FINE` cannot accept that choice. |
+| `CAMERA`, plus `uses-feature android.hardware.camera` with `required="false"` | both | Taking job photos (provider) and booking photos (customer). Capacitor's WebView asks for it at runtime only because it is declared. The feature is optional so devices without a camera can still install the app. |
 
-Android also asks the user at runtime the first time location is read; the
-WebView surfaces that prompt automatically.
+Android asks at runtime the first time location or the camera is used. The
+provider app explains the location prompt on the Active Job screen ("Allow
+location access if asked…") just before it appears.
+
+Picking from the gallery needs no storage permission: the system picker grants
+access to the chosen files only.
 
 ### iOS
 
-`Info.plist` needs a usage description for every permission, and the App Store
-rejects builds that omit them. For the **customer app**, add:
+`ios/App/App/Info.plist` carries a usage description for every permission the
+apps use. iOS shows it in the permission prompt, and the App Store rejects
+builds that omit one:
 
-```xml
-<key>NSLocationWhenInUseUsageDescription</key>
-<string>HomeFix uses your location to set your service address and show your professional's live position on the way to you.</string>
-```
+| Key | Customer | Provider |
+| --- | --- | --- |
+| `NSLocationWhenInUseUsageDescription` | "use my current location" on the address form | sharing the position while on the way |
+| `NSCameraUsageDescription` | photographing the problem when booking | before/after job photos |
+| `NSPhotoLibraryUsageDescription` | attaching photos/videos from the library | attaching job photos from the library |
+
+The committed customer string currently reads "…to set your service address and
+to show your professional on the way to you". The second half does not need the
+device's location (see [Plugins](#plugins)); trim it to the address use before
+a release, since App Review expects the string to match what the app does. The
+Android manifest comment in the customer app makes the same over-claim.
 
 Add `NSLocationAlwaysAndWhenInUseUsageDescription` only if tracking ever has to
 continue with the app in the background — it invites extra App Review scrutiny,
-so do not add it speculatively.
-
-The provider app needs no location key today.
+so do not add it speculatively. Edit the strings in `Info.plist` (or Xcode's
+*Info* tab); `npx cap sync` does not overwrite them.
 
 ## iOS (macOS only)
 
-The iOS project is not in the repo because it cannot be generated meaningfully on
-Windows. On a Mac, from the app directory:
+Building, running and signing an iOS app needs **macOS with Xcode**: Apple
+ships the iOS SDK, simulator and code-signing tools only for macOS. The `ios/`
+projects are in the repo, so a Mac user starts from a clone:
 
 ```bash
-npx cap add ios          # one time; creates ios/ and runs pod install
-npm run mobile:sync      # build + copy, same as Android
-npx cap open ios         # opens the workspace in Xcode, then press Run
+# one time per machine
+xcode-select --install            # command-line tools, if Xcode was never opened
+sudo gem install cocoapods        # or: brew install cocoapods
+
+# per app (frontend/customer-app or frontend/provider-app)
+npm ci
+cp .env.example .env              # set the native URLs, see "Pointing the app at a backend"
+npm run mobile:sync:ios           # build + copy the bundle + pod install
+npm run mobile:open:ios           # opens ios/App/App.xcworkspace in Xcode
 ```
 
-Then, in Xcode:
+Open the **`.xcworkspace`**, not the `.xcodeproj`: only the workspace sees the
+pods. If `pod install` fails on Apple Silicon with an `ffi` error, reinstall
+CocoaPods with Homebrew, or run `cd ios/App && arch -x86_64 pod install` once.
 
-1. Select the app target → **Signing & Capabilities**, choose your team; Xcode
-   manages the provisioning profile.
-2. Add the usage-description keys above to `Info.plist`.
-3. For a local plaintext backend, add a development-only App Transport Security
-   exception to `Info.plist` and **remove it before shipping**:
-   ```xml
-   <key>NSAppTransportSecurity</key>
-   <dict>
-     <key>NSAllowsLocalNetworking</key><true/>
-   </dict>
-   ```
-   `NSAllowsLocalNetworking` covers local/LAN hosts without the blanket
-   `NSAllowsArbitraryLoads`, which App Review questions.
-4. On the iOS simulator the host is reachable as `localhost` (not `10.0.2.2`);
-   a physical iPhone needs the host's LAN address.
+### Simulator
+
+In Xcode pick an iPhone simulator and press Run, or from the terminal:
+
+```bash
+npx cap run ios --list            # simulators and connected devices
+npx cap run ios --target <id>
+```
+
+The simulator reaches a backend on the same Mac at `http://localhost:8080` /
+`:8081` (with the ATS exception from
+[iOS: App Transport Security](#ios-app-transport-security)). The simulator has
+no camera: test photo picking with the library, and camera capture on a device.
+Simulate a location from *Features → Location* in the Simulator menu.
+
+### Physical iPhone
+
+1. Connect the iPhone by USB (or pair it over Wi-Fi in *Window → Devices and
+   Simulators*) and trust the Mac. On iOS 16+ enable *Settings → Privacy &
+   Security → Developer Mode* and restart the phone.
+2. In Xcode select the **App** target → *Signing & Capabilities*, tick
+   *Automatically manage signing* and pick your **Team**. A free Apple ID works
+   for your own device (the app expires after 7 days and must be re-run); the
+   paid Apple Developer Program is needed for TestFlight and the App Store. If
+   the bundle id is taken in your team, change it for local work only; the
+   committed ids are `com.homefix.customer` and `com.homefix.provider`.
+3. Select the phone as the run destination and press Run. With a free account,
+   the first launch is blocked until you trust the developer under *Settings →
+   General → VPN & Device Management*.
+4. Point the build at the Mac's LAN address or Bonjour name (see
+   [Pointing the app at a backend](#pointing-the-app-at-a-backend)) and add the
+   development ATS exception.
+
+### Debugging
+
+Enable *Settings → Safari → Advanced → Web Inspector* on the device, then in
+Safari on the Mac use *Develop → (device or simulator) → (app)* to get the
+console, network panel and DOM of the WebView. Native logs (plugin errors,
+permission results) are in Xcode's console. On Android the equivalents are
+`chrome://inspect` and Logcat in Android Studio.
 
 ## Release checklist
 
@@ -266,18 +411,34 @@ Android:
 
 iOS:
 
-- [ ] No ATS exception left in `Info.plist`.
+- [ ] No `NSAppTransportSecurity` exception left in `Info.plist`.
 - [ ] Usage-description strings are the real, user-facing wording.
 - [ ] Version and build number bumped; archive and upload from Xcode.
 
 ## Known gaps
 
-- The Android project was generated and configured on a Windows machine with no
-  Android SDK or JDK, so **no Gradle build has been run and no APK produced
-  here**. `npm run mobile:sync` and everything upstream of Gradle is verified;
-  the first `./gradlew` run on a machine with the SDK is the next check.
-- The iOS project has never been generated (`npx cap add ios` needs macOS).
-  The dependency is installed and the steps above are the whole procedure.
-- Both apps use the WebView's `navigator.geolocation` rather than the
-  `@capacitor/geolocation` plugin. That works with the manifest permissions
-  above; move to the plugin if background or high-accuracy tracking is needed.
+- **No native build has been run from this repository yet.** The Android and
+  iOS projects were generated and configured on the Windows development
+  machine, which cannot build either:
+
+  | Check (2026-10-03) | Found | Consequence |
+  | --- | --- | --- |
+  | Android SDK | none: `ANDROID_HOME` unset, no `%LOCALAPPDATA%\Android\Sdk`, no Android Studio | `./gradlew assembleDebug` cannot run |
+  | JDK | 25.0.2 is the only one installed | too new for Gradle 8.11.1; install JDK 17 or 21 (or use Android Studio's bundled JBR) and point `JAVA_HOME` at it |
+  | macOS / Xcode / CocoaPods | none (Windows 11) | no `pod install`, no iOS build, signing or simulator; iOS needs a Mac |
+  | Node.js | 20.15.0 | fine for Capacitor 7 |
+
+  Verified there: `npm run build` and `npx cap sync` for both platforms (the
+  bundle is in `android/app/src/main/assets/public` and `ios/App/App/public`,
+  synced 2026-10-03), plus typecheck and lint. The next checks are the first
+  Gradle build on a machine with the SDK and a JDK 17/21, and the first
+  `pod install` + Xcode build on a Mac.
+- `ios/` is not committed yet (untracked as of 2026-10-03); commit both apps'
+  `ios/` folders together with the rest of the iOS work.
+- `npx cap add ios` ran without CocoaPods, so `ios/App/Podfile.lock` does not
+  exist yet. The first `npx cap sync ios` on a Mac creates it; commit it then so
+  every Mac resolves the same pod versions.
+- The customer app uses the WebView's `navigator.geolocation` rather than
+  `@capacitor/geolocation`. On iOS the WebView can add its own prompt naming the
+  app's local origin after the system one; move the customer app to the plugin
+  too if that wording matters or background tracking is ever needed.

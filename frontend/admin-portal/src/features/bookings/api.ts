@@ -17,6 +17,8 @@ export type BookingStatus =
   | 'CREATED'
   | 'SEARCHING_PROVIDER'
   | 'SEARCHING_FAILED'
+  /** No provider accepted; waiting for a Tenant to assign one (Requirement MT-4.2). */
+  | 'AWAITING_ASSIGNMENT'
   | 'PROVIDER_ASSIGNED'
   | 'PROVIDER_ACCEPTED'
   | 'PROVIDER_ON_THE_WAY'

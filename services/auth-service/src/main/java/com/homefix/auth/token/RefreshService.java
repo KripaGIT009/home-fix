@@ -14,7 +14,9 @@ import com.homefix.auth.domain.UserAccountRepository;
  *
  * <p>Rotation consumes the presented refresh token (detecting replay and invalidating the
  * family), resolves the account's <em>current</em> roles so the new access token reflects any
- * role changes (Requirement 1.14), and issues the rotated token pair.
+ * role changes (Requirement 1.14), and issues the rotated token pair. The token family stores
+ * only the subject, never roles, so a TENANT_ADMIN granted or revoked by provider-service appears
+ * in or disappears from the very next refreshed token (Requirement MT-2.5).
  *
  * <p>The account is re-read on every rotation for its status as well as its roles: an account an
  * administrator has suspended or deactivated (Requirement 19.2) cannot refresh, and the presented

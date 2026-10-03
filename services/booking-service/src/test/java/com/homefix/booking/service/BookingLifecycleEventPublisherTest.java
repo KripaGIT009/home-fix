@@ -171,6 +171,51 @@ class BookingLifecycleEventPublisherTest {
     }
 
     @Test
+    void providerAssignedByATenantNamesTheTenant() throws Exception {
+        Booking booking = Bookings.inState(BookingStatus.PROVIDER_ASSIGNED);
+        UUID tenantId = UUID.randomUUID();
+        booking.setProviderId(UUID.randomUUID());
+        booking.setTenantId(tenantId);
+
+        publisher.onTransition(booking, BookingStatus.AWAITING_ASSIGNMENT, BookingStatus.PROVIDER_ASSIGNED,
+                Actor.user(UUID.randomUUID(), "TENANT_ADMIN"), "assigned", "Ara Home Services");
+
+        // Requirement MT-5.3: the provider's notification says which agency assigned the job.
+        JsonNode json = objectMapper.readTree(savedRow().getPayload());
+        assertThat(json.get("tenantId").asText()).isEqualTo(tenantId.toString());
+        assertThat(json.get("tenantName").asText()).isEqualTo("Ara Home Services");
+        // Still readable by the consumers' existing records.
+        assertThat(objectMapper.readValue(savedRow().getPayload(), NotificationLifecycleEventPayload.class)
+                .customerId()).isEqualTo(booking.getCustomerId());
+    }
+
+    @Test
+    void providerAssignedWithoutATenantSendsNullTenantFields() throws Exception {
+        Booking booking = Bookings.inState(BookingStatus.PROVIDER_ASSIGNED);
+        booking.setProviderId(UUID.randomUUID());
+
+        publisher.onTransition(booking, BookingStatus.SEARCHING_PROVIDER, BookingStatus.PROVIDER_ASSIGNED,
+                Actor.system(), "assigned", "ignored without a tenant");
+
+        JsonNode json = objectMapper.readTree(savedRow().getPayload());
+        assertThat(json.get("tenantId").isNull()).isTrue();
+        assertThat(json.get("tenantName").isNull()).isTrue();
+    }
+
+    @Test
+    void enteringTheAssignmentQueueWritesNoRow() {
+        // Requirement MT-4.2: the fallback is not a cancellation, and a decline is not news.
+        Booking booking = Bookings.inState(BookingStatus.AWAITING_ASSIGNMENT);
+
+        publisher.onTransition(booking, BookingStatus.SEARCHING_PROVIDER, BookingStatus.AWAITING_ASSIGNMENT,
+                Actor.system(), "routed");
+        publisher.onTransition(booking, BookingStatus.PROVIDER_ASSIGNED, BookingStatus.AWAITING_ASSIGNMENT,
+                Actor.system(), "declined");
+
+        verify(outboxRepository, never()).save(any());
+    }
+
+    @Test
     void otherTargetsWriteNoRow() {
         Booking booking = Bookings.inState(BookingStatus.PROVIDER_ACCEPTED);
 

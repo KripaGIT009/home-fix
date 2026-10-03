@@ -21,7 +21,10 @@ import com.homefix.notification.domain.EventParticipants;
  * {@code reference} (the older {@code bookingReference} spelling is still accepted),
  * rating-review-service names {@code reviewerId}/{@code revieweeId}, and complaint-service names
  * the new status {@code newStatus}; booking-service's {@code BookingCancelled} carries the terminal
- * booking {@code status} ({@code CANCELLED} or {@code SEARCHING_FAILED}).
+ * booking {@code status} ({@code CANCELLED} or {@code SEARCHING_FAILED}); its
+ * {@code ProviderAssigned} names the partner agency that assigned the job as {@code tenantName}
+ * (absent when the platform assigned it). The agency's {@code tenantId} is not needed to render
+ * anything and is ignored with the other unknown fields.
  *
  * @param bookingId   the booking the event relates to
  * @param reference   human-readable booking reference used in message text (non-PII)
@@ -32,6 +35,9 @@ import com.homefix.notification.domain.EventParticipants;
  * @param complaintId the complaint a complaint event relates to
  * @param newStatus   a complaint's new status (enum name, non-PII)
  * @param status      a booking's status on a booking event (enum name, non-PII)
+ * @param tenantName  the partner agency (Tenant) that assigned the provider, on a Tenant-assigned
+ *                    {@code ProviderAssigned} (an organisation's name, not personal data;
+ *                    Requirement MT-5.3)
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record LifecycleEventPayload(
@@ -43,7 +49,8 @@ public record LifecycleEventPayload(
         UUID revieweeId,
         UUID complaintId,
         String newStatus,
-        String status) {
+        String status,
+        String tenantName) {
 
     /** The user ids this event names, for the recipient policy. */
     public EventParticipants participants() {

@@ -48,9 +48,23 @@ public class BookingLifecycleEventPublisher {
      */
     public void onTransition(Booking booking, BookingStatus from, BookingStatus to,
                              Actor actor, String reason) {
+        onTransition(booking, from, to, actor, reason, null);
+    }
+
+    /**
+     * As {@link #onTransition(Booking, BookingStatus, BookingStatus, Actor, String)}, naming the
+     * Tenant that caused the transition. Only {@code ProviderAssigned} carries it: the Provider's
+     * notification says which agency assigned the job (Requirement MT-5.3). The Tenant's id is the
+     * booking's own {@code tenantId}; only the display name is supplied by the caller, since the
+     * booking does not store it.
+     *
+     * @param tenantName the assigning Tenant's name, or null
+     */
+    public void onTransition(Booking booking, BookingStatus from, BookingStatus to,
+                             Actor actor, String reason, String tenantName) {
         switch (to) {
             case CANCELLED, SEARCHING_FAILED -> publishBookingCancelled(booking, from, to, actor, reason);
-            case PROVIDER_ASSIGNED -> publishProviderAssigned(booking);
+            case PROVIDER_ASSIGNED -> publishProviderAssigned(booking, tenantName);
             default -> {
                 // No state-driven event for this target.
             }
@@ -69,11 +83,12 @@ public class BookingLifecycleEventPublisher {
                 BookingCancelledEvent.EVENT_TYPE, event);
     }
 
-    private void publishProviderAssigned(Booking booking) {
+    private void publishProviderAssigned(Booking booking, String tenantName) {
         ProviderAssignedEvent event = new ProviderAssignedEvent(
                 booking.getId(), booking.getReference(),
                 booking.getCustomerId(), booking.getProviderId(),
-                booking.getCreatedAt(), Instant.now(clock));
+                booking.getCreatedAt(), Instant.now(clock),
+                booking.getTenantId(), booking.getTenantId() == null ? null : tenantName);
         outboxPublisher.publish(
                 ProviderAssignedEvent.AGGREGATE_TYPE, booking.getId(),
                 ProviderAssignedEvent.EVENT_TYPE, event);

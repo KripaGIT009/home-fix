@@ -1,6 +1,7 @@
 package com.homefix.booking.api;
 
 import org.slf4j.MDC;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -33,6 +34,23 @@ public class GlobalExceptionHandler {
                 .addDetail("bookingId: " + ex.getBookingId())
                 .addDetail("fromState: " + ex.getFromState())
                 .addDetail("toState: " + ex.getToState())
+                .build();
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
+    }
+
+    /**
+     * Another transaction changed the booking between this request reading it and committing — for
+     * example a Provider accepting an assignment at the moment the assignment deadline expires it
+     * (Requirement MT-7.3), or two commands on one booking at once. The booking's optimistic lock
+     * let the other one win; nothing of this request was applied, so the client should reload and
+     * decide again. Without this the lock surfaced as an opaque 500.
+     */
+    @ExceptionHandler(OptimisticLockingFailureException.class)
+    public ResponseEntity<ErrorResponseDto> handleConcurrentChange(OptimisticLockingFailureException ex) {
+        ErrorResponseDto body = ErrorResponseDto.builder()
+                .errorCode("BOOKING_CHANGED")
+                .message("The booking changed while your request was being processed; reload it and try again")
+                .correlationId(MDC.get(CORRELATION_MDC_KEY))
                 .build();
         return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
     }

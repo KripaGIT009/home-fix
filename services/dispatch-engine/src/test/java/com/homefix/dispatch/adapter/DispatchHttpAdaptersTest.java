@@ -15,6 +15,7 @@ import com.homefix.dispatch.config.DispatchClientProperties;
 import com.homefix.dispatch.domain.BookingNotSearchableException;
 import com.homefix.dispatch.domain.DispatchRequest;
 import com.homefix.dispatch.domain.ProviderCandidate;
+import com.homefix.dispatch.domain.SearchingFailedOutcome;
 import com.homefix.shared.resilience.ResilienceFactory;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
@@ -131,6 +132,57 @@ class DispatchHttpAdaptersTest {
         adapter.markSearchingFailed(UUID.randomUUID());
 
         assertThat(requests.get()).isEqualTo(2);
+    }
+
+    @Test
+    void bookingTransitionAdapter_searchingFailedAnsweredWithAwaitingAssignment_reportsTheTenantRouting() {
+        // Requirement MT-4.2: booking-service answers the call with the booking (BookingResponse);
+        // AWAITING_ASSIGNMENT means it was handed to partner agencies rather than failed.
+        bodyToReturn = """
+                {"bookingId":"%s","reference":"HF-1","status":"AWAITING_ASSIGNMENT","emergency":true,
+                 "scheduledAt":null,"estimatedTotal":499.00,"cancellationFee":null,"estimate":null}"""
+                .formatted(UUID.randomUUID());
+        HttpBookingTransitionAdapter adapter =
+                new HttpBookingTransitionAdapter(props(), new ResilienceFactory(), "test-internal-key");
+
+        assertThat(adapter.markSearchingFailed(UUID.randomUUID()))
+                .isEqualTo(SearchingFailedOutcome.AWAITING_ASSIGNMENT);
+        assertThat(lastInternalKey).isEqualTo("test-internal-key");
+    }
+
+    @Test
+    void bookingTransitionAdapter_searchingFailedAnsweredWithSearchingFailed_reportsTheFailure() {
+        bodyToReturn = """
+                {"bookingId":"%s","reference":"HF-2","status":"SEARCHING_FAILED","emergency":false}"""
+                .formatted(UUID.randomUUID());
+        HttpBookingTransitionAdapter adapter =
+                new HttpBookingTransitionAdapter(props(), new ResilienceFactory(), "test-internal-key");
+
+        assertThat(adapter.markSearchingFailed(UUID.randomUUID()))
+                .isEqualTo(SearchingFailedOutcome.SEARCHING_FAILED);
+    }
+
+    @Test
+    void bookingTransitionAdapter_searchingFailedWithoutABody_isTreatedAsFailed() {
+        // An empty 200 (a Booking Service without Tenants) keeps today's behaviour: the notices go out.
+        bodyToReturn = "";
+        HttpBookingTransitionAdapter adapter =
+                new HttpBookingTransitionAdapter(props(), new ResilienceFactory(), "test-internal-key");
+
+        assertThat(adapter.markSearchingFailed(UUID.randomUUID()))
+                .isEqualTo(SearchingFailedOutcome.SEARCHING_FAILED);
+    }
+
+    @Test
+    void bookingTransitionAdapter_searchingFailedForUnknownBooking_meansNotSearchable() {
+        statusToReturn = 404;
+        bodyToReturn = "{\"errorCode\":\"BOOKING_NOT_FOUND\"}";
+        HttpBookingTransitionAdapter adapter =
+                new HttpBookingTransitionAdapter(props(), new ResilienceFactory(), "test-internal-key");
+
+        assertThatThrownBy(() -> adapter.markSearchingFailed(UUID.randomUUID()))
+                .isInstanceOf(BookingNotSearchableException.class);
+        assertThat(requests.get()).isEqualTo(1);
     }
 
     @Test

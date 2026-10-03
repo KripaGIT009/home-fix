@@ -28,7 +28,8 @@ import jakarta.annotation.PostConstruct;
  * answers 404 for a booking that is not theirs.
  *
  * <h2>Scope</h2>
- * <p>The read endpoints and the Admin Portal's {@code /admin/bookings/**} have rules
+ * <p>The read endpoints, the Admin Portal's {@code /admin/bookings/**} and the Tenant Portal's
+ * {@code /tenant/bookings/**} (Requirement MT-10.1) have rules
  * ({@code /admin/bookings/**} also matches {@code /admin/bookings} itself). The command endpoints
  * ({@code POST /bookings/**}) remain "authenticated only", as before this class existed; their
  * ownership is enforced by {@code BookingAccess}, and giving them role rules is a separate change
@@ -65,6 +66,13 @@ public class BookingRbacConfig {
     private static final List<String> ADMIN_TIER =
             List.of("ADMIN", "SUPER_ADMIN", "SUPPORT_AGENT", "DISPATCHER");
 
+    /**
+     * The Tenant Portal's booking endpoints (Requirement MT-10.1): Tenant_Admins only. Platform
+     * staff manage bookings through {@code /admin/bookings} and administer no Tenant, so admitting
+     * them here would only produce a "not a Tenant admin" answer.
+     */
+    private static final List<String> TENANT_TIER = List.of("TENANT_ADMIN");
+
     private final RbacProperties rbacProperties;
 
     public BookingRbacConfig(RbacProperties rbacProperties) {
@@ -82,6 +90,8 @@ public class BookingRbacConfig {
         rules.put("GET /bookings/*", DETAIL_TIER);
         rules.put("GET /admin/bookings/**", ADMIN_TIER);
         rules.put("POST /admin/bookings/**", ADMIN_TIER);
+        rules.put("GET /tenant/bookings/**", TENANT_TIER);
+        rules.put("POST /tenant/bookings/**", TENANT_TIER);
     }
 
     private static List<String> withStaff(String... roles) {

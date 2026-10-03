@@ -72,6 +72,7 @@ class NotificationServiceProviderPactTest {
                 null,
                 null,
                 null,
+                null,
                 null);
 
         // Sanity: the Notification Service can address this event (Requirement 17.4) — the

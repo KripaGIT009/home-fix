@@ -16,7 +16,9 @@
     "mobile:sync": "npm run build && cap sync",
     "mobile:sync:android": "npm run build && cap sync android",
     "mobile:open:android": "cap open android",
-    "mobile:run:android": "npm run build && cap run android"
+    "mobile:run:android": "npm run build && cap run android",
+    "mobile:sync:ios": "npm run build && cap sync ios",
+    "mobile:open:ios": "cap open ios"
   },
   "dependencies": {
     "@capacitor/android": "^7.6.9",

@@ -81,6 +81,18 @@ public class ProviderProfile {
     @Column(name = "bank_account_verified", nullable = false)
     private boolean bankAccountVerified;
 
+    /**
+     * The Tenant whose team this provider belongs to, or {@code null} for an Independent_Provider
+     * (Requirement MT-3.1). A single column, so a provider has at most one Tenant (Property MT8).
+     *
+     * <p>Read-only in the aggregate on purpose: membership is changed only by the conditional
+     * statements in {@link ProviderProfileRepository} ({@code attachToTenant},
+     * {@code detachFromTenant}). If the aggregate wrote the column, a provider saving their profile
+     * from a copy loaded before a Tenant added them would silently write the old value back.
+     */
+    @Column(name = "tenant_id", insertable = false, updatable = false)
+    private UUID tenantId;
+
     @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "provider_skill_tag", joinColumns = @JoinColumn(name = "provider_id"))
     @Column(name = "tag", nullable = false, length = 64)
@@ -285,6 +297,11 @@ public class ProviderProfile {
 
     public boolean isBankAccountVerified() {
         return bankAccountVerified;
+    }
+
+    /** The provider's Tenant, or {@code null} when independent (Requirement MT-3.1). */
+    public UUID getTenantId() {
+        return tenantId;
     }
 
     public List<String> getSkillTags() {

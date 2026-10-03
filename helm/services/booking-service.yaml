@@ -29,4 +29,6 @@ config:
   PRICING_ENGINE_URL: "http://pricing-engine:8086"
   CUSTOMER_CLIENT: "http"
   CUSTOMER_SERVICE_URL: "http://customer-service:8082"
+  PROVIDER_SERVICE_URL: "http://provider-service:8083"
+  TENANT_ASSIGNMENT_TIMEOUT: "PT60M"
   MEDIA_STORAGE_PROVIDER: "local"

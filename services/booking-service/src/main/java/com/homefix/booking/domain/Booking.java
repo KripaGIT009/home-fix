@@ -25,7 +25,9 @@ import jakarta.persistence.Version;
         @Index(name = "idx_booking_reference", columnList = "reference", unique = true),
         @Index(name = "idx_booking_customer", columnList = "customer_id"),
         // Customer service history: newest-first page by customer (migration V2).
-        @Index(name = "idx_booking_customer_created", columnList = "customer_id, created_at DESC")
+        @Index(name = "idx_booking_customer_created", columnList = "customer_id, created_at DESC"),
+        // A Tenant's bookings, newest first (migration V3; partial on tenant_id IS NOT NULL there).
+        @Index(name = "idx_booking_tenant_created", columnList = "tenant_id, created_at DESC")
 })
 public class Booking {
 
@@ -86,6 +88,23 @@ public class Booking {
 
     @Column(name = "net_duration_seconds")
     private Integer netDurationSeconds;
+
+    /**
+     * The Tenant whose Provider holds the job: set by a Tenant assignment, or on automatic
+     * acceptance when the accepting Provider belongs to a Tenant (Requirement MT-8.1). Kept when
+     * the assigned Provider declines, so the booking returns to that Tenant's queue only
+     * (Requirement MT-6.2). Null for Independent Providers and unassigned bookings.
+     */
+    @Column(name = "tenant_id")
+    private UUID tenantId;
+
+    /**
+     * When the booking first entered AWAITING_ASSIGNMENT. Never reset, so a decline does not
+     * restart the assignment timeout (Requirement MT-7.2); non-null also marks a booking that went
+     * through the Tenant fallback.
+     */
+    @Column(name = "queued_for_assignment_at")
+    private Instant queuedForAssignmentAt;
 
     @Version
     @Column(name = "version", nullable = false)
@@ -238,6 +257,22 @@ public class Booking {
 
     public void setNetDurationSeconds(Integer netDurationSeconds) {
         this.netDurationSeconds = netDurationSeconds;
+    }
+
+    public UUID getTenantId() {
+        return tenantId;
+    }
+
+    public void setTenantId(UUID tenantId) {
+        this.tenantId = tenantId;
+    }
+
+    public Instant getQueuedForAssignmentAt() {
+        return queuedForAssignmentAt;
+    }
+
+    public void setQueuedForAssignmentAt(Instant queuedForAssignmentAt) {
+        this.queuedForAssignmentAt = queuedForAssignmentAt;
     }
 
     public long getVersion() {

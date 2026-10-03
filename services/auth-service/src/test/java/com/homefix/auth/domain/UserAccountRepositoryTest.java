@@ -114,6 +114,25 @@ class UserAccountRepositoryTest {
     }
 
     @Test
+    void tenantAdminRole_isGrantedAndRevokedThroughTheRoleTable() {
+        // Requirement MT-2.1, MT-2.4: the role is stored like any other and can be removed again.
+        UserAccount account = repository.findByMobileNumber("+919876500001").orElseThrow();
+        account.addRole(Role.TENANT_ADMIN);
+        repository.saveAndFlush(account);
+        entityManager.clear();
+
+        UserAccount granted = repository.findById(oldest.getId()).orElseThrow();
+        assertThat(granted.getRoles()).containsExactlyInAnyOrder(Role.CUSTOMER, Role.TENANT_ADMIN);
+
+        granted.removeRole(Role.TENANT_ADMIN);
+        repository.saveAndFlush(granted);
+        entityManager.clear();
+
+        assertThat(repository.findById(oldest.getId()).orElseThrow().getRoles())
+                .containsExactly(Role.CUSTOMER);
+    }
+
+    @Test
     void findStatusById_readsJustTheStatus() {
         assertThat(repository.findStatusById(newest.getId())).contains(AccountStatus.SUSPENDED);
         assertThat(repository.findStatusById(staff.getId())).contains(AccountStatus.ACTIVE);

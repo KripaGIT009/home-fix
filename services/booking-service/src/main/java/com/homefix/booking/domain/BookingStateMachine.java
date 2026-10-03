@@ -7,6 +7,7 @@ import java.util.Map;
 import java.util.Set;
 
 import static com.homefix.booking.domain.BookingStatus.ADDITIONAL_QUOTE_REQUIRED;
+import static com.homefix.booking.domain.BookingStatus.AWAITING_ASSIGNMENT;
 import static com.homefix.booking.domain.BookingStatus.CANCELLED;
 import static com.homefix.booking.domain.BookingStatus.CREATED;
 import static com.homefix.booking.domain.BookingStatus.CUSTOMER_APPROVAL_PENDING;
@@ -36,8 +37,9 @@ import static com.homefix.booking.domain.BookingStatus.SEARCHING_PROVIDER;
  * <p>Permitted transitions (Requirement 9.1):
  * <pre>
  *   CREATED                    -> SEARCHING_PROVIDER
- *   SEARCHING_PROVIDER         -> PROVIDER_ASSIGNED | SEARCHING_FAILED | CANCELLED
- *   PROVIDER_ASSIGNED          -> PROVIDER_ACCEPTED | CANCELLED
+ *   SEARCHING_PROVIDER         -> PROVIDER_ASSIGNED | AWAITING_ASSIGNMENT | SEARCHING_FAILED | CANCELLED
+ *   AWAITING_ASSIGNMENT        -> PROVIDER_ASSIGNED | SEARCHING_FAILED | CANCELLED
+ *   PROVIDER_ASSIGNED          -> PROVIDER_ACCEPTED | AWAITING_ASSIGNMENT | CANCELLED
  *   PROVIDER_ACCEPTED          -> PROVIDER_ON_THE_WAY | CANCELLED
  *   PROVIDER_ON_THE_WAY        -> PROVIDER_ARRIVED | CANCELLED
  *   PROVIDER_ARRIVED           -> JOB_STARTED
@@ -52,6 +54,12 @@ import static com.homefix.booking.domain.BookingStatus.SEARCHING_PROVIDER;
  *   DISPUTED                   -> REFUNDED | PAYMENT_COMPLETED
  *   Terminal (no outgoing):    SEARCHING_FAILED, REFUNDED, CANCELLED
  * </pre>
+ *
+ * <p>The {@code AWAITING_ASSIGNMENT} edges are the Tenant fallback (Requirement MT-9.1): a booking
+ * nobody accepted automatically is queued for the covering Tenants instead of failing, a Tenant
+ * assignment moves it to PROVIDER_ASSIGNED, and the assigned Provider's decline returns it to the
+ * queue. Which caller may take each edge (fallback only after dispatch failed, decline only for a
+ * queued booking) is the services' rule; this map only says the edge exists.
  */
 public final class BookingStateMachine {
 
@@ -60,8 +68,9 @@ public final class BookingStateMachine {
     private static Map<BookingStatus, Set<BookingStatus>> buildTransitions() {
         Map<BookingStatus, Set<BookingStatus>> map = new EnumMap<>(BookingStatus.class);
         map.put(CREATED, EnumSet.of(SEARCHING_PROVIDER));
-        map.put(SEARCHING_PROVIDER, EnumSet.of(PROVIDER_ASSIGNED, SEARCHING_FAILED, CANCELLED));
-        map.put(PROVIDER_ASSIGNED, EnumSet.of(PROVIDER_ACCEPTED, CANCELLED));
+        map.put(SEARCHING_PROVIDER, EnumSet.of(PROVIDER_ASSIGNED, AWAITING_ASSIGNMENT, SEARCHING_FAILED, CANCELLED));
+        map.put(AWAITING_ASSIGNMENT, EnumSet.of(PROVIDER_ASSIGNED, SEARCHING_FAILED, CANCELLED));
+        map.put(PROVIDER_ASSIGNED, EnumSet.of(PROVIDER_ACCEPTED, AWAITING_ASSIGNMENT, CANCELLED));
         map.put(PROVIDER_ACCEPTED, EnumSet.of(PROVIDER_ON_THE_WAY, CANCELLED));
         map.put(PROVIDER_ON_THE_WAY, EnumSet.of(PROVIDER_ARRIVED, CANCELLED));
         map.put(PROVIDER_ARRIVED, EnumSet.of(JOB_STARTED));

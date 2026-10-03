@@ -1,7 +1,9 @@
 package com.homefix.dispatch.adapter;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.homefix.dispatch.config.DispatchClientProperties;
 import com.homefix.dispatch.domain.BookingNotSearchableException;
+import com.homefix.dispatch.domain.SearchingFailedOutcome;
 import com.homefix.dispatch.port.BookingTransitionPort;
 import com.homefix.shared.resilience.ResilienceFactory;
 import com.homefix.shared.resilience.ResilientCall;
@@ -33,6 +35,10 @@ import java.util.concurrent.Callable;
  * 404 (no such booking) is not a degraded dependency but a definitive answer, so it is raised as
  * {@link BookingNotSearchableException} and the dispatch loop stops for that booking.
  *
+ * <p>The SEARCHING_FAILED request answers 200 with the booking ({@code BookingResponse}); its
+ * {@code status} tells whether the booking was really failed or routed to the partner agencies
+ * covering it (AWAITING_ASSIGNMENT, Requirement MT-4.2), so the body is read rather than discarded.
+ *
  * <p>Active only when no other {@link BookingTransitionPort} bean is present (tests supply a fake).
  */
 @Component
@@ -42,7 +48,8 @@ public class HttpBookingTransitionAdapter implements BookingTransitionPort {
     static final String DEPENDENCY = "booking-service";
 
     private final RestClient restClient;
-    private final ResilientCall<Void> resilientCall;
+    /** Yields the booking status the Booking Service answered with ({@code null} when not read). */
+    private final ResilientCall<String> resilientCall;
 
     /** Header carrying the shared service credential the Booking Service expects on /internal/**. */
     static final String INTERNAL_KEY_HEADER = "X-Internal-Api-Key";
@@ -92,23 +99,24 @@ public class HttpBookingTransitionAdapter implements BookingTransitionPort {
     }
 
     @Override
-    public void markSearchingFailed(UUID bookingId) {
-        transition(bookingId, () -> {
-            restClient.post()
+    public SearchingFailedOutcome markSearchingFailed(UUID bookingId) {
+        String bookingStatus = transition(bookingId, () -> {
+            BookingStatusBody booking = restClient.post()
                     .uri("/internal/bookings/{id}/searching-failed", bookingId)
                     .retrieve()
                     .onStatus(status -> status.is5xxServerError(), (req, res) -> {
                         throw new TransientFailures.ServerErrorException(
                                 res.getStatusCode().value(), "Booking Service returned 5xx");
                     })
-                    .toBodilessEntity();
-            return null;
+                    .body(BookingStatusBody.class);
+            return booking == null ? null : booking.status();
         });
+        return SearchingFailedOutcome.fromBookingStatus(bookingStatus);
     }
 
-    private void transition(UUID bookingId, Callable<Void> call) {
+    private String transition(UUID bookingId, Callable<String> call) {
         try {
-            resilientCall.execute(call);
+            return resilientCall.execute(call);
         } catch (BookingTransitionException e) {
             if (e.getCause() instanceof HttpClientErrorException clientError
                     && (clientError.getStatusCode().value() == 409
@@ -119,6 +127,11 @@ public class HttpBookingTransitionAdapter implements BookingTransitionPort {
             }
             throw e;
         }
+    }
+
+    /** The part of the Booking Service's {@code BookingResponse} the Dispatch Engine needs. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record BookingStatusBody(String status) {
     }
 
     /** Unchecked wrapper so the dispatch loop can treat a transition failure as recoverable. */

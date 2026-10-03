@@ -19,6 +19,10 @@
 #      the job detail carries the address, someone else's token cannot drive the booking,
 #      on the way -> arrived (with a location the customer can read) -> before photo ->
 #      start -> after photo -> complete, with the photo gates enforced
+#   8. (after 7) a booking automatic matching cannot place falls back to the Tenant covering it: the
+#      seeded provider declines the offer, the booking reaches AWAITING_ASSIGNMENT, the demo Tenant's
+#      admin sees it in the queue, assigns Provider Two (who declines), reassigns Provider One (who
+#      accepts), and only the Tenant admin can reach the queue. Needs docker/seed-tenants.sql.
 #   7. the customer pays for the completed job: the amount comes from the booking (a tampered
 #      amount in the request is ignored), the local payment simulator settles it, and the
 #      booking reaches PAYMENT_COMPLETED through the PaymentCompleted event, and the provider's
@@ -49,6 +53,8 @@ DISPATCH_CONTAINER="${DISPATCH_CONTAINER:-homefix-core-dispatch-engine-1}"
 SMS_LOG="${SMS_LOG:-$(dirname "$0")/dev-sms/dev-sms.log}"
 
 PASSED=0
+# http_code <curl args...> -> just the status code.
+http_code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
 FAILED=0
 
 pass() { printf '  PASS  %s\n' "$1"; PASSED=$((PASSED + 1)); }
@@ -259,8 +265,6 @@ if [ "${JOB_READY:-}" = "yes" ]; then
 '
   BOOKINGS="${GATEWAY}/bookings/${BOOKING_ID}"
 
-  # http_code <curl args...> -> just the status code.
-  http_code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
 
   DETAIL="$(curl -s -H "${PROVIDER_AUTHZ}" "${BOOKINGS}")"
   if printf '%s' "${DETAIL}" | grep -q '"address":"Home"'       && printf '%s' "${DETAIL}" | grep -q '"coordinates":{"latitude":25.5571'; then
@@ -371,6 +375,111 @@ if [ "${JOB_READY:-}" = "yes" ]; then
     200|201) pass "paying again returns the existing payment (HTTP ${CODE})" ;;
     *) fail 'paying again returns the existing payment' "HTTP ${CODE}" ;;
   esac
+fi
+
+
+# ------------------------------------------------------------------ tenant --
+login_token() {
+  curl -s -X POST -H "${JSON}" -d "{\"username\":\"$1\",\"password\":\"${DEV_SEED_PASSWORD:-HomeFix@2026}\"}" \
+    "${AUTH}/auth/login/password" | sed 's/.*"accessToken":"\([^"]*\)".*/\1/'
+}
+booking_status() { psql_q "SELECT status FROM booking.booking WHERE id = '$1';"; }
+wait_status() {  # wait_status <bookingId> <status> <seconds>
+  local s=''
+  for _ in $(seq 1 "$3"); do s="$(booking_status "$1")"; [ "$s" = "$2" ] && break; sleep 1; done
+  printf '%s' "$s"
+}
+
+if [ -n "${PROVIDER_TOKEN:-}" ] && [ "${PROVIDER_TOKEN}" != "${PROVIDER_LOGIN:-}" ]; then
+  printf '\n== Tenant fallback: a booking nobody accepts goes to the local agency\n'
+  TENANT_TOKEN="$(login_token "${TENANT_ADMIN_USER:-tenantadmin}")"
+  PROVIDER2_TOKEN="$(login_token "${PROVIDER2_USER:-provider2}")"
+  TENANT_AUTHZ="Authorization: Bearer ${TENANT_TOKEN}"
+  PROVIDER2_AUTHZ="Authorization: Bearer ${PROVIDER2_TOKEN}"
+  TENANT_ID="$(psql_q "SELECT a.tenant_id FROM provider.tenant_admin a JOIN auth.user_account u ON u.id = a.user_id WHERE u.username = '${TENANT_ADMIN_USER:-tenantadmin}';")"
+  if [ -z "${TENANT_ID}" ]; then
+    fail 'demo Tenant is seeded' 'run docker/seed-tenants.sql (tenantadmin is not a Tenant admin)'
+  else
+    pass 'demo Tenant is seeded'
+    CREATED2="$(curl -s -X POST -H "${AUTHZ}" -H "${JSON}" \
+      -d "{\"addressId\":\"${ADDRESS_ID}\",\"categoryId\":\"${CATEGORY_ID}\",\"subcategoryId\":\"${SUBCATEGORY_ID}\",\"emergency\":false,\"scheduledAt\":\"${SCHEDULED}\",\"description\":\"Tenant fallback run\"}" \
+      "${BOOKING}/bookings")"
+    REF2="$(printf '%s' "${CREATED2}" | sed 's/.*"reference":"\([^"]*\)".*/\1/')"
+    curl -s -o /dev/null -X POST -H "${AUTHZ}" "${BOOKING}/bookings/${REF2}/confirmation"
+    B2="$(psql_q "SELECT id FROM booking.booking WHERE reference = '${REF2}';")"
+
+    # The only plumber nearby declines the automatic offer, so automatic matching runs out.
+    DECLINED=''
+    for _ in $(seq 1 90); do
+      if curl -s -H "${PROVIDER_AUTHZ}" "${GATEWAY}/dispatch/offers" | grep -q "${B2}"; then
+        [ "$(http_code -X POST -H "${PROVIDER_AUTHZ}" "${GATEWAY}/dispatch/offers/${B2}/decline")" = "200" ] && DECLINED=yes
+        break
+      fi
+      sleep 1
+    done
+    if [ -n "${DECLINED}" ]; then pass 'the only nearby provider declined the automatic offer'
+    else fail 'the only nearby provider declined the automatic offer' 'no offer to decline within 90 s'; fi
+
+    S="$(wait_status "${B2}" AWAITING_ASSIGNMENT 60)"
+    if [ "${S}" = "AWAITING_ASSIGNMENT" ]; then pass 'booking fell back to AWAITING_ASSIGNMENT'
+    else fail 'booking fell back to AWAITING_ASSIGNMENT' "status: ${S:-unknown}"; fi
+    CANCELLED_ROWS="$(psql_q "SELECT count(*) FROM outbox.outbox_event WHERE event_type = 'BookingCancelled' AND aggregate_id = '${B2}';")"
+    if [ "${CANCELLED_ROWS}" = "0" ]; then pass 'no BookingCancelled for a booking handed to a Tenant'
+    else fail 'no BookingCancelled for a booking handed to a Tenant' "${CANCELLED_ROWS} row(s)"; fi
+
+    if curl -s -H "${TENANT_AUTHZ}" "${GATEWAY}/tenant/bookings/queue" | grep -q "${B2}"; then
+      pass 'Tenant admin sees the booking in the queue'
+    else fail 'Tenant admin sees the booking in the queue' 'not listed'; fi
+    CODE="$(http_code -H "${AUTHZ}" "${GATEWAY}/tenant/bookings/queue")"
+    if [ "${CODE}" = "403" ]; then pass "a customer cannot read a Tenant queue (HTTP ${CODE})"
+    else fail 'a customer cannot read a Tenant queue' "expected 403, got HTTP ${CODE}"; fi
+
+    P1="$(psql_q "SELECT p.id FROM provider.provider_profile p JOIN auth.user_account u ON u.id = p.id WHERE u.username = '${PROVIDER_USER:-provider}';")"
+    P2="$(psql_q "SELECT p.id FROM provider.provider_profile p JOIN auth.user_account u ON u.id = p.id WHERE u.username = '${PROVIDER2_USER:-provider2}';")"
+    assign() {
+      http_code -X POST -H "${TENANT_AUTHZ}" -H "${JSON}" -d "{\"providerId\":\"$1\"}" \
+        "${GATEWAY}/tenant/bookings/${B2}/assignment"
+    }
+
+    CODE="$(assign "${P2}")"
+    if [ "${CODE}" = "200" ]; then pass 'Tenant admin assigned Provider Two'
+    else fail 'Tenant admin assigned Provider Two' "HTTP ${CODE}"; fi
+    S="$(booking_status "${B2}")"
+    if [ "${S}" = "PROVIDER_ASSIGNED" ]; then pass 'booking is PROVIDER_ASSIGNED'
+    else fail 'booking is PROVIDER_ASSIGNED' "status: ${S}"; fi
+    ASSIGNED_EVT="$(psql_q "SELECT count(*) FROM outbox.outbox_event WHERE event_type = 'ProviderAssigned' AND aggregate_id = '${B2}' AND payload LIKE '%tenantName%';")"
+    if [ "${ASSIGNED_EVT:-0}" -gt 0 ]; then pass 'ProviderAssigned written with the Tenant name'
+    else fail 'ProviderAssigned written with the Tenant name' 'no row'; fi
+    CODE="$(http_code -X POST -H "${PROVIDER_AUTHZ}" "${GATEWAY}/bookings/${B2}/assignment/acceptance")"
+    if [ "${CODE}" = "404" ]; then pass "another provider cannot accept the assignment (HTTP ${CODE})"
+    else fail 'another provider cannot accept the assignment' "expected 404, got HTTP ${CODE}"; fi
+
+    CODE="$(http_code -X POST -H "${PROVIDER2_AUTHZ}" "${GATEWAY}/bookings/${B2}/assignment/rejection")"
+    S="$(booking_status "${B2}")"
+    if [ "${CODE}" = "200" ] && [ "${S}" = "AWAITING_ASSIGNMENT" ]; then pass 'Provider Two declined; back in the queue'
+    else fail 'Provider Two declined; back in the queue' "HTTP ${CODE}, status ${S}"; fi
+
+    CODE="$(assign "${P1}")"
+    if [ "${CODE}" = "200" ]; then pass 'Tenant admin reassigned Provider One'
+    else fail 'Tenant admin reassigned Provider One' "HTTP ${CODE}"; fi
+    CODE="$(http_code -X POST -H "${PROVIDER_AUTHZ}" "${GATEWAY}/bookings/${B2}/assignment/acceptance")"
+    S="$(booking_status "${B2}")"
+    if [ "${CODE}" = "200" ] && [ "${S}" = "PROVIDER_ACCEPTED" ]; then pass 'Provider One accepted the assignment'
+    else fail 'Provider One accepted the assignment' "HTTP ${CODE}, status ${S}"; fi
+    ACCEPTED_EVT="$(psql_q "SELECT count(*) FROM outbox.outbox_event WHERE event_type = 'ProviderAccepted' AND aggregate_id = '${B2}';")"
+    if [ "${ACCEPTED_EVT:-0}" -gt 0 ]; then pass 'ProviderAccepted written (chat and notifications follow)'
+    else fail 'ProviderAccepted written (chat and notifications follow)' 'no row'; fi
+    if [ "$(psql_q "SELECT tenant_id FROM booking.booking WHERE id = '${B2}';")" = "${TENANT_ID}" ]; then
+      pass 'booking records the Tenant that served it'
+    else fail 'booking records the Tenant that served it' 'tenant_id not set'; fi
+    if curl -s -H "${TENANT_AUTHZ}" "${GATEWAY}/tenant/bookings" | grep -q "${B2}"; then
+      pass "the job is in the Tenant's job list"
+    else fail "the job is in the Tenant's job list" 'not listed'; fi
+
+    # Leave the providers free for the next run.
+    curl -s -o /dev/null -X POST -H "${AUTHZ}" -H "${JSON}" -d '{"reason":"verification run"}' \
+      "${BOOKING}/bookings/${REF2}/cancellation"
+  fi
 fi
 
 # ----------------------------------------------------------------- summary --
