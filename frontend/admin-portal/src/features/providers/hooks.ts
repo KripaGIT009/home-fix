@@ -4,7 +4,9 @@ import type { ApiError } from '@api/client';
 import {
   fetchProviders,
   updateProviderStatus,
+  verifyProviderBankAccount,
   type AdminProvider,
+  type ProviderBankAccount,
   type ProviderStatusChange,
 } from './api';
 
@@ -30,6 +32,24 @@ export function useUpdateProviderStatus(): UseMutationResult<
   return useMutation<AdminProvider, ApiError, { id: string; status: ProviderStatusChange }>({
     mutationFn: ({ id, status }) => updateProviderStatus(id, status),
     onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['admin', 'providers'] });
+    },
+  });
+}
+
+/**
+ * Mark a provider's bank account verified. The list is refreshed on failure
+ * too: a 404 means the account changed or went away since it was loaded.
+ */
+export function useVerifyProviderBankAccount(): UseMutationResult<
+  ProviderBankAccount,
+  ApiError,
+  string
+> {
+  const queryClient = useQueryClient();
+  return useMutation<ProviderBankAccount, ApiError, string>({
+    mutationFn: verifyProviderBankAccount,
+    onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: ['admin', 'providers'] });
     },
   });

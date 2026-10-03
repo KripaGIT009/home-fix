@@ -1,4 +1,10 @@
 spring:
+  servlet:
+    multipart:
+      # Verification documents arrive as phone photos or PDFs, three per request; Spring's default
+      # (1 MB per file) refused ordinary phone photos with 413 before the service saw them.
+      max-file-size: 10MB
+      max-request-size: 32MB
   application:
     name: verification-service
   datasource:

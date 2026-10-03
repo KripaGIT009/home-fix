@@ -62,7 +62,8 @@ public class InMemoryProviderProfileRepository implements ProviderProfileReposit
     }
 
     private static ProviderAdminRow row(ProviderProfile p) {
-        return new ProviderAdminRow(p.getId(), p.getDisplayName(), p.getAggregateRating());
+        return new ProviderAdminRow(p.getId(), p.getDisplayName(), p.getAggregateRating(),
+                p.getBankAccountEncrypted(), p.isBankAccountVerified());
     }
 
     @Override

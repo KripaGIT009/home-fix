@@ -140,6 +140,20 @@ class ProviderProfileRepositoryJpaTest {
         assertThat(rows.get(1).displayName()).isEqualTo("Ravi Plumbing");
         assertThat(rows.get(1).aggregateRating()).isEqualByComparingTo("0");
         assertThat(repository.findAdminRows(PageRequest.of(0, 2))).hasSize(2);
+        assertThat(rows.get(1).bankAccountEncrypted()).isNull();
+        assertThat(rows.get(1).bankAccountVerified()).isFalse();
+    }
+
+    @Test
+    void adminRows_carryTheStoredBankAccountColumns() throws InterruptedException {
+        ProviderProfile p = persistNamed("Ravi Plumbing", "plumbing");
+        p.setBankAccount("v1:stored-ciphertext", true);
+        repository.saveAndFlush(p);
+
+        ProviderAdminRow row = repository.findAdminRowsByIds(List.of(p.getId())).get(0);
+
+        assertThat(row.bankAccountEncrypted()).isEqualTo("v1:stored-ciphertext");
+        assertThat(row.bankAccountVerified()).isTrue();
     }
 
     @Test

@@ -19,7 +19,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.homefix.provider.api.dto.ActiveJobResponse;
 import com.homefix.provider.api.dto.AvailabilityRequest;
+import com.homefix.provider.api.dto.BankAccountRequest;
 import com.homefix.provider.api.dto.BankAccountResponse;
+import com.homefix.provider.bank.BankAccountView;
 import com.homefix.provider.api.dto.EarningsSummaryResponse;
 import com.homefix.provider.api.dto.EarningResponse;
 import com.homefix.provider.api.dto.EmergencyAvailabilityRequest;
@@ -32,6 +34,7 @@ import com.homefix.provider.api.dto.SettlementResponse;
 import com.homefix.provider.domain.ProviderProfile;
 import com.homefix.provider.domain.Settlement;
 import com.homefix.provider.service.AvailabilityCommand;
+import com.homefix.provider.service.BankAccountCommand;
 import com.homefix.provider.service.ProfileUpdateCommand;
 import com.homefix.provider.booking.BookingClientPort;
 import com.homefix.provider.booking.CatalogSubcategoryNames;
@@ -223,13 +226,26 @@ public class ProviderController {
         UUID id = resolveProviderId(rawId);
         callerIdentity.requireSelfOrStaff(id);
         ProviderProfile profile = providerService.settlementInfo(id);
-        List<BankAccountResponse> accounts = profile.getBankAccountEncrypted() == null
-                ? List.of()
-                : List.of(new BankAccountResponse(profile.getId().toString(),
-                        maskAccount(profile.getBankAccountEncrypted()),
-                        profile.isBankAccountVerified()));
+        List<BankAccountResponse> accounts = providerService.bankAccountOf(profile)
+                .map(view -> List.of(BankAccountResponse.from(profile.getId(), view)))
+                .orElse(List.of());
         return ResponseEntity.ok(new SettlementInfoResponse(
                 profile.getWalletBalance(), props.getCurrency(), accounts));
+    }
+
+    /**
+     * {@code PUT /providers/{id}/bank-account} — add or replace the settlement bank account
+     * (Requirements 4.9, 14.2). Stored encrypted; answered masked. With the default manual
+     * verification the account is pending until an administrator verifies it.
+     */
+    @PutMapping("/bank-account")
+    public ResponseEntity<BankAccountResponse> setBankAccount(@PathVariable("id") String rawId,
+                                                              @RequestBody BankAccountRequest request) {
+        UUID id = resolveProviderId(rawId);
+        callerIdentity.requireSelfOrStaff(id);
+        BankAccountView view = providerService.setBankAccount(id, new BankAccountCommand(
+                request.accountHolderName(), request.accountNumber(), request.ifsc()));
+        return ResponseEntity.ok(BankAccountResponse.from(id, view));
     }
 
     /** {@code GET /providers/{id}/settlements} — settlement request history (Req 14.3). */
@@ -240,17 +256,6 @@ public class ProviderController {
         return ResponseEntity.ok(providerService.settlementHistory(id).stream()
                 .map(SettlementResponse::from)
                 .toList());
-    }
-
-    /**
-     * Renders a stored (encrypted) account reference as a masked tail.
-     *
-     * <p>The stored value is ciphertext, so there is no account number to mask here — the last
-     * four characters stand in as a stable discriminator between accounts without decrypting.
-     */
-    private static String maskAccount(String encrypted) {
-        String tail = encrypted.length() <= 4 ? encrypted : encrypted.substring(encrypted.length() - 4);
-        return "****" + tail;
     }
 
     /** {@code GET /providers/{id}/profile} — read the current profile. */

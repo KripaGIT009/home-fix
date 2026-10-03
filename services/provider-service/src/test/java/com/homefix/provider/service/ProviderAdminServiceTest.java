@@ -16,6 +16,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 
+import com.homefix.provider.bank.BankAccountCodec;
+import com.homefix.provider.bank.BankAccountDetails;
+import com.homefix.provider.bank.BankAccountView;
+import com.homefix.provider.crypto.LocalAesKmsAdapter;
 import com.homefix.provider.domain.ProviderProfile;
 import com.homefix.provider.service.ProviderAdminService.AdminProviderView;
 import com.homefix.provider.service.ProviderAdminService.ProviderSummaryView;
@@ -34,13 +38,15 @@ class ProviderAdminServiceTest {
 
     private InMemoryProviderProfileRepository repository;
     private FakeVerification verification;
+    private BankAccountCodec codec;
     private ProviderAdminService service;
 
     @BeforeEach
     void setUp() {
         repository = new InMemoryProviderProfileRepository();
         verification = new FakeVerification();
-        service = new ProviderAdminService(repository, verification);
+        codec = new BankAccountCodec(new LocalAesKmsAdapter("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="));
+        service = new ProviderAdminService(repository, verification, codec);
     }
 
     private ProviderProfile persist(String name, String... tags) {
@@ -204,6 +210,68 @@ class ProviderAdminServiceTest {
     }
 
     /** Scripted Verification Service: records calls, answers from {@link #statuses}. */
+    // ------------------------------------------------------------------ bank account
+
+    private void storeAccount(ProviderProfile p, boolean verified) {
+        p.setBankAccount(codec.seal(new BankAccountDetails("Ravi Kumar", "50100123456789", "HDFC0001234")),
+                verified);
+        repository.save(p);
+    }
+
+    @Test
+    void list_showsTheBankAccountMaskedOrNullWhenNone() {
+        ProviderProfile without = persist("Asha Electricals", "electrical");
+        ProviderProfile with = persist("Ravi Plumbing", "plumbing");
+        storeAccount(with, false);
+
+        List<AdminProviderView> list = service.list(null);
+
+        AdminProviderView ravi = list.stream().filter(v -> v.row().id().equals(with.getId())).findFirst().orElseThrow();
+        AdminProviderView asha = list.stream().filter(v -> v.row().id().equals(without.getId())).findFirst().orElseThrow();
+        assertThat(ravi.bankAccount().masked()).isEqualTo("HDFC ••••6789");
+        assertThat(ravi.bankAccount().verified()).isFalse();
+        assertThat(asha.bankAccount()).isNull();
+    }
+
+    @Test
+    void verifyBankAccount_marksTheStoredAccountVerifiedWithoutChangingIt() {
+        ProviderProfile p = persist("Ravi Plumbing", "plumbing");
+        storeAccount(p, false);
+        String stored = repository.findById(p.getId()).orElseThrow().getBankAccountEncrypted();
+
+        BankAccountView view = service.verifyBankAccount(p.getId(), admin);
+
+        ProviderProfile after = repository.findById(p.getId()).orElseThrow();
+        assertThat(after.isBankAccountVerified()).isTrue();
+        assertThat(after.getBankAccountEncrypted()).isEqualTo(stored);
+        assertThat(view.verified()).isTrue();
+        assertThat(view.masked()).isEqualTo("HDFC ••••6789");
+        assertThat(view.holderName()).isEqualTo("Ravi Kumar");
+        // Idempotent.
+        assertThat(service.verifyBankAccount(p.getId(), admin).verified()).isTrue();
+    }
+
+    @Test
+    void verifyBankAccount_withNoAccountOnFile_is404BankAccountNotFound() {
+        ProviderProfile p = persist("Ravi Plumbing", "plumbing");
+
+        assertThatThrownBy(() -> service.verifyBankAccount(p.getId(), admin))
+                .isInstanceOfSatisfying(ProviderException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.NOT_FOUND);
+                    assertThat(e.getErrorCode()).isEqualTo("BANK_ACCOUNT_NOT_FOUND");
+                });
+        assertThat(repository.findById(p.getId()).orElseThrow().isBankAccountVerified()).isFalse();
+    }
+
+    @Test
+    void verifyBankAccount_forAnUnknownProvider_is404ProviderNotFound() {
+        assertThatThrownBy(() -> service.verifyBankAccount(UUID.randomUUID(), admin))
+                .isInstanceOfSatisfying(ProviderException.class, e -> {
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.NOT_FOUND);
+                    assertThat(e.getErrorCode()).isEqualTo("PROVIDER_NOT_FOUND");
+                });
+    }
+
     private static final class FakeVerification implements VerificationAdminClientPort {
 
         final Map<UUID, String> statuses = new HashMap<>();

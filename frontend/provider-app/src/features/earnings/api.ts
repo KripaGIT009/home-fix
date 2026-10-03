@@ -103,12 +103,35 @@ export async function fetchEarningsHistory(
   };
 }
 
-/** A verified bank account a settlement can be paid into (Requirement 14.2). */
+/**
+ * The provider's bank account on file (Requirement 14.2); only a verified one
+ * can receive settlements.
+ */
 export interface BankAccount {
   id: string;
-  /** Masked account label, e.g. "HDFC ••••1234". */
+  /** Masked account text, e.g. "HDFC ••••1234". */
   label: string;
   verified: boolean;
+  /** Account holder's name; absent from older Provider Service builds. */
+  holderName: string | null;
+}
+
+/** BankAccountResponse as the Provider Service sends it. */
+export interface BankAccountResponse {
+  id: string;
+  masked: string;
+  verified: boolean;
+  holderName?: string | null;
+}
+
+/** Adapt a BankAccountResponse; the service calls the masked text `masked`. */
+export function toBankAccount(account: BankAccountResponse): BankAccount {
+  return {
+    id: account.id,
+    label: account.masked || 'Bank account',
+    verified: account.verified,
+    holderName: account.holderName ?? null,
+  };
 }
 
 /** Wallet + bank-account context needed to request a settlement (Req 14.2). */
@@ -123,19 +146,9 @@ export interface SettlementInfo {
 /** GET /providers/me/settlement-info — balance + bank accounts (Requirement 14.2). */
 export async function fetchSettlementInfo(): Promise<SettlementInfo> {
   const { data } = await apiClient.get<
-    Omit<SettlementInfo, 'bankAccounts'> & {
-      bankAccounts: Array<{ id: string; masked?: string; label?: string; verified: boolean }>;
-    }
+    Omit<SettlementInfo, 'bankAccounts'> & { bankAccounts: BankAccountResponse[] | null }
   >('/providers/me/settlement-info');
-  return {
-    ...data,
-    // The Provider Service calls the masked account text `masked`.
-    bankAccounts: (data.bankAccounts ?? []).map((a) => ({
-      id: a.id,
-      label: a.label ?? a.masked ?? 'Bank account',
-      verified: a.verified,
-    })),
-  };
+  return { ...data, bankAccounts: (data.bankAccounts ?? []).map(toBankAccount) };
 }
 
 /** Settlement request lifecycle states (Requirement 14.3). */

@@ -1,9 +1,11 @@
 import { useMemo } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { Link as RouterLink } from 'react-router-dom';
 import { Alert, Button, MenuItem, Stack, TextField } from '@mui/material';
 import { isApiError } from '@api/client';
 import { formatCurrency } from '@lib/format';
+import { BANK_ACCOUNT_ANCHOR } from '@features/profile/constants';
 import { useRequestSettlement } from './hooks';
 import { buildSettlementSchema, type SettlementFormValues } from './schemas';
 import type { SettlementInfo } from './api';
@@ -56,9 +58,25 @@ export function SettlementForm({ info }: SettlementFormProps) {
   };
 
   if (!hasVerifiedAccount) {
+    // The account lives on the profile; link straight to its card.
+    const pending = info.bankAccounts[0];
     return (
-      <Alert severity="warning">
-        Add and verify a bank account in your profile before requesting a settlement.
+      <Alert
+        severity="warning"
+        action={
+          <Button
+            component={RouterLink}
+            to={`/profile#${BANK_ACCOUNT_ANCHOR}`}
+            color="inherit"
+            size="small"
+          >
+            {pending ? 'View' : 'Add account'}
+          </Button>
+        }
+      >
+        {pending
+          ? `Your bank account ${pending.label} is waiting for verification. You can request a settlement once HomeFix has verified it.`
+          : 'Add a bank account in your profile before requesting a settlement. HomeFix verifies it before the first payout.'}
       </Alert>
     );
   }

@@ -6,6 +6,8 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.Optional;
 import java.util.UUID;
 
 import org.slf4j.Logger;
@@ -17,6 +19,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.homefix.provider.alert.AdminAlertPort;
+import com.homefix.provider.bank.BankAccountCodec;
+import com.homefix.provider.bank.BankAccountDetails;
+import com.homefix.provider.bank.BankAccountVerificationPort;
+import com.homefix.provider.bank.BankAccountView;
 import com.homefix.provider.catalog.CatalogClientPort;
 import com.homefix.provider.config.ProviderProperties;
 import com.homefix.provider.crypto.KmsEncryptionPort;
@@ -37,7 +43,8 @@ import com.homefix.provider.service.ProfileUpdateCommand.CategorySelectionComman
  * rating-based Admin-review flagging (Requirements 4 and 14).
  *
  * <p>External dependencies are expressed as ports ({@link CatalogClientPort},
- * {@link KmsEncryptionPort}, {@link AdminAlertPort}) so the logic is fully unit-testable.
+ * {@link KmsEncryptionPort}, {@link AdminAlertPort}, {@link BankAccountVerificationPort}) so the
+ * logic is fully unit-testable.
  */
 @Service
 public class ProviderService {
@@ -51,6 +58,8 @@ public class ProviderService {
     private final KmsEncryptionPort kms;
     private final AdminAlertPort adminAlert;
     private final ProviderProperties props;
+    private final BankAccountCodec bankAccountCodec;
+    private final BankAccountVerificationPort bankAccountVerification;
 
     public ProviderService(ProviderProfileRepository profileRepository,
                            ProviderEarningRepository earningRepository,
@@ -58,7 +67,9 @@ public class ProviderService {
                            CatalogClientPort catalogClient,
                            KmsEncryptionPort kms,
                            AdminAlertPort adminAlert,
-                           ProviderProperties props) {
+                           ProviderProperties props,
+                           BankAccountCodec bankAccountCodec,
+                           BankAccountVerificationPort bankAccountVerification) {
         this.profileRepository = profileRepository;
         this.earningRepository = earningRepository;
         this.settlementRepository = settlementRepository;
@@ -66,6 +77,8 @@ public class ProviderService {
         this.kms = kms;
         this.adminAlert = adminAlert;
         this.props = props;
+        this.bankAccountCodec = bankAccountCodec;
+        this.bankAccountVerification = bankAccountVerification;
     }
 
     // ================= Profile (Requirement 4.1–4.3, 4.8) =================
@@ -313,9 +326,12 @@ public class ProviderService {
                     "A verified bank account is required before requesting a settlement");
         }
 
-        // Requirement 4.9: bank account reference stored encrypted at rest.
-        String encryptedRef = kms.encrypt(
-                cmd.bankAccountRef() != null ? cmd.bankAccountRef() : profile.getBankAccountEncrypted());
+        // Requirement 4.9: the destination is stored encrypted at rest. The account on file is
+        // already ciphertext and is copied as is: encrypting it again would leave the settlement
+        // holding a value that decrypts to ciphertext rather than to the account.
+        String encryptedRef = usesStoredAccount(profile, cmd.bankAccountRef())
+                ? profile.getBankAccountEncrypted()
+                : kms.encrypt(cmd.bankAccountRef());
         Settlement settlement = Settlement.request(providerId, amount, encryptedRef);
         settlementRepository.save(settlement);
 
@@ -326,14 +342,74 @@ public class ProviderService {
     }
 
     /**
-     * Stores a provider's settlement bank account, encrypted at rest, and records whether it
-     * is verified (Requirement 4.9).
+     * {@code true} when the settlement goes to the account on file: no reference supplied, or the
+     * account's own id ({@code BankAccountResponse.id}, the profile id), which is what the provider
+     * app sends when the provider picks their account. Any other reference is a raw destination to
+     * encrypt, as before.
+     */
+    private static boolean usesStoredAccount(ProviderProfile profile, String bankAccountRef) {
+        return bankAccountRef == null
+                || bankAccountRef.isBlank()
+                || bankAccountRef.strip().equalsIgnoreCase(profile.getId().toString());
+    }
+
+    /**
+     * Adds or replaces the provider's settlement bank account (Requirements 4.9, 14.2).
+     *
+     * <p>The details are normalised (whitespace stripped from the number, IFSC trimmed and
+     * upper-cased, holder name trimmed) and validated, then stored as one encrypted value replacing
+     * any previous account. Whether the new account is verified at once is decided by the
+     * {@link BankAccountVerificationPort}: with the default manual adapter it is pending until an
+     * administrator verifies it, so replacing a verified account withdraws settlement eligibility
+     * until the new one is verified.
+     *
+     * @throws ProviderException 400 {@code VALIDATION_ERROR} with one detail per invalid field,
+     *                           404 {@code PROVIDER_NOT_FOUND} when the provider has no profile
      */
     @Transactional
-    public ProviderProfile setBankAccount(UUID providerId, String bankAccountRef, boolean verified) {
+    public BankAccountView setBankAccount(UUID providerId, BankAccountCommand cmd) {
+        BankAccountDetails details = validateBankAccount(cmd);
         ProviderProfile profile = getExisting(providerId);
-        profile.setBankAccount(kms.encrypt(bankAccountRef), verified);
-        return profileRepository.save(profile);
+        BankAccountVerificationPort.Outcome outcome = bankAccountVerification.verify(details);
+        profile.setBankAccount(bankAccountCodec.seal(details),
+                outcome == BankAccountVerificationPort.Outcome.VERIFIED);
+        profileRepository.save(profile);
+        log.info("Bank account for provider {} stored ({})", providerId, outcome);
+        return bankAccountCodec.describe(profile.getBankAccountEncrypted(), profile.isBankAccountVerified());
+    }
+
+    /** The displayable form of the provider's bank account, empty when none is on file. */
+    public Optional<BankAccountView> bankAccountOf(ProviderProfile profile) {
+        return Optional.ofNullable(bankAccountCodec.describe(
+                profile.getBankAccountEncrypted(), profile.isBankAccountVerified()));
+    }
+
+    /**
+     * Normalises and validates a submitted bank account, reporting every invalid field at once in
+     * the {@code field: message} form the bean-validation handler uses.
+     */
+    static BankAccountDetails validateBankAccount(BankAccountCommand cmd) {
+        String holder = cmd.accountHolderName() == null ? null : cmd.accountHolderName().strip();
+        String number = cmd.accountNumber() == null ? null : cmd.accountNumber().replaceAll("\\s", "");
+        String ifsc = cmd.ifsc() == null ? null : cmd.ifsc().strip().toUpperCase(Locale.ROOT);
+
+        List<String> errors = new ArrayList<>();
+        if (holder == null || holder.length() < BankAccountDetails.HOLDER_NAME_MIN
+                || holder.length() > BankAccountDetails.HOLDER_NAME_MAX) {
+            errors.add("accountHolderName: must be between " + BankAccountDetails.HOLDER_NAME_MIN
+                    + " and " + BankAccountDetails.HOLDER_NAME_MAX + " characters");
+        }
+        if (number == null || !BankAccountDetails.ACCOUNT_NUMBER.matcher(number).matches()) {
+            errors.add("accountNumber: must be 9 to 18 digits");
+        }
+        if (ifsc == null || !BankAccountDetails.IFSC.matcher(ifsc).matches()) {
+            errors.add("ifsc: must be 11 characters: 4 letters, the digit 0, then 6 letters or digits");
+        }
+        if (!errors.isEmpty()) {
+            throw new ProviderException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR",
+                    "Bank account details are invalid", errors);
+        }
+        return new BankAccountDetails(holder, number, ifsc);
     }
 
     // ================= Rating flag (Requirement 4.7) =================

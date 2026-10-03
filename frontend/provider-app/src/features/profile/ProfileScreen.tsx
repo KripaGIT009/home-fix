@@ -27,10 +27,11 @@ import { formatMobileNumber } from '@features/auth/phone';
 import { useVerificationState } from '@features/verification/hooks';
 import { describeVerificationStatus } from '@features/verification/status';
 import { useAuthStore } from '@stores/authStore';
+import { BankAccountCard } from './BankAccountCard';
 
 /**
- * Provider profile: identity, the live verification badge, and the routes into
- * the other two top-level areas.
+ * Provider profile: identity, the live verification badge, the bank account
+ * settlements are paid into, and the routes into the other top-level areas.
  *
  * Verification status is the fact a provider checks most often — it decides
  * whether they can be dispatched at all (Requirement 5) — so it is shown here
@@ -97,6 +98,8 @@ export function ProfileScreen() {
             </Stack>
           </CardContent>
         </Card>
+
+        <BankAccountCard />
 
         <Card>
           <List disablePadding>

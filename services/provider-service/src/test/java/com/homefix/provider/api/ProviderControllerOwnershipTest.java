@@ -1,5 +1,6 @@
 package com.homefix.provider.api;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -11,11 +12,14 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.AuthorityUtils;
@@ -23,10 +27,13 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import com.homefix.provider.bank.BankAccountView;
 import com.homefix.provider.booking.BookingClientPort;
 import com.homefix.provider.booking.CatalogSubcategoryNames;
 import com.homefix.provider.config.ProviderProperties;
 import com.homefix.provider.domain.ProviderProfile;
+import com.homefix.provider.service.BankAccountCommand;
+import com.homefix.provider.service.ProviderException;
 import com.homefix.provider.service.ProviderService;
 
 /**
@@ -256,5 +263,123 @@ class ProviderControllerOwnershipTest {
 
         mvc.perform(get("/providers/{id}/earnings", providerB))
                 .andExpect(status().isForbidden());
+    }
+
+    // ------------------------------------------------------------------ bank account
+
+    private static final String ACCOUNT_BODY =
+            "{\"accountHolderName\":\"Ravi Kumar\",\"accountNumber\":\"50100123456789\",\"ifsc\":\"HDFC0001234\"}";
+    private static final BankAccountView PENDING_VIEW =
+            new BankAccountView("HDFC ••••6789", false, "Ravi Kumar");
+
+    @Test
+    void providerSettingAnotherProvidersBankAccountIsForbidden() throws Exception {
+        authenticate(providerA, "SERVICE_PROVIDER");
+
+        mvc.perform(put("/providers/{id}/bank-account", providerB)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(ACCOUNT_BODY))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode").value("FORBIDDEN"));
+
+        verify(providerService, never()).setBankAccount(any(), any());
+    }
+
+    @Test
+    void providerSettingTheirOwnBankAccountThroughMeGetsTheMaskedAccount() throws Exception {
+        authenticate(providerA, "SERVICE_PROVIDER");
+        BankAccountCommand expected = new BankAccountCommand("Ravi Kumar", "50100123456789", "HDFC0001234");
+        when(providerService.setBankAccount(providerA, expected)).thenReturn(PENDING_VIEW);
+
+        mvc.perform(put("/providers/me/bank-account")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(ACCOUNT_BODY))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(providerA.toString()))
+                .andExpect(jsonPath("$.masked").value("HDFC ••••6789"))
+                .andExpect(jsonPath("$.verified").value(false))
+                .andExpect(jsonPath("$.holderName").value("Ravi Kumar"))
+                .andExpect(jsonPath("$.accountNumber").doesNotExist());
+
+        verify(providerService).setBankAccount(providerA, expected);
+    }
+
+    @Test
+    void adminMaySetAnyProvidersBankAccount() throws Exception {
+        authenticate(admin, "ADMIN");
+        when(providerService.setBankAccount(eq(providerB), any())).thenReturn(PENDING_VIEW);
+
+        mvc.perform(put("/providers/{id}/bank-account", providerB)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(ACCOUNT_BODY))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(providerB.toString()));
+    }
+
+    @Test
+    void invalidBankAccountIs400WithFieldDetailsInTheSharedEnvelope() throws Exception {
+        authenticate(providerA, "SERVICE_PROVIDER");
+        when(providerService.setBankAccount(eq(providerA), any())).thenThrow(new ProviderException(
+                HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Bank account details are invalid",
+                List.of("accountNumber: must be 9 to 18 digits", "ifsc: invalid")));
+
+        mvc.perform(put("/providers/me/bank-account")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"accountHolderName\":\"Ravi\",\"accountNumber\":\"1\",\"ifsc\":\"x\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.details[0]").value("accountNumber: must be 9 to 18 digits"))
+                .andExpect(jsonPath("$.details[1]").value("ifsc: invalid"));
+    }
+
+    @Test
+    void missingBankAccountBodyIs400() throws Exception {
+        authenticate(providerA, "SERVICE_PROVIDER");
+
+        mvc.perform(put("/providers/me/bank-account").contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("VALIDATION_ERROR"));
+
+        verify(providerService, never()).setBankAccount(any(), any());
+    }
+
+    @Test
+    void settlementInfoListsTheMaskedAccountWithTheHolder() throws Exception {
+        authenticate(providerA, "SERVICE_PROVIDER");
+        ProviderProfile p = profile(providerA);
+        when(providerService.settlementInfo(providerA)).thenReturn(p);
+        when(providerService.bankAccountOf(p)).thenReturn(Optional.of(
+                new BankAccountView("HDFC ••••6789", true, "Ravi Kumar")));
+
+        mvc.perform(get("/providers/me/settlement-info"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.availableBalance").value(0))
+                .andExpect(jsonPath("$.bankAccounts.length()").value(1))
+                .andExpect(jsonPath("$.bankAccounts[0].id").value(providerA.toString()))
+                .andExpect(jsonPath("$.bankAccounts[0].masked").value("HDFC ••••6789"))
+                .andExpect(jsonPath("$.bankAccounts[0].verified").value(true))
+                .andExpect(jsonPath("$.bankAccounts[0].holderName").value("Ravi Kumar"));
+    }
+
+    @Test
+    void settlementInfoWithoutAnAccountListsNone() throws Exception {
+        authenticate(providerA, "SERVICE_PROVIDER");
+        ProviderProfile p = profile(providerA);
+        when(providerService.settlementInfo(providerA)).thenReturn(p);
+        when(providerService.bankAccountOf(p)).thenReturn(Optional.empty());
+
+        mvc.perform(get("/providers/me/settlement-info"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bankAccounts.length()").value(0));
+    }
+
+    @Test
+    void providerReadingAnotherProvidersSettlementInfoIsForbidden() throws Exception {
+        authenticate(providerA, "SERVICE_PROVIDER");
+
+        mvc.perform(get("/providers/{id}/settlement-info", providerB))
+                .andExpect(status().isForbidden());
+
+        verify(providerService, never()).settlementInfo(providerB);
     }
 }

@@ -55,6 +55,11 @@ homefix:
     # MT-3.2): account lookup by mobile number and the TENANT_ADMIN grant / revoke. Presents the
     # internal-api-key above.
     auth-service-url: ${AUTH_SERVICE_URL:http://auth-service:8081}
+    # How a newly added settlement bank account is verified (Requirement 14.2): 'manual' (default)
+    # leaves it pending until an ADMIN / SUPER_ADMIN / FINANCE_ADMIN calls
+    # POST /admin/providers/{id}/bank-account/verification; 'simulator' verifies well-formed
+    # details at once and is for local stacks only — never set it in a deployed environment.
+    bank-verification: ${BANK_ACCOUNT_VERIFICATION:manual}
     # Zone the weekly availability slots are read in by the eligibility search.
     availability-zone: ${PROVIDER_AVAILABILITY_ZONE:Asia/Kolkata}
     max-active-categories: 5
