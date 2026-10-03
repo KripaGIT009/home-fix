@@ -1,4 +1,4 @@
-4444444444444444# HomeFix — Architecture and Diagrams
+# HomeFix — Architecture and Diagrams
 
 **Audience:** engineers joining the platform, and anyone reviewing its design.
 **Companion documents:** [API_CONTRACTS.md](API_CONTRACTS.md) for JSON payloads, [LOCAL_ACCESS.md](LOCAL_ACCESS.md) for test users and URLs, [../CODEBASE_REVIEW.md](../CODEBASE_REVIEW.md) for the findings audit.
@@ -56,7 +56,7 @@ graph TB
     SVC --> KYC
 ```
 
-Every external integration except Google and Apple OIDC is currently a logging or in-memory stub. See review section 10, item 2.
+Every external integration except Google and Apple OIDC is currently a logging or in-memory stub. See review section 10, item 2. Locally, payments are settled by a payment simulator that only Compose enables (section 5.5).
 
 ---
 
@@ -110,9 +110,9 @@ graph TB
     end
 
     subgraph Data
-        PG[("PostgreSQL 16<br/>16 service schemas<br/>+ shared outbox")]
-        RD[("Redis 7")]
-        KF[["Kafka 3.7"]]
+        PG[("PostgreSQL<br/>17 service schemas<br/>+ shared outbox")]
+        RD[("Redis")]
+        KF[["Kafka"]]
     end
 
     CA --> GW
@@ -128,20 +128,29 @@ graph TB
 
     BOOK -->|sync| PRICE
     BOOK -->|sync| CAT
-    DISP -->|sync| PROV
-    DISP -->|sync| NOTIF
-    DISP -->|"sync, internal API"| BOOK
-    CUST -->|sync| BOOK
+    BOOK -->|"internal: address"| CUST
+    BOOK -->|"internal: Tenants"| PROV
+    DISP -->|"internal: eligible providers"| PROV
+    DISP -->|"internal: address"| CUST
+    DISP -->|"sync: skill tags"| CAT
+    DISP -.->|"endpoints missing"| NOTIF
+    DISP -->|"internal: transitions"| BOOK
+    PAYS -->|"internal: payment facts"| BOOK
+    PAYS -->|"internal: earnings"| PROV
+    PROV -->|"internal: approved"| VER
+    PROV -->|"internal: TENANT_ADMIN"| AUTH
+    NOTIF -->|"internal: contacts"| AUTH
+    CUST -->|internal| BOOK
     INV -->|sync| NOTIF
 
-    AUTH & CUST & PROV & VER & BOOK & CAT & PAYS & INV & PROMO & NOTIF & CHAT & CMPL & RATE & ADM & LOC --> PG
+    AUTH & CUST & PROV & VER & BOOK & CAT & PRICE & DISP & PAYS & INV & PROMO & NOTIF & CHAT & CMPL & RATE & ADM & LOC --> PG
     AUTH & GW & CAT & PRICE & DISP & LOC & PAYS --> RD
     OUT --> PG
     OUT --> KF
-    KF --> DISP & NOTIF & INV & CHAT & RATE & LOC
+    KF --> BOOK & DISP & NOTIF & INV & CHAT & RATE & LOC
 ```
 
-The dispatch-to-booking arrow is the internal transition API. It is the one call in this diagram that carries no end-user token: the Dispatch Engine acts on its own behalf, so it authenticates with a shared service credential instead. Those endpoints did not exist until recently, which is why no booking ever reached PROVIDER_ACCEPTED. See review section 12.1.
+Arrows labelled `internal` go to `/internal/**` endpoints. They carry no end-user token: the caller acts on its own behalf and presents the shared service credential (`X-Internal-Api-Key`) instead. Dispatch's calls to notification-service (`/internal/notifications/**`) still answer 4xx because notification-service has no such endpoints; they are best effort, and providers see offers by polling dispatch instead.
 
 Note that the SPAs talk to auth-service directly for the registration and refresh endpoints, bypassing the gateway. The nginx and Vite configs proxy `/api/auth` to port 8081 and everything else under `/api` to the gateway.
 
@@ -189,7 +198,7 @@ sequenceDiagram
 
 The gateway's introspection call has a response timeout (3 s by default) and resolves auth-service through the JDK resolver so a recreated container is followed (review 14.1). Active results are reused for at most `homefix.gateway.auth.introspection-cache.ttl` (30 s by default) and never past the token's `exp`, keyed by a SHA-256 of the token and bounded to 10,000 entries; inactive results and failed calls are never cached, so an auth-service outage still denies. Concurrent requests carrying the same uncached token share one call. The cost is revocation latency: if access tokens ever become revocable before `exp`, the gateway honours a revocation within the ttl. Today logout revokes only the refresh token, so nothing is lost. Set the ttl to `0` to introspect every request.
 
-The role filter used to be the larger problem. It passes through when no rule matches, and until recently no service except admin and reporting configured any rule, so every staff endpoint accepted any valid token. Thirteen services now register rules. Public paths are still deliberately left unruled, because this filter runs inside the security chain and a rule on a public path would turn it into a 401. Rules are matched against the decoded path within the application, without the servlet context path, with one trailing slash removed and case ignored, rather than against the raw request URI. A `GET` rule also governs `HEAD`. Anything Spring Security's `StrictHttpFirewall` refuses, such as `;` path parameters, encoded `/`, `\`, `.` or `%`, `//`, `/./` or `/../`, is answered with 400 before any rule is evaluated. Before this change, `/admin;x/users`, `/%61dmin/users` and `HEAD /admin/users` each reached the admin handler without a role check. See review sections 8.2 and 12.1.
+The role filter used to be the larger problem. It passes through when no rule matches, and until recently no service except admin and reporting configured any rule, so every staff endpoint accepted any valid token. Every service behind the gateway except the outbox relay (18 of them) now registers rules, including one for every Admin Portal and Tenant Portal path. Public paths are still deliberately left unruled, because this filter runs inside the security chain and a rule on a public path would turn it into a 401. Rules are matched against the decoded path within the application, without the servlet context path, with one trailing slash removed and case ignored, rather than against the raw request URI. A `GET` rule also governs `HEAD`. Anything Spring Security's `StrictHttpFirewall` refuses, such as `;` path parameters, encoded `/`, `\`, `.` or `%`, `//`, `/./` or `/../`, is answered with 400 before any rule is evaluated. Before this change, `/admin;x/users`, `/%61dmin/users` and `HEAD /admin/users` each reached the admin handler without a role check. See review sections 8.2 and 12.1.
 
 ---
 
@@ -218,10 +227,16 @@ flowchart TD
     SEARCH --> OFFER{"Provider accepts<br/>within window?"}
     OFFER -->|"no, all exhausted"| EXPAND["Expand radius"]
     EXPAND --> OFFER
-    OFFER -->|"no candidates left"| FAILED["SEARCHING_FAILED"]
+    OFFER -->|"no candidates left"| TENANT{"A Tenant covers<br/>area + category?"}
+    TENANT -->|no| FAILED["SEARCHING_FAILED"]
+    TENANT -->|yes| QUEUE["AWAITING_ASSIGNMENT<br/>Tenant admin assigns"]
+    QUEUE -->|"deadline, 60 min"| FAILED
+    QUEUE --> ASSIGNED{"Assigned provider<br/>accepts?"}
+    ASSIGNED -->|declines| QUEUE
+    ASSIGNED -->|yes| ACCEPTED
     OFFER -->|yes| ACCEPTED["PROVIDER_ACCEPTED"]
 
-    ACCEPTED --> TRACK["Live tracking + chat"]
+    ACCEPTED --> TRACK["On the way: live tracking"]
     TRACK --> ARRIVE["Provider arrives<br/>before photos"]
     ARRIVE --> WORK["Job in progress"]
     WORK --> PARTS{"Extra parts needed?"}
@@ -229,7 +244,7 @@ flowchart TD
     PARTS -->|no| DONE
     QUOTE --> DONE["After photos, complete"]
 
-    DONE --> PAY["Payment"]
+    DONE --> PAY["Customer pays<br/>(this is the confirmation)"]
     PAY --> INVOICE["Invoice PDF issued"]
     INVOICE --> REVIEW["Review prompt, 7 days"]
     REVIEW --> HAPPY{"Satisfied?"}
@@ -283,7 +298,7 @@ sequenceDiagram
     APP->>APP: access token in memory,<br/>refresh token in localStorage
 ```
 
-On a wrong code the attempt counter increments and the session locks for 30 minutes at 5 attempts. Note that `role` is taken from the request body and accepts `ADMIN`; see review section 8.2, finding 1.
+On a wrong code the attempt counter increments and the session locks for 30 minutes at 5 attempts. `role` comes from the request body but only `CUSTOMER` and `SERVICE_PROVIDER` are accepted (anything else is 400 `INVALID_ROLE`); staff and `TENANT_ADMIN` roles are granted out of band. A `SUSPENDED` or `DEACTIVATED` account (`user_account.status`) cannot sign in or refresh, and introspection reports its tokens inactive.
 
 ### 5.2 Token refresh with replay detection
 
@@ -307,7 +322,7 @@ sequenceDiagram
     end
 ```
 
-The read, check and write are three separate Redis calls, so two concurrent refreshes can both succeed. See review section 8.2.
+The check and the mark are one Lua script (`RedisRefreshTokenStore.consume`), so two concurrent refreshes of one token cannot both succeed. Tokens are stored hashed, and logout revokes the whole family. See review sections 8.2 and 16.6.
 
 ### 5.3 Booking creation through to provider acceptance
 
@@ -323,24 +338,24 @@ sequenceDiagram
     participant OUT as outbox-processor
     participant KF as Kafka
     participant DISP as dispatch-engine
+    participant CUST as customer-service
     participant PROV as provider-service
-    participant NOTIF as notification-service
+    participant RD as Redis
     participant PAPP as provider-app
 
-    APP->>GW: POST /bookings
+    APP->>GW: POST /bookings {addressId, subcategoryId, couponCode?}
     GW->>BOOK: routed
     BOOK->>CAT: GET catalog, validate subcategory
-    CAT-->>BOOK: category tree
-    BOOK->>PRICE: POST /pricing/estimate
-    PRICE-->>BOOK: itemised breakdown
+    BOOK->>PRICE: POST /pricing/estimate (coupon quoted by promotion-service)
+    BOOK->>PG: INSERT booking (CREATED) + booking_audit
+    BOOK-->>APP: 201 {bookingId, reference, status, priceBreakdown}
 
+    APP->>BOOK: POST /bookings/{ref}/confirmation<br/>(emergency: same request as create)
     rect rgb(240, 248, 240)
     note over BOOK,PG: One transaction
-    BOOK->>PG: INSERT booking (CREATED, then driven to<br/>SEARCHING_PROVIDER: confirm call, or<br/>same request when emergency)
-    BOOK->>PG: INSERT booking_audit
+    BOOK->>PG: UPDATE booking → SEARCHING_PROVIDER, INSERT booking_audit
     BOOK->>PG: INSERT outbox.outbox_event (BookingCreated)
     end
-    BOOK-->>APP: 201 {bookingId, reference, status, priceBreakdown}
 
     loop every 1 s, batch 100
         OUT->>PG: claim due rows: FOR UPDATE SKIP LOCKED,<br/>next_attempt_at = now + lease, commit
@@ -349,29 +364,34 @@ sequenceDiagram
     end
 
     KF->>DISP: BookingCreated
-    note right of DISP: ⚠ producer omits customerLat/Lon<br/>and skill tags, so the consumer<br/>refuses the event rather than<br/>matching at (0,0). Enrichment pending.
-    DISP->>PG: record processed_event
-    DISP->>PROV: GET candidates in radius
-    PROV-->>DISP: ranked provider list
+    DISP->>CUST: GET /internal/addresses/{addressId} (coordinates)
+    DISP->>CAT: skill tags of the subcategory
+    DISP->>PROV: GET /internal/providers/eligible<br/>(APPROVED, skill tag, radius, available)
+    PROV-->>DISP: scored candidates
 
-    loop each candidate, sequential
-        DISP->>DISP: acquire Redis lock per provider
-        DISP->>NOTIF: offer job, long poll
-        NOTIF->>PAPP: push offer
-        alt accepted
-            PAPP-->>NOTIF: accept
-            NOTIF-->>DISP: accepted
-        else declined or timeout
-            NOTIF-->>DISP: next candidate
+    loop each candidate, best score first
+        DISP->>RD: SET NX PX lock:provider
+        alt lock held by another booking's offer (provider busy)
+            note over DISP: skip for now but keep in the pool:<br/>retried after the free candidates, for up to one offer window
+        else lock acquired
+            DISP->>RD: store offer (window 60 s)
+            PAPP->>DISP: GET /dispatch/offers via gateway (polled every 5 s)
+            alt accept
+                PAPP->>DISP: POST /dispatch/offers/{bookingId}/accept<br/>(compare-and-set in Redis)
+            else decline or window expires
+                DISP->>PG: outbox ProviderRejected, drop provider, next
+            end
         end
     end
 
     DISP->>BOOK: POST /internal/bookings/{id}/provider-accepted
-    note right of BOOK: service credential, no user token.<br/>Walks SEARCHING_PROVIDER →<br/>PROVIDER_ASSIGNED → PROVIDER_ACCEPTED<br/>and records the provider.
+    note right of BOOK: service credential, no user token.<br/>Sets provider_id (and tenant_id if the provider<br/>belongs to a Tenant), walks SEARCHING_PROVIDER →<br/>PROVIDER_ASSIGNED (audited, no event) →<br/>PROVIDER_ACCEPTED in one transaction.
     DISP->>PG: INSERT outbox_event (ProviderAccepted)
 ```
 
-This was the platform's core flow and it had four separate breaks. Three are fixed: the relay now drains the schema producers actually write to, the internal endpoints exist, and the transition sequence is legal. The fourth remains: the event carries no customer coordinates or skill tags, so the Dispatch Engine refuses it rather than matching against a meaningless location. A booking therefore reaches SEARCHING_PROVIDER and stops. See review sections 12.1 and 12.2.
+If no candidate accepts within the configured radius cycles, dispatch calls `POST /internal/bookings/{id}/searching-failed`, and booking-service either routes the booking to the covering Tenants (`AWAITING_ASSIGNMENT`, section 5.8) or fails it (`SEARCHING_FAILED`, announced as `BookingCancelled`). Dispatch sends its own "no provider" notices only in the second case.
+
+Offers live only in Redis: the provider app reads and answers them through the gateway (`/dispatch/offers/**`, SERVICE_PROVIDER only, matched to the JWT subject), and a late or double answer is refused by the compare-and-set. A `BookingCancelled` stops an in-flight search and withdraws the pending offer. Two gaps remain: a dispatch failure after `BookingCreated` is acknowledged (outage, restart mid-search) leaves the booking in `SEARCHING_PROVIDER` with no sweeper, and the `provider-accepted` call and the `ProviderAccepted` row are a dual write. See review sections 16.1, 17.1 and 17.5.
 
 ### 5.4 Job execution milestones
 
@@ -382,40 +402,43 @@ sequenceDiagram
     participant BOOK as booking-service
     participant LOC as location-service
     participant CAPP as customer-app
-    participant OUT as outbox-processor
-    participant KF as Kafka
+    participant KF as Kafka (via outbox)
     participant NOTIF as notification-service
 
-    PAPP->>BOOK: POST /bookings/{ref}/on-the-way
-    BOOK->>KF: ProviderArriving (via outbox)
+    note over PAPP,BOOK: Every /bookings/{key} command takes the id or the reference.<br/>Milestones: the assigned provider (or staff) only, anyone else gets 404.
+    PAPP->>BOOK: POST /bookings/{key}/on-the-way
+    BOOK->>KF: ProviderArriving
     KF->>NOTIF: notify customer
 
-    loop every 5 s while travelling
-        PAPP->>LOC: POST /locations/{bookingId}<br/>{latitude, longitude}
-        LOC->>LOC: rate limit 1 per 5 s
+    loop while PROVIDER_ON_THE_WAY, on each position fix
+        PAPP->>LOC: POST /locations/{bookingId} {latitude, longitude}
+        note right of LOC: SERVICE_PROVIDER only, recorded under<br/>the token's subject, max 1 per 5 s
         LOC->>LOC: cache in Redis, append location_history
-        LOC-->>CAPP: SSE push {lat, lon, etaMinutes}
+        CAPP->>LOC: GET /locations/{bookingId} (polled,<br/>SSE cannot carry the bearer header)
+        LOC-->>CAPP: latest position, app estimates ETA
     end
 
-    PAPP->>BOOK: POST /bookings/{ref}/arrived
+    PAPP->>BOOK: POST /bookings/{key}/arrived
     BOOK->>KF: ProviderArrived
-    PAPP->>BOOK: POST /bookings/{ref}/photos (before)
-    PAPP->>BOOK: POST /bookings/{ref}/start
+    PAPP->>BOOK: POST /bookings/{key}/photos (multipart, type=BEFORE_PHOTO)
+    PAPP->>BOOK: POST /bookings/{key}/start
+    note right of BOOK: 422 without a before-photo
     BOOK->>KF: JobStarted
     KF-->>LOC: JobStarted terminates the feed
-    note right of LOC: listens on JobStarted,<br/>configurable — was a hard-coded<br/>name no producer wrote to
 
     opt extra parts discovered
-        PAPP->>BOOK: POST /bookings/{ref}/parts
-        BOOK-->>CAPP: quote awaiting approval
-        CAPP->>BOOK: POST /bookings/{ref}/quote/approval
+        PAPP->>BOOK: POST /bookings/{key}/parts
+        CAPP->>BOOK: POST /bookings/{key}/quote/approval or /quote/rejection<br/>(the booking's customer only)
         note over BOOK: 60-min auto-resolve exists<br/>⚠ but has no scheduler
     end
 
-    PAPP->>BOOK: POST /bookings/{ref}/photos (after)
-    PAPP->>BOOK: POST /bookings/{ref}/complete
+    PAPP->>BOOK: POST /bookings/{key}/photos (type=AFTER_PHOTO)
+    PAPP->>BOOK: POST /bookings/{key}/complete
+    note right of BOOK: 422 without an after-photo,<br/>stores net duration
     BOOK->>KF: JobCompleted
 ```
+
+Ownership is enforced in one place (`service/BookingAccess`): the assigned provider for milestones, photos, pause and parts; the customer for confirmation and quote decisions; either to cancel; staff for all. The job detail (`GET /bookings/{key}`) carries the service address and coordinates, the photos, the parts and the net duration. Location reads are still not ownership-checked: any signed-in customer or provider with a booking id can read its provider's position (review 17.5).
 
 ### 5.5 Payment, invoice and review prompt
 
@@ -424,39 +447,46 @@ sequenceDiagram
     autonumber
     participant APP as customer-app
     participant PAY as payment-service
-    participant RD as Redis
-    participant GWY as Payment gateway
+    participant BOOK as booking-service
+    participant GWY as Payment gateway<br/>(simulator locally)
     participant PG as Postgres
-    participant KF as Kafka
+    participant KF as Kafka (via outbox)
+    participant PROV as provider-service
     participant INV as invoice-service
     participant RATE as rating-review-service
     participant CHAT as chat-service
     participant NOTIF as notification-service
 
-    APP->>PAY: POST /payments<br/>Idempotency-Key: k1
-    PAY->>PG: SELECT by idempotency_key
-    PAY->>RD: SET NX payment:k1
-    PAY->>GWY: charge
-    note over PAY,GWY: ⚠ charge happens inside the same<br/>transaction as the insert, so two<br/>concurrent first requests can double-charge
-    GWY-->>PAY: success, gatewayRef
-    PAY->>PG: INSERT payment_transaction (SUCCESS)<br/>+ outbox_event (PaymentCompleted)
-    PAY-->>APP: 201 {transactionId, status: SUCCESS}
+    APP->>PAY: POST /payments {bookingId, method}
+    PAY->>BOOK: GET /internal/bookings/{id}/payment-facts
+    BOOK-->>PAY: customer, provider, amount, status
+    note right of PAY: caller must be the booking's customer (or staff), else 404.<br/>Live attempt for (customer, booking)? return it.<br/>Status not JOB_COMPLETED / CUSTOMER_CONFIRMED /<br/>PAYMENT_PENDING → 409 BOOKING_NOT_PAYABLE
+    PAY->>BOOK: POST /internal/bookings/{id}/payment-pending
+    note right of BOOK: JOB_COMPLETED → CUSTOMER_CONFIRMED<br/>(passed through) → PAYMENT_PENDING
+    PAY->>PG: commit payment_transaction PENDING<br/>(key = customer + booking + attempt n)
+    PAY->>GWY: charge (no DB transaction open)
+    GWY-->>PAY: accepted, gatewayRef
+    PAY->>PG: record gateway reference
 
-    GWY->>PAY: POST /payments/callbacks/{id}<br/>X-Signature: HMAC(payload)
-    note right of PAY: ⚠ HMAC covers only `payload` —<br/>succeeded / failureReason / id<br/>come from the unsigned request
+    GWY->>PAY: signed callback {eventId, transactionId, status, amount}
+    note right of PAY: real gateways: POST /payments/callbacks/{id}.<br/>Simulator: signs the same payload itself and<br/>passes it through handleGatewayCallback.
+    PAY->>PG: PENDING → SUCCESS + outbox PaymentCompleted<br/>+ wallet_credit_pending_since, one transaction
+    PAY->>PROV: POST /internal/providers/{id}/earnings
+    note right of PROV: applied once per booking<br/>(check + unique index)
+    PAY->>PG: clear wallet_credit_pending_since
+    PAY-->>APP: 201 {transactionId, status}
 
+    KF->>BOOK: PaymentCompleted → PAYMENT_COMPLETED
     KF->>INV: PaymentCompleted
-    INV->>PG: SELECT FOR UPDATE invoice_sequence
-    INV->>INV: allocate INV-2026-09-000123
-    INV->>INV: render PDF (OpenPDF)
-    INV->>PG: INSERT invoice
-    INV->>NOTIF: POST signed download URL
-    KF->>RATE: PaymentCompleted
-    RATE->>PG: open review_prompt, 7-day window
-    KF->>CHAT: PaymentCompleted
-    CHAT->>PG: deactivate chat channel
-    KF->>NOTIF: PaymentCompleted → receipt
+    INV->>PG: allocate INV-YYYY-MM-NNNNNN, render PDF, INSERT invoice
+    KF->>RATE: PaymentCompleted → open review_prompt, 7-day window
+    KF->>CHAT: PaymentCompleted → deactivate chat channel
+    KF->>NOTIF: PaymentCompleted → customer receipt, provider "payment received"
 ```
+
+The client sends only the booking and the method; amount, provider and customer come from booking-service, so a tampered amount in the request is ignored. The PENDING row commits before the gateway is called, so a charge never happens without a record; a gateway error leaves it PENDING for the callback to settle. A FAILED payment can be retried as a new attempt (at most 10 per booking). A wallet credit that could not be confirmed keeps its marker and is re-sent by `WalletCreditSweeper` every minute once it is five minutes old, which is why provider-service must apply a booking's credit only once.
+
+The simulator gateway exists only when `PAYMENT_SIMULATOR_ENABLED=true` (Compose sets it, Helm never does) and logs a WARN at startup; otherwise `simulator` is an unknown gateway. With Razorpay or Stripe a payment stays PENDING until their signed webhook arrives. The booking-side handler never fails on a `PaymentCompleted` it cannot apply (cancelled, disputed, unknown booking): it logs a WARN and acknowledges. Settlement reversals still have no provider-service endpoint. See review section 17.6.
 
 ### 5.6 Provider onboarding and verification
 
@@ -502,13 +532,59 @@ sequenceDiagram
         SCHED->>KF: ComplaintStatusChanged
     end
 
-    APP->>CMPL: POST /complaints/{id}/refund
-    note right of CMPL: ⚠ no status precondition,<br/>nothing recorded on success,<br/>so repeated calls refund repeatedly
+    APP->>CMPL: POST /complaints/{id}/refund (support agent)
+    note right of CMPL: only OPEN, IN_PROGRESS, ESCALATED or DISPUTED,<br/>one complaint_refund per complaint (unique),<br/>a second approval is 409 REFUND_ALREADY_REQUESTED
     CMPL->>PAY: issue refund
-    CMPL->>PG: UPDATE status
+    note over CMPL,PAY: ⚠ RefundPort is still a logging stub that answers<br/>approved: nothing reaches payment-service
+    CMPL->>PG: UPDATE complaint_refund + status<br/>(REFUND_FAILED on rejection)
 ```
 
 ---
+
+### 5.8 Fallback to a Tenant (service agency)
+
+When automatic matching finds nobody, the booking is offered to the Tenants (agencies) whose service
+area and categories cover it, instead of failing. Spec: `.kiro/specs/multi-tenant-and-mobile/`.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant D as dispatch-engine
+    participant B as booking-service
+    participant C as customer-service
+    participant P as provider-service
+    participant T as Tenant admin (Admin Portal)
+    participant A as Provider app
+
+    D->>B: POST /internal/bookings/{id}/searching-failed
+    B->>C: GET /internal/addresses/{addressId}
+    B->>P: GET /internal/tenants/covering?lat&lon&categoryId
+    alt one or more ACTIVE Tenants cover it
+        B->>B: store candidates, → AWAITING_ASSIGNMENT
+        B-->>D: BookingResponse(status AWAITING_ASSIGNMENT): dispatch sends no "no provider" notice
+    else none, or a lookup failed
+        B->>B: → SEARCHING_FAILED (BookingCancelled, as before)
+    end
+    T->>B: GET /tenant/bookings/queue (polled every 15 s)
+    T->>B: POST /tenant/bookings/{id}/assignment {providerId}
+    B->>P: GET /internal/tenants/{tenantId}/providers/{providerId} (assignable?)
+    B->>B: → PROVIDER_ASSIGNED, outbox ProviderAssigned {tenantId, tenantName}
+    alt provider accepts
+        A->>B: POST /bookings/{id}/assignment/acceptance
+        B->>B: → PROVIDER_ACCEPTED, outbox ProviderAccepted (same payload as dispatch)
+    else provider declines
+        A->>B: POST /bookings/{id}/assignment/rejection
+        B->>B: → AWAITING_ASSIGNMENT (same Tenant, deadline unchanged)
+    end
+    Note over B: every 60 s: AWAITING_ASSIGNMENT or unanswered PROVIDER_ASSIGNED past the<br/>deadline (default 60 min from first queuing) → SEARCHING_FAILED
+```
+
+The first assignment wins: a second Tenant admin assigning the same booking gets
+409 `BOOKING_NOT_ASSIGNABLE` (optimistic lock). A Tenant admin sees only bookings for which their
+Tenant was a candidate, plus their Tenant's own jobs; anything else answers 404. A booking whose
+accepting provider belongs to a Tenant records that Tenant (`booking.tenant_id`), whichever path
+matched it. Only the assigned provider can accept or decline (staff cannot answer for them); a
+decline clears the provider and returns the booking to the assigning Tenant's queue only.
 
 ## 6. Event topology
 
@@ -541,8 +617,9 @@ graph LR
     end
 
     subgraph Consumers
+        CBOOK["booking-service"]
         CDISP["dispatch-engine"]
-        CNOTIF["notification-service<br/>all 11 lifecycle topics"]
+        CNOTIF["notification-service<br/>all 13 topics"]
         CINV["invoice-service"]
         CCHAT["chat-service"]
         CRATE["rating-review-service"]
@@ -559,16 +636,30 @@ graph LR
     OUT --> T12 & T13
 
     T1 --> CDISP
+    T10 --> CDISP
     T3 --> CCHAT
+    T9 --> CBOOK
     T9 --> CINV
     T9 --> CRATE
     T9 --> CCHAT
     T10 --> CCHAT
     T7 --> CLOC
-    T1 & T2 & T3 & T4 & T5 & T6 & T7 & T8 & T9 & T10 & T11 --> CNOTIF
+    T1 & T2 & T3 & T4 & T5 & T6 & T7 & T8 & T9 & T10 & T11 & T12 & T13 --> CNOTIF
 ```
 
-Consumer groups: `dispatch-engine`, `notification-service`, `invoice-service`, `chat-service`, `rating-review-service`, `location-service`. Any event type without an explicit mapping falls through to the `domain-events` topic, where nothing subscribes. Both complaint events are mapped to their own same-named topics.
+| Topic | Produced by | When |
+| --- | --- | --- |
+| BookingCreated | booking-service | booking enters `SEARCHING_PROVIDER` (confirmation, or emergency create) |
+| ProviderAssigned | booking-service | **only** when a Tenant admin assigns a provider; carries `tenantId`, `tenantName`. Dispatch's acceptance passes through `PROVIDER_ASSIGNED` without publishing it |
+| ProviderAccepted | dispatch-engine; booking-service | dispatch: a provider accepted an offer. booking-service: a Tenant-assigned provider accepted. Same payload either way |
+| ProviderRejected | dispatch-engine | an offer was declined or expired (not a Tenant-assignment decline) |
+| ProviderArriving, ProviderArrived, JobStarted, JobCompleted | booking-service | job milestones (5.4) |
+| BookingCancelled | booking-service | `CANCELLED` or `SEARCHING_FAILED` (dispatch failure, or the Tenant assignment deadline) |
+| PaymentCompleted | payment-service | a transaction reached `SUCCESS` |
+| ReviewSubmitted | rating-review-service | review submitted |
+| ComplaintCreated, ComplaintStatusChanged | complaint-service | complaint lifecycle |
+
+Consumer groups: `booking-service.payment-completed`, `dispatch-engine.booking-created`, `dispatch-engine.booking-cancelled`, `notification-service.lifecycle`, `invoice-service.payment-completed`, `chat-service.lifecycle`, `rating-review-service.payment-completed`, `location-service.job-started`. Any event type without an explicit mapping falls through to the `domain-events` topic, where nothing subscribes; all thirteen above are mapped. Ratings are not consumed by provider-service, so reviews never change a provider's aggregate rating (review 17.5).
 
 ### Outbox and delivery guarantees
 
@@ -589,21 +680,22 @@ flowchart LR
 
 The publisher requires `Propagation.MANDATORY`, so an outbox row can only be written inside an existing transaction. The producer template refuses to start unless `acks=all` and idempotence are enabled.
 
-The relay claims rows in a short transaction (`SELECT ... FOR UPDATE SKIP LOCKED`, then `next_attempt_at` = now + a 2-minute lease) and publishes outside it, so several relay instances can run without two of them working one row. A failed publish is not slept on: the attempt, its error and the next attempt time are written to the row, and the row is simply not due until then. Delivery is at-least-once (a crash between the broker ACK and the PUBLISHED write, a timed-out publish that still lands, or a relay outliving its lease can each publish twice), which consumer dedupe on `eventId` absorbs. The consumer's 5-second retry delay is likewise a paused listener container rather than a sleeping thread. The handler and the dedupe marker commit separately, so exactly-once is not guaranteed; see review section 8.2.
+The relay claims rows in a short transaction (`SELECT ... FOR UPDATE SKIP LOCKED`, then `next_attempt_at` = now + a 2-minute lease) and publishes outside it, so several relay instances can run without two of them working one row. A failed publish is not slept on: the attempt, its error and the next attempt time are written to the row, and the row is simply not due until then. Delivery is at-least-once (a crash between the broker ACK and the PUBLISHED write, a timed-out publish that still lands, or a relay outliving its lease can each publish twice), which consumer dedupe on `eventId` absorbs. The consumer's 5-second retry delay is likewise a paused listener container rather than a sleeping thread. The `processed_event` insert and the handler share one transaction (insert first), so a failure rolls both back and the redelivery runs the handler again; retriable broker outages no longer spend relay attempts, and a dead-letter send is awaited before the offset commits. See review sections 8.2 and 16.5.
 
 ---
 
 ## 7. Data model
 
-Each service owns one PostgreSQL schema in a single database, and no service reads another's schema. Cross-service references are plain UUID columns with no foreign key.
+Each service owns one PostgreSQL schema in a single database, and no service reads another's schema. Cross-service references are plain UUID columns with no foreign key (`booking.tenant_id` refers to `provider.tenant` by value only).
 
 ```mermaid
 graph TB
-    subgraph "One PostgreSQL instance, 16 service schemas plus outbox"
+    subgraph "One PostgreSQL instance, 17 service schemas plus outbox"
         S1["auth"] --- S2["customer"] --- S3["provider"] --- S4["verification"]
-        S5["catalog"] --- S6["booking"] --- S7["dispatch"] --- S8["location"]
+        S5["catalog"] --- S6["booking"] --- S7["dispatch<br/>(no tables)"] --- S8["location"]
         S9["payment"] --- S10["invoice"] --- S11["promotion"] --- S12["notification"]
         S13["complaint"] --- S14["chat"] --- S15["rating"] --- S16["admin"]
+        S17["pricing"]
     end
     subgraph "Shared infrastructure"
         OB["outbox<br/>outbox_event, processed_event"]
@@ -612,7 +704,19 @@ graph TB
 
 The outbox tables are the deliberate exception to the one-schema-per-service rule. They are infrastructure rather than domain data, and every producer plus the relay must agree on where they live, so they sit in a single shared `outbox` schema. Atomicity is unaffected: a producer still writes its event row in the same transaction as its domain change, in the same database. Before this, each producer wrote into its own schema while the relay polled another, so no event was ever published.
 
-There is still no Flyway or Liquibase. `docker/init-db.sql` creates the schemas only, services run `ddl-auto: validate`, and Compose overrides that to `update` so Hibernate creates tables on first boot. Any other deployment fails at startup. See review section 8.1.
+Every database-backed service runs Flyway from `src/main/resources/db/migration`, and Hibernate only validates (`ddl-auto: validate`, also in Compose). `docker/init-db.sql` creates the schemas only. Each `V1__baseline` was generated from the entities and must not be edited; later changes are incremental (`baseline-on-migrate` lets a database created by the old `ddl-auto=update` setup adopt them). The shared outbox tables ship as a repeatable migration in `homefix-shared-outbox`. See review section 16.7. Migrations after the baseline:
+
+| Service | Migration | Change |
+| --- | --- | --- |
+| auth-service | V2 | `user_account.status` (ACTIVE, SUSPENDED, DEACTIVATED), index on `created_at` |
+| auth-service | V3 | `TENANT_ADMIN` added to the role check |
+| booking-service | V2 | index `(customer_id, created_at)` for history |
+| booking-service | V3 | `AWAITING_ASSIGNMENT` in the status checks; `booking.tenant_id`, `booking.queued_for_assignment_at`; table `booking_tenant_candidate` |
+| provider-service | V2 | unique index: one `JOB_CREDIT` earning per booking |
+| provider-service | V3 | tables `tenant`, `tenant_category`, `tenant_admin`; `provider_profile.tenant_id` |
+| notification-service | V2, V3 | table `notification_template` (seeded with the built-in texts); Tenant-assignment templates |
+| complaint-service | V2 | `complaint.resolution_note` |
+| admin-service | V2, V3 | table `system_setting`; keyset index on `audit_log (logged_at, id)` |
 
 ### 7.1 Identity and profiles
 
@@ -623,12 +727,15 @@ erDiagram
     USER_ACCOUNT {
         uuid id PK
         string mobile_number UK "nullable for social accounts"
+        string username UK "seeded and staff accounts"
+        string password_hash
+        string status "ACTIVE, SUSPENDED, DEACTIVATED"
         boolean verified
         timestamp created_at
     }
     USER_ACCOUNT_ROLE {
         uuid user_id FK
-        string role "CUSTOMER, SERVICE_PROVIDER, ADMIN"
+        string role "CUSTOMER, SERVICE_PROVIDER, ADMIN, SUPER_ADMIN, FINANCE_ADMIN, DISPATCHER, SUPPORT_AGENT, TENANT_ADMIN"
     }
     SOCIAL_IDENTITY_LINK {
         uuid id PK
@@ -672,14 +779,39 @@ erDiagram
         string display_name
         int years_experience
         int service_radius_km
+        double base_latitude "dispatch origin"
+        double base_longitude
+        uuid tenant_id FK "null unless in a Tenant's team"
         decimal aggregate_rating
         decimal wallet_balance
         boolean emergency_available
         boolean under_review
         bytes bank_account_encrypted "AES-GCM"
         boolean bank_account_verified
-        string tag
         long version
+    }
+    PROVIDER_SKILL_TAG {
+        uuid provider_id FK
+        string tag
+    }
+    TENANT {
+        uuid id PK
+        string name
+        string status "ACTIVE, SUSPENDED"
+        string contact_phone
+        string contact_email
+        double base_latitude
+        double base_longitude
+        decimal service_radius_km "1-100"
+        long version
+    }
+    TENANT_CATEGORY {
+        uuid tenant_id PK
+        uuid category_id PK
+    }
+    TENANT_ADMIN {
+        uuid user_id PK "one Tenant per admin"
+        uuid tenant_id FK
     }
     AVAILABILITY_SLOT {
         uuid id PK
@@ -695,9 +827,9 @@ erDiagram
     PROVIDER_EARNING {
         uuid id PK
         uuid provider_id
-        uuid booking_id
+        uuid booking_id "unique for JOB_CREDIT"
         string booking_reference
-        string type
+        string type "JOB_CREDIT, PLATFORM_FEE_DEDUCTION, PENALTY_DEDUCTION"
         decimal gross
         decimal platform_fee
         decimal net
@@ -743,6 +875,11 @@ erDiagram
     USER_ACCOUNT ||--o| CUSTOMER_PROFILE : "by user_id"
     CUSTOMER_PROFILE ||--o{ ADDRESS : has
     USER_ACCOUNT ||--o| PROVIDER_PROFILE : "by user_id"
+    PROVIDER_PROFILE ||--o{ PROVIDER_SKILL_TAG : has
+    TENANT ||--o{ PROVIDER_PROFILE : "team, by tenant_id"
+    TENANT ||--o{ TENANT_CATEGORY : covers
+    TENANT ||--o{ TENANT_ADMIN : "administered by"
+    USER_ACCOUNT ||--o| TENANT_ADMIN : "by user_id"
     PROVIDER_PROFILE ||--o{ AVAILABILITY_SLOT : offers
     PROVIDER_PROFILE ||--o{ PROVIDER_CATEGORY_SELECTION : serves
     PROVIDER_PROFILE ||--o{ PROVIDER_EARNING : earns
@@ -752,7 +889,7 @@ erDiagram
     VERIFICATION ||--o{ VERIFICATION_AUDIT_ENTRY : audits
 ```
 
-`PROVIDER_PROFILE`, `VERIFICATION`, `PAYMENT_TRANSACTION`, `COUPON` and the catalog tables carry `@Version` optimistic locking; most child tables do not. Personally identifying fields are stored as AES-GCM ciphertext with a random 96-bit IV, and the column names carry the `_encrypted` suffix.
+`PROVIDER_PROFILE`, `TENANT`, `VERIFICATION`, `PAYMENT_TRANSACTION`, `COUPON` and the catalog tables carry `@Version` optimistic locking; most child tables do not. The provider profile's id is the same value as its `user_id`. The tenant tables, and the foreign key from `provider_profile.tenant_id`, live inside the `provider` schema; a Tenant admin is linked by `user_id` to an auth account that holds `TENANT_ADMIN`, granted and revoked by provider-service through auth-service's internal API. Personally identifying fields are stored as AES-GCM ciphertext with a random 96-bit IV, and the column names carry the `_encrypted` suffix.
 
 Two model-level defects. `CUSTOMER_PROFILE` is looked up by primary key in service code while the customer id actually lives in `user_id`, which breaks the second profile update, every deletion request and the anonymization sweep. `VERIFICATION` declared both of its child collections as eager `List` bags. Hibernate 6.4 accepts that mapping but loads each bag with its own extra SELECT, so every lookup, the dispatch eligibility check included, took three statements and loaded every child row. Both collections are now lazy. Reads that need the whole aggregate fetch-join the documents and load the audit trail with one more statement, inside the transaction. See review sections 8.4 and 8.5.
 
@@ -786,22 +923,36 @@ erDiagram
         uuid id PK
         string reference UK "generated booking reference"
         uuid customer_id
-        uuid provider_id "null until assigned, never set in code"
+        uuid provider_id "set on acceptance or Tenant assignment"
+        uuid tenant_id "the accepting provider's Tenant, if any"
         uuid category_id
         uuid subcategory_id
         uuid address_id
-        enum status "18 states, CREATED to REFUNDED"
+        enum status "19 states, CREATED to REFUNDED"
         boolean is_emergency
         timestamp scheduled_at
         decimal estimated_total
         decimal final_total
         decimal cancellation_fee
         string saga_state
+        timestamp queued_for_assignment_at "first Tenant queuing; deadline clock"
         timestamp created_at
         timestamp started_at
         timestamp completed_at
         int net_duration_seconds
         long version "optimistic lock"
+    }
+    BOOKING_TENANT_CANDIDATE {
+        uuid booking_id PK
+        uuid tenant_id PK "snapshotted at fallback"
+    }
+    PRICING_PARAMETERS {
+        uuid subcategory_id PK
+        decimal base_price
+        decimal per_km_rate
+        decimal emergency_multiplier
+        decimal platform_fee_rate
+        decimal tax_rate
     }
     BOOKING_AUDIT {
         uuid id PK
@@ -824,7 +975,7 @@ erDiagram
     JOB_MEDIA {
         uuid id PK
         uuid booking_id FK
-        string type "BEFORE or AFTER"
+        string type "BEFORE_PHOTO or AFTER_PHOTO for job photos"
         string content_type
         long size_bytes
         string s3_key
@@ -883,6 +1034,7 @@ erDiagram
 
     SERVICE_CATEGORY ||--o{ SERVICE_SUBCATEGORY : contains
     BOOKING ||--o{ BOOKING_AUDIT : audits
+    BOOKING ||--o{ BOOKING_TENANT_CANDIDATE : "offered to"
     BOOKING ||--o{ JOB_INTERVAL : tracks
     BOOKING ||--o{ JOB_MEDIA : documents
     BOOKING ||--o{ PARTS_LINE_ITEM : quotes
@@ -890,7 +1042,7 @@ erDiagram
     BOOKING ||--o{ LOCATION_HISTORY : "tracked by booking_id"
 ```
 
-`outbox_event` and `processed_event` come from the shared outbox module and live once, in the shared `outbox` schema, not in each service's schema. `processed_event` is keyed by consumer group and event id, so services consuming the same event deduplicate independently. The payload is stored as `text`, not `jsonb` as the design document specifies; it was briefly a large-object `oid`, which broke the relay (see CODEBASE_REVIEW.md 15.2). `location_history` and `terminated_booking` live in the `location` schema, not `booking`.
+`outbox_event` and `processed_event` come from the shared outbox module and live once, in the shared `outbox` schema, not in each service's schema. `processed_event` is keyed by consumer group and event id, so services consuming the same event deduplicate independently. The payload is stored as `text`, not `jsonb` as the design document specifies; it was briefly a large-object `oid`, which broke the relay (see CODEBASE_REVIEW.md 15.2). `location_history` and `terminated_booking` live in the `location` schema, not `booking`; `pricing_parameters` (abridged above) lives in the `pricing` schema, so pricing survives a restart. The dispatch schema has no tables: offers and per-provider locks are in Redis, and dispatch's outbox rows go to the shared `outbox` schema.
 
 Child tables such as `booking_audit` and `saga_step` use assigned UUID primary keys with no `@Version` and no `Persistable` implementation, so every save costs a SELECT before the INSERT.
 
@@ -900,19 +1052,31 @@ Child tables such as `booking_audit` and `saga_step` use assigned UUID primary k
 erDiagram
     PAYMENT_TRANSACTION {
         uuid id PK
-        string idempotency_key UK
+        string idempotency_key UK "customer + booking (+ attempt n)"
         uuid customer_id
         uuid booking_id
         uuid provider_id
-        decimal amount
+        decimal amount "from booking payment-facts"
         decimal platform_fee
-        string method "UPI, CARD, NETBANKING, WALLET, CASH"
-        string gateway "RAZORPAY, STRIPE"
+        string method "UPI, CREDIT_DEBIT_CARD, NET_BANKING, WALLET, CASH"
+        string gateway "razorpay, stripe, simulator (local)"
         enum status "PENDING, SUCCESS, FAILED, REFUNDED, PARTIALLY_REFUNDED"
         string gateway_reference
         bytes payment_credential_encrypted
         decimal refunded_amount
         int attempt_count
+        string failure_reason
+        string callback_event_id "signed callback dedupe"
+        timestamp wallet_credit_pending_since "credit owed to provider"
+        long version
+    }
+    PAYMENT_REFUND {
+        uuid id PK
+        uuid transaction_id FK
+        string idempotency_key UK
+        decimal amount
+        string status "PENDING, SUCCEEDED, FAILED"
+        string gateway_reference
         string failure_reason
         long version
     }
@@ -968,10 +1132,11 @@ erDiagram
     }
 
     PAYMENT_TRANSACTION ||--o| INVOICE : "by payment_id"
+    PAYMENT_TRANSACTION ||--o{ PAYMENT_REFUND : refunds
     COUPON ||--o{ COUPON_USAGE : "per user"
 ```
 
-There is no `currency` column: amounts are implicitly INR. Money is `BigDecimal` with scale 2 and `HALF_UP` rounding throughout.
+A booking may have several transactions: a new attempt (idempotency key suffixed `:attempt:n`) opens only after the previous one FAILED, at most 10. There is no `currency` column: amounts are implicitly INR. Money is `BigDecimal` with scale 2 and `HALF_UP` rounding throughout.
 
 Provider-service defines a second, unrelated `settlement` table with its own state model, separate from `payment_settlement` here. The two are never linked, and the provider-side settlement has no completion path, so reserved wallet funds are never released. See review section 8.4.
 
@@ -1014,12 +1179,37 @@ erDiagram
         string category
         string priority
         string description
-        enum status "OPEN, IN_PROGRESS, ESCALATED, RESOLVED, CLOSED, REFUND_FAILED"
+        enum status "OPEN, IN_PROGRESS, ESCALATED, DISPUTED, RESOLVED, CLOSED, REFUND_FAILED"
         boolean acknowledged
         boolean settlement_held
         boolean escalated
         timestamp sla_deadline
         timestamp resolved_at
+        string resolution_note "set from the Admin Portal"
+    }
+    COMPLAINT_REFUND {
+        uuid id PK
+        uuid complaint_id UK "at most one refund per complaint"
+        uuid booking_id
+        decimal amount
+        uuid approved_by
+        string status "PENDING, SUCCEEDED, FAILED"
+        string external_reference
+        timestamp requested_at
+    }
+    NOTIFICATION_TEMPLATE {
+        string id PK "key.channel"
+        string template_key
+        string channel "PUSH, SMS, EMAIL, IN_APP"
+        string subject
+        string body "placeholders validated"
+        uuid updated_by
+    }
+    SYSTEM_SETTING {
+        string setting_key PK
+        string setting_value
+        uuid updated_by
+        timestamp updated_at
     }
     REVIEW {
         uuid id PK
@@ -1060,12 +1250,13 @@ erDiagram
     }
 
     CHAT_CHANNEL ||--o{ CHAT_MESSAGE : carries
+    COMPLAINT ||--o| COMPLAINT_REFUND : "refunded by"
     REVIEW_PROMPT ||--o| REVIEW : fulfils
 ```
 
 Reviews are two-way and carry five separate rating dimensions, with `overall_rating` driving the provider aggregate. `delivery_log` dedupes on the composite of Kafka event id and channel. `chat_channel` is keyed directly by booking id rather than a surrogate.
 
-`review` has no unique constraint on the booking and reviewer pair, so the duplicate guard is a check-then-insert race. Chat messages store `retain_until` but no purge job exists. Both admin-service and rating-review-service define an `audit_log` table, with different columns, in their own schemas.
+`review` has no unique constraint on the booking and reviewer pair, so the duplicate guard is a check-then-insert race. Chat messages store `retain_until` but no purge job exists. Both admin-service and rating-review-service define an `audit_log` table, with different columns, in their own schemas. `notification_template` (notification schema) replaced the hard-coded texts and is edited from the Admin Portal; `system_setting` (admin schema) persists System Configuration.
 
 ---
 
@@ -1073,16 +1264,21 @@ Reviews are two-way and carry five separate rating dimensions, with `overall_rat
 
 ### 8.1 Booking
 
-Eighteen states with the transition table encoded in `BookingStateMachine`. This diagram is the table verbatim, nothing added.
+Nineteen states with the transition table encoded in `BookingStateMachine`. This diagram is the table verbatim, nothing added. `AWAITING_ASSIGNMENT` and its edges were added for Tenant fallback (section 5.8).
 
 ```mermaid
 stateDiagram-v2
     [*] --> CREATED: booking created
     CREATED --> SEARCHING_PROVIDER: customer confirms<br/>(immediate for emergency)
-    SEARCHING_PROVIDER --> PROVIDER_ASSIGNED
+    SEARCHING_PROVIDER --> PROVIDER_ASSIGNED: dispatch acceptance<br/>(passed through)
     SEARCHING_PROVIDER --> SEARCHING_FAILED
     SEARCHING_PROVIDER --> CANCELLED
+    SEARCHING_PROVIDER --> AWAITING_ASSIGNMENT: nobody accepted,<br/>a Tenant covers it
+    AWAITING_ASSIGNMENT --> PROVIDER_ASSIGNED: Tenant admin assigns
+    AWAITING_ASSIGNMENT --> SEARCHING_FAILED: assignment deadline
+    AWAITING_ASSIGNMENT --> CANCELLED
     PROVIDER_ASSIGNED --> PROVIDER_ACCEPTED
+    PROVIDER_ASSIGNED --> AWAITING_ASSIGNMENT: provider declines<br/>or misses the deadline
     PROVIDER_ASSIGNED --> CANCELLED
     PROVIDER_ACCEPTED --> PROVIDER_ON_THE_WAY
     PROVIDER_ACCEPTED --> CANCELLED
@@ -1096,10 +1292,10 @@ stateDiagram-v2
     ADDITIONAL_QUOTE_REQUIRED --> CUSTOMER_APPROVAL_PENDING
     CUSTOMER_APPROVAL_PENDING --> JOB_STARTED: approved
     CUSTOMER_APPROVAL_PENDING --> JOB_COMPLETED: rejected
-    JOB_COMPLETED --> CUSTOMER_CONFIRMED
+    JOB_COMPLETED --> CUSTOMER_CONFIRMED: customer pays<br/>(passed through)
     JOB_COMPLETED --> DISPUTED
-    CUSTOMER_CONFIRMED --> PAYMENT_PENDING
-    PAYMENT_PENDING --> PAYMENT_COMPLETED
+    CUSTOMER_CONFIRMED --> PAYMENT_PENDING: payment-pending
+    PAYMENT_PENDING --> PAYMENT_COMPLETED: PaymentCompleted
     PAYMENT_PENDING --> DISPUTED
     PAYMENT_COMPLETED --> REFUNDED
     DISPUTED --> PAYMENT_COMPLETED
@@ -1111,23 +1307,25 @@ stateDiagram-v2
 
 A scheduled booking lands in `CREATED` and needs an explicit confirmation call. An emergency booking is created and driven to `SEARCHING_PROVIDER` in the same request, as a saga whose compensation reverts to `CREATED`.
 
-Three things to note. Cancellation is only legal up to `PROVIDER_ON_THE_WAY`, yet the cancellation fee policy computes fees for `PROVIDER_ARRIVED` and `JOB_STARTED`, so those calls compute a fee and then fail. Dispatch asks for `SEARCHING_PROVIDER → PROVIDER_ACCEPTED`, skipping `PROVIDER_ASSIGNED`, which the table rejects. Only `SEARCHING_FAILED`, `CANCELLED` and `REFUNDED` are terminal, so a normally completed booking rests in `PAYMENT_COMPLETED`. See review section 8.3.
+"Passed through" states are entered and left in one transaction: audited, but no event is published for them. Dispatch's acceptance walks `SEARCHING_PROVIDER → PROVIDER_ASSIGNED → PROVIDER_ACCEPTED` this way, so `PROVIDER_ASSIGNED` is a resting state only for a Tenant assignment awaiting the provider's answer. Paying is the customer's confirmation: payment-service's `payment-pending` call walks `JOB_COMPLETED → CUSTOMER_CONFIRMED → PAYMENT_PENDING`, and the `PaymentCompleted` consumer moves it on to `PAYMENT_COMPLETED` (passing through any state the pending call did not record). The Tenant assignment deadline fails an unanswered `PROVIDER_ASSIGNED` via `AWAITING_ASSIGNMENT → SEARCHING_FAILED` in one transaction.
+
+Cancellation is legal from `SEARCHING_PROVIDER`, `AWAITING_ASSIGNMENT`, `PROVIDER_ASSIGNED`, `PROVIDER_ACCEPTED` and `PROVIDER_ON_THE_WAY`. It is not legal from `CREATED`, so a scheduled booking that was never confirmed cannot be cancelled, and the cancellation fee policy still computes fees for `PROVIDER_ARRIVED` and `JOB_STARTED`, so those calls compute a fee and then fail with 409. Only `SEARCHING_FAILED`, `CANCELLED` and `REFUNDED` are terminal, so a normally completed booking rests in `PAYMENT_COMPLETED`. See review section 8.3.
 
 ### 8.2 Payment transaction
 
 ```mermaid
 stateDiagram-v2
-    [*] --> PENDING: initiate
-    PENDING --> SUCCESS: gateway confirms
-    PENDING --> FAILED: gateway declines
+    [*] --> PENDING: attempt n committed before the charge
+    PENDING --> SUCCESS: signed callback SUCCEEDED
+    PENDING --> FAILED: signed callback FAILED,<br/>gateway refuses, or 3rd customer retry
     SUCCESS --> PARTIALLY_REFUNDED: partial refund
     SUCCESS --> REFUNDED: full refund
-    PARTIALLY_REFUNDED --> REFUNDED: remainder refunded
-    FAILED --> [*]
+    FAILED --> [*]: next request opens attempt n+1 (max 10)
     REFUNDED --> [*]
+    PARTIALLY_REFUNDED --> [*]
 ```
 
-`TransactionStatus.canTransitionTo` is the single source of truth, and the entity refuses illegal transitions.
+`TransactionStatus.canTransitionTo` is the single source of truth, and the entity refuses illegal transitions. A transaction is one attempt: attempts for a booking share the customer + booking idempotency key, suffixed `:attempt:n` from the second, and a new one opens only when the latest is FAILED. A gateway error during the charge leaves the attempt PENDING (outcome unknown) for the callback to settle. `PARTIALLY_REFUNDED` has no outgoing transition, so a second refund of a partially refunded payment is refused (409), although `PaymentService.refund` lists it as refundable. Refunds themselves are `payment_refund` rows (PENDING, SUCCEEDED, FAILED); a refund whose gateway outcome is unknown stays PENDING until a same-key retry or a finance reconcile.
 
 ### 8.3 Settlement
 
@@ -1152,10 +1350,11 @@ stateDiagram-v2
     ESCALATED --> RESOLVED
     RESOLVED --> CLOSED
     RESOLVED --> REFUND_FAILED
+    OPEN --> DISPUTED: dispute, provider<br/>settlement held
     CLOSED --> [*]
 ```
 
-These are the statuses the service uses, but no transition table is encoded, so any non-terminal status can be set from any other. See review section 8.5.
+These are the statuses the service uses, but no transition table is encoded, so any non-terminal status can be set from any other. The Admin Portal's update refuses the system-only states (`ESCALATED`, `REFUND_FAILED`), which only the SLA sweep and a rejected refund may set. See review sections 8.5 and 17.3.
 
 ### 8.5 Outbox event
 
@@ -1175,13 +1374,14 @@ stateDiagram-v2
 
 ```mermaid
 flowchart TD
-    A["BookingCreated consumed"] --> B["Pick bulkhead pool<br/>emergency or scheduled"]
-    B --> C["Fetch candidates within<br/>provider radius"]
+    A["BookingCreated consumed"] --> A1["Resolve address coordinates<br/>and subcategory skill tags"]
+    A1 --> B["Pick bulkhead pool<br/>emergency or scheduled"]
+    B --> C["Fetch eligible providers<br/>within radius"]
     C --> D{"Any candidates?"}
     D -->|no| E["Expand radius by step"]
     E --> F{"Max radius reached?"}
     F -->|no| C
-    F -->|yes| G["SEARCHING_FAILED"]
+    F -->|yes| G["POST searching-failed:<br/>Tenant fallback or SEARCHING_FAILED"]
     D -->|yes| H["Score each candidate"]
 
     H --> H1["distance weight"]
@@ -1193,16 +1393,18 @@ flowchart TD
     I --> J["Next candidate"]
     J --> K["Acquire Redis lock<br/>SET NX PX per provider"]
     K --> L{"Lock acquired?"}
-    L -->|no| J
-    L -->|yes| M["Offer job, wait for reply"]
+    L -->|"no: busy with another offer"| BUSY["Keep in pool; retry after the<br/>free candidates, up to one offer window"]
+    BUSY --> J
+    L -->|yes| M["Offer in Redis, poll for the<br/>provider's answer (60 s window)"]
     M --> N{"Accepted?"}
-    N -->|no| O["Release lock"]
+    N -->|no| O["Release lock, ProviderRejected,<br/>drop from pool"]
     O --> J
-    N -->|yes| P["Transition booking<br/>to PROVIDER_ACCEPTED"]
+    J -->|"pool exhausted"| E
+    N -->|yes| P["POST provider-accepted<br/>→ PROVIDER_ACCEPTED"]
     P --> Q["Publish ProviderAccepted"]
 ```
 
-Weights are validated with `BigDecimal` and must sum to one. They are stored in a process-local map, so admin changes are lost on restart and differ between replicas.
+Weights are validated with `BigDecimal` and must sum to one. They are stored in a process-local map, so admin changes (Admin Portal, Dispatch module) apply at runtime but are lost on restart and differ between replicas. Before every offer the search checks whether a `BookingCancelled` has arrived, and a 409 or 404 from booking-service ends the run quietly.
 
 ---
 
@@ -1212,23 +1414,36 @@ Weights are validated with `BigDecimal` and must sum to one. They are stored in 
 
 ```mermaid
 graph TB
-    subgraph Host["Developer machine"]
-        subgraph net["Docker network homefix-core"]
-            PG[("postgres:16-alpine<br/>5533 → 5432")]
-            RD[("redis:7-alpine<br/>6380 → 6379")]
-            KF[["apache/kafka:3.7.1 KRaft<br/>9095 → 9092"]]
-            S["20 service containers<br/>8080 – 8099"]
+    subgraph Host["Developer machine (Windows)"]
+        PG[("PostgreSQL 18<br/>Windows service, :5432")]
+        RD[("Redis-compatible :6379<br/>Memurai, or a redis container")]
+        KF[["Kafka 4.1 KRaft, C:\kafka<br/>:9092 host, :9094 containers<br/>started by hand"]]
+        subgraph net["Docker Compose: docker-compose.core.yml"]
+            S["20 service containers<br/>8080 – 8099, mem_limit 448m each"]
             W["3 nginx SPA containers<br/>5173, 5174, 5175"]
         end
         SMS["docker/dev-sms/dev-sms.log<br/>bind mount, OTP sink"]
     end
 
     W --> S
-    S --> PG & RD & KF
+    S -->|host.docker.internal| PG & RD & KF
     S --> SMS
 ```
 
-Each service container has a `wget` readiness healthcheck and starts only once its dependencies report healthy. Images are runtime-only: the fat jar must already exist under each service's `target/`.
+Postgres, Kafka and Redis are the ones installed on the machine, reached from the containers through `host.docker.internal` (override with `HOMEFIX_DB_HOST`, `HOMEFIX_REDIS_HOST`, `HOMEFIX_KAFKA_BOOTSTRAP_SERVERS`; `docker-compose.infra.yml` runs them as containers instead). Kafka does not start on its own after a reboot, and on native Windows it runs with retention and the log cleaner off because it cannot delete segments. Setup is in [LOCAL_ACCESS.md](LOCAL_ACCESS.md) section 1.
+
+Each service container has a `wget` readiness healthcheck with a 300 s start period and a bounded `on-failure` restart policy. Images are runtime-only: the fat jar must already exist under each service's `target/`. Every Java service has `mem_limit: 448m` and a `JAVA_TOOL_OPTIONS` heap percentage, because twenty unbounded JVMs exhaust the WSL VM.
+
+Settings that differ from the code defaults locally:
+
+| Variable | Service | Local value | Why |
+| --- | --- | --- | --- |
+| `PAYMENT_SIMULATOR_ENABLED`, `PAYMENT_DEFAULT_GATEWAY` | payment-service | `true`, `simulator` | settles payments through the signed-callback path without a real gateway; **local only**, never set in Helm |
+| `PROVIDER_WALLET_CLIENT` | payment-service | `http` | credits provider-service's wallet (code default `logging` pays no one); Helm also sets `http` |
+| `TENANT_ASSIGNMENT_TIMEOUT` | booking-service | `PT60M` | how long a booking may wait for a Tenant assignment; same in Helm |
+| `KAFKA_BOOTSTRAP_SERVERS` | booking-service and the other consumers | `host.docker.internal:9094` | booking-service now consumes `PaymentCompleted` |
+| `INTERNAL_API_KEY` | every service with `/internal/**` callers or endpoints | from `.env` | shared service credential |
+| `DEV_SEED_ENABLED`, `DEV_SEED_PASSWORD` | auth-service | from `.env` (`true`, `HomeFix@2026`) | seeds the test accounts; Compose's own default is off |
 
 ### 10.2 AWS target (Terraform)
 
@@ -1259,7 +1474,7 @@ graph TB
     EKS --> FB["Fluent Bit → CloudWatch"]
 ```
 
-Terraform is the most complete infrastructure layer. The largest gap that blocks a real deploy is the missing database migrations. The pipeline builds, tests and images every service and can deploy them with the chart, but only once infrastructure the repository does not create exists (ECR repositories, a GitHub OIDC role, per-service Kubernetes Secrets); the header of `.github/workflows/cd-production.yml` lists it.
+Terraform is the most complete infrastructure layer. Database migrations now exist (section 7), so the largest gap that blocks a real deploy is the namespace mismatch in 10.3. The pipeline builds, tests and images every service and can deploy them with the chart, but only once infrastructure the repository does not create exists (ECR repositories, a GitHub OIDC role, per-service Kubernetes Secrets); the header of `.github/workflows/cd-production.yml` lists it.
 
 ### 10.3 Namespace and chart layout
 
