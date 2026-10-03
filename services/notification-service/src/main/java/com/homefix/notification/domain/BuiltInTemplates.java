@@ -13,7 +13,8 @@ import java.util.Set;
  * (Requirements 16.2, 16.3, 17.5).
  *
  * <p>These are the texts the service has always sent. The {@code notification_template} table is
- * seeded with exactly these (V2 migration), and an admin's edit overrides the text for one
+ * seeded with exactly these (V2 migration, brought up to date by later ones such as V3 for the
+ * Tenant-assigned ProviderAssigned texts), and an admin's edit overrides the text for one
  * channel; when a row is missing the built-in text here is used, so the service never depends on
  * the table to send a correct notification.
  *
@@ -35,17 +36,34 @@ public final class BuiltInTemplates {
             "Booking confirmed",
             "We received {{bookingReference}} and are finding a professional for you.");
 
+    /*
+     * ProviderAssigned is published only when a booking comes to rest in PROVIDER_ASSIGNED, which
+     * since the multi-tenant fallback means a partner agency (Tenant) assigned the job and the
+     * provider still has to accept or decline it (Requirements MT-5.3, MT-6); automatic dispatch
+     * passes straight through to PROVIDER_ACCEPTED without the event. Hence "accept or decline"
+     * for the provider and "once they confirm" for the customer (V3 migration).
+     */
+
     public static final TemplateDefinition PROVIDER_ASSIGNED_PROVIDER = template(
             "PROVIDER_ASSIGNED.PROVIDER", NotificationEventType.PROVIDER_ASSIGNED,
             "Provider assigned (provider)", PUSH_SMS_IN_APP,
             "New job assigned",
-            "You have been assigned {{bookingReference}}. Open the app for the details.");
+            "You have been assigned {{bookingReference}}. Open the app to accept or decline it.");
+
+    /** Picked when the event names the assigning agency (its {@code tenantName}). */
+    public static final TemplateDefinition PROVIDER_ASSIGNED_PROVIDER_TENANT = template(
+            "PROVIDER_ASSIGNED.PROVIDER.TENANT", NotificationEventType.PROVIDER_ASSIGNED,
+            "Provider assigned by a partner agency (provider)", PUSH_SMS_IN_APP,
+            "New job from {{tenantName}}",
+            "{{bookingReference}} has been assigned to you by {{tenantName}}. "
+                    + "Open the app to accept or decline it.");
 
     public static final TemplateDefinition PROVIDER_ASSIGNED_CUSTOMER = template(
             "PROVIDER_ASSIGNED.CUSTOMER", NotificationEventType.PROVIDER_ASSIGNED,
             "Provider assigned (customer)", PUSH_IN_APP,
             "Professional assigned",
-            "A professional has been assigned to {{bookingReference}}.");
+            "A professional has been assigned to {{bookingReference}}. "
+                    + "We will let you know as soon as they confirm.");
 
     /** Requirement 8.10 mandates push + SMS on acceptance. */
     public static final TemplateDefinition PROVIDER_ACCEPTED_CUSTOMER = template(
@@ -151,6 +169,7 @@ public final class BuiltInTemplates {
     private static final List<TemplateDefinition> ALL_TEMPLATES = List.of(
             BOOKING_CREATED_CUSTOMER,
             PROVIDER_ASSIGNED_PROVIDER,
+            PROVIDER_ASSIGNED_PROVIDER_TENANT,
             PROVIDER_ASSIGNED_CUSTOMER,
             PROVIDER_ACCEPTED_CUSTOMER,
             PROVIDER_REJECTED_CUSTOMER,
@@ -207,7 +226,9 @@ public final class BuiltInTemplates {
         return switch (event.eventType()) {
             case BOOKING_CREATED -> customerOnly(event, BOOKING_CREATED_CUSTOMER);
             case PROVIDER_ASSIGNED -> audience == NotificationAudience.PROVIDER
-                    ? PROVIDER_ASSIGNED_PROVIDER
+                    ? (event.attributes().containsKey("tenantName")
+                            ? PROVIDER_ASSIGNED_PROVIDER_TENANT
+                            : PROVIDER_ASSIGNED_PROVIDER)
                     : customerOnly(event, PROVIDER_ASSIGNED_CUSTOMER);
             case PROVIDER_ACCEPTED -> customerOnly(event, PROVIDER_ACCEPTED_CUSTOMER);
             case PROVIDER_REJECTED -> customerOnly(event, PROVIDER_REJECTED_CUSTOMER);

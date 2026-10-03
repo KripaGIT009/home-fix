@@ -4,9 +4,11 @@ import type { UseMutationResult, UseQueryResult } from '@tanstack/react-query';
 import type { ApiError } from '@api/client';
 import { dashboardKeys } from '../dashboard/hooks';
 import {
+  acceptAssignment,
   acceptJobOffer,
   addJobPart,
   completeJob,
+  declineAssignment,
   declineJobOffer,
   fetchJobCompletionSummary,
   fetchJobDetail,
@@ -25,7 +27,8 @@ import {
   type JobOffer,
   type PhotoKind,
 } from './api';
-import { isWaitingOnCustomer } from './status';
+import { watchDevicePosition } from './deviceLocation';
+import { isAwaitingProviderAnswer, isWaitingOnCustomer } from './status';
 
 /** Query keys for Provider job-execution resources. */
 export const jobKeys = {
@@ -78,16 +81,27 @@ function pollWhileWaitingOnCustomer(status: JobDetail['status'] | undefined): nu
   return status && isWaitingOnCustomer(status) ? APPROVAL_POLL_MS : false;
 }
 
+/** How often a job the provider's agency assigned is re-read while it waits for their answer. */
+export const ASSIGNMENT_POLL_MS = 5_000;
+
 /**
  * Full job detail (Requirement 11.1). While the customer is deciding on a
  * parts quote, or paying for the finished job, the change arrives from their
  * side, so the detail is polled until it moves on (Requirement 9.7-9.9, 12).
+ * A job the provider's agency assigned is polled too while it waits for the
+ * provider's answer, so a cancellation in the meantime shows up on its own
+ * (Requirement MT-13.3). A 404 stops the polling: the job is no longer theirs.
  */
 export function useJobDetail(bookingId: string): UseQueryResult<JobDetail, ApiError> {
   return useQuery<JobDetail, ApiError>({
     queryKey: jobKeys.detail(bookingId),
     queryFn: () => fetchJobDetail(bookingId),
-    refetchInterval: (query) => pollWhileWaitingOnCustomer(query.state.data?.status),
+    refetchInterval: (query) => {
+      const { status: queryStatus, data } = query.state;
+      if (queryStatus === 'error') return false;
+      if (data && isAwaitingProviderAnswer(data.status)) return ASSIGNMENT_POLL_MS;
+      return pollWhileWaitingOnCustomer(data?.status);
+    },
   });
 }
 
@@ -158,6 +172,37 @@ export function useDeclineJobOffer(bookingId: string): UseMutationResult<JobOffe
   return useMutation<JobOffer, ApiError, void>({
     mutationFn: () => declineJobOffer(bookingId),
     onSettled,
+  });
+}
+
+/**
+ * Accept a job the provider's agency assigned (Requirement MT-6.1). Settled
+ * either way: a refusal (404 not yours any more, 409 moved on) also means the
+ * cached detail and the dashboard list are out of date.
+ */
+export function useAcceptAssignment(bookingId: string): UseMutationResult<void, ApiError, void> {
+  const { onTransition } = useJobMutationHelpers(bookingId);
+  return useMutation<void, ApiError, void>({
+    mutationFn: () => acceptAssignment(bookingId),
+    onSettled: onTransition,
+  });
+}
+
+/**
+ * Decline a job the provider's agency assigned (Requirement MT-6.2). On
+ * success the job is no longer this provider's, so its cached detail is
+ * dropped rather than refetched (a refetch would only answer 404).
+ */
+export function useDeclineAssignment(bookingId: string): UseMutationResult<void, ApiError, void> {
+  const queryClient = useQueryClient();
+  const { onTransition, invalidateActiveJobs } = useJobMutationHelpers(bookingId);
+  return useMutation<void, ApiError, void>({
+    mutationFn: () => declineAssignment(bookingId),
+    onSuccess: () => {
+      queryClient.removeQueries({ queryKey: jobKeys.detail(bookingId) });
+      invalidateActiveJobs();
+    },
+    onError: onTransition,
   });
 }
 
@@ -255,9 +300,10 @@ export type LocationShareState = 'off' | 'starting' | 'sharing' | 'denied' | 'un
 /**
  * Shares the device's position with the Location Service while `active` — the
  * provider is on the way — so the customer's map moves (Requirement 10.1).
- * Positions come from `watchPosition` and are posted at most every
- * {@link LOCATION_SHARE_INTERVAL_MS}; a failed post is dropped, since the next
- * fix supersedes it.
+ * Positions come from the native location service in the Android and iOS apps
+ * and from the browser otherwise ({@link watchDevicePosition}, Requirement
+ * MT-14.3), and are posted at most every {@link LOCATION_SHARE_INTERVAL_MS}; a
+ * failed post is dropped, since the next fix supersedes it.
  */
 export function useShareLocation(bookingId: string, active: boolean): LocationShareState {
   const [state, setState] = useState<LocationShareState>('off');
@@ -268,25 +314,19 @@ export function useShareLocation(bookingId: string, active: boolean): LocationSh
       setState('off');
       return;
     }
-    if (typeof navigator === 'undefined' || !navigator.geolocation) {
-      setState('unavailable');
-      return;
-    }
     setState('starting');
-    const watchId = navigator.geolocation.watchPosition(
-      (position) => {
+    return watchDevicePosition({
+      onPosition: (latitude, longitude) => {
         setState('sharing');
         const now = Date.now();
         if (now - lastSentAt.current < LOCATION_SHARE_INTERVAL_MS) return;
         lastSentAt.current = now;
-        postLocation(bookingId, position.coords.latitude, position.coords.longitude).catch(() => {
+        postLocation(bookingId, latitude, longitude).catch(() => {
           // Dropped: the next fix is posted in a few seconds.
         });
       },
-      (error) => setState(error.code === error.PERMISSION_DENIED ? 'denied' : 'unavailable'),
-      { enableHighAccuracy: true, maximumAge: 5_000, timeout: 20_000 },
-    );
-    return () => navigator.geolocation.clearWatch(watchId);
+      onFailure: setState,
+    });
   }, [bookingId, active]);
 
   return state;

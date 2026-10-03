@@ -9,14 +9,20 @@ import java.time.Instant;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Primary;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.core.io.ByteArrayResource;
@@ -34,6 +40,8 @@ import org.springframework.util.MultiValueMap;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.homefix.booking.address.CustomerAddressPort;
+import com.homefix.booking.address.CustomerAddressPort.ServiceAddress;
 import com.homefix.booking.domain.Booking;
 import com.homefix.booking.domain.BookingAudit;
 import com.homefix.booking.domain.BookingRepository;
@@ -41,6 +49,10 @@ import com.homefix.booking.domain.BookingStatus;
 import com.homefix.booking.service.Actor;
 import com.homefix.booking.service.BookingService;
 import com.homefix.booking.service.DispatchOutcomeService;
+import com.homefix.booking.support.FakeTenantDirectory;
+import com.homefix.booking.tenant.TenantDirectoryPort;
+import com.homefix.booking.tenant.TenantDirectoryPort.CoveringTenant;
+import com.homefix.booking.tenant.TenantDirectoryPort.TenantSummary;
 import com.homefix.shared.outbox.OutboxEventEntity;
 import com.homefix.shared.outbox.OutboxEventRepository;
 
@@ -536,6 +548,156 @@ class EndToEndBookingFlowsIT {
         ResponseEntity<Map> bad = get("/bookings/history?pageSize=51", customerToken());
         assertThat(bad.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
         assertThat(bad.getBody().get("errorCode")).isEqualTo("VALIDATION_ERROR");
+    }
+
+    // ---------------------------------------------------------------------
+    // Flow 7 — Tenant fallback: queued, assigned, declined, reassigned, accepted (Requirement MT-4..MT-8)
+    // ---------------------------------------------------------------------
+
+    @Test
+    @DisplayName("A booking nobody accepts falls back to the covering Tenant, is assigned, declined, "
+            + "reassigned and accepted, with the same events as an automatic acceptance")
+    void tenantFallbackAssignmentFlow() {
+        TenantSummary ara = TENANTS.addTenant("Ara Home Services", "ACTIVE");
+        TenantSummary rival = TENANTS.addTenant("Rival Repairs", "ACTIVE");
+        UUID araAdmin = UUID.randomUUID();
+        UUID rivalAdmin = UUID.randomUUID();
+        UUID decliner = UUID.randomUUID();
+        TENANTS.adminToTenant.put(araAdmin, ara.tenantId());
+        TENANTS.adminToTenant.put(rivalAdmin, rival.tenantId());
+        TENANTS.addMember(ara.tenantId(), decliner, true);
+        TENANTS.addMember(ara.tenantId(), providerId, true);
+        TENANTS.covering.add(new CoveringTenant(ara.tenantId(), ara.name(), 1.2));
+        ADDRESS.set(Optional.of(new ServiceAddress("12 Station Rd, Ara", 25.556, 84.663)));
+
+        String reference = createAndConfirmScheduled();
+        UUID bookingId = requireBooking(reference).getId();
+
+        // Dispatch reports exhaustion: the booking is queued, not failed (Requirement MT-4.2).
+        Booking queued = dispatchOutcomeService.markSearchingFailed(bookingId);
+        assertThat(queued.getStatus()).isEqualTo(BookingStatus.AWAITING_ASSIGNMENT);
+        assertThat(outboxRows(reference, "BookingCancelled")).isEmpty();
+        assertThat(get("/bookings/" + bookingId, customerToken()).getBody().get("status"))
+                .isEqualTo("AWAITING_ASSIGNMENT");
+        // The new status works in the Admin Portal's status filter.
+        ResponseEntity<List> adminList = rest.exchange(url("/admin/bookings?status=AWAITING_ASSIGNMENT"),
+                HttpMethod.GET, new HttpEntity<>(authHeaders(token(UUID.randomUUID(), "ADMIN"))), List.class);
+        assertThat(adminList.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(adminList.getBody()).anyMatch(r -> reference.equals(((Map<?, ?>) r).get("reference")));
+
+        // Only the candidate Tenant sees it (Property MT5); the queue row carries the address.
+        String araToken = token(araAdmin, "TENANT_ADMIN");
+        List<Map<String, Object>> araQueue = queue(araToken);
+        assertThat(araQueue).extracting(r -> r.get("reference")).containsExactly(reference);
+        assertThat(araQueue.get(0).get("address")).isEqualTo("12 Station Rd, Ara");
+        assertThat(queue(token(rivalAdmin, "TENANT_ADMIN"))).isEmpty();
+        assertThat(assign(token(rivalAdmin, "TENANT_ADMIN"), reference, rivalAdmin).getStatusCode())
+                .isEqualTo(HttpStatus.NOT_FOUND);
+        // A customer cannot reach the Tenant endpoints at all (Requirement MT-10.1).
+        assertThat(get("/tenant/bookings/queue", customerToken()).getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+
+        // Assign to the first Provider, who declines.
+        ResponseEntity<Map> assigned = assign(araToken, reference, decliner);
+        assertThat(assigned.getStatusCode()).as("%s", assigned.getBody()).isEqualTo(HttpStatus.OK);
+        assertThat(assigned.getBody().get("status")).isEqualTo("PROVIDER_ASSIGNED");
+        ResponseEntity<Map> asDecliner = get("/bookings/" + bookingId, token(decliner, "SERVICE_PROVIDER"));
+        assertThat(asDecliner.getBody().get("tenantName")).isEqualTo("Ara Home Services");
+        assertStatus(post(reference + "/assignment/rejection", token(decliner, "SERVICE_PROVIDER")),
+                "AWAITING_ASSIGNMENT");
+        assertThat(queue(araToken)).extracting(r -> r.get("reference")).containsExactly(reference);
+
+        // Reassign; a Provider who is not the assignee cannot answer for them (Requirement MT-6.3).
+        assertThat(assign(araToken, reference, providerId).getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(post(reference + "/assignment/acceptance", token(decliner, "SERVICE_PROVIDER"))
+                .getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertStatus(post(reference + "/assignment/acceptance", providerToken()), "PROVIDER_ACCEPTED");
+
+        Booking accepted = requireBooking(reference);
+        assertThat(accepted.getTenantId()).isEqualTo(ara.tenantId());
+        assertThat(accepted.getProviderId()).isEqualTo(providerId);
+        // Two assignments announced, each naming the Tenant; one acceptance in dispatch's shape.
+        List<OutboxEventEntity> assignments = outboxRows(reference, "ProviderAssigned");
+        assertThat(assignments).hasSize(2);
+        JsonNode acceptance = singleOutboxPayload(reference, "ProviderAccepted");
+        assertThat(acceptance.get("bookingId").asText()).isEqualTo(bookingId.toString());
+        assertThat(acceptance.get("customerId").asText()).isEqualTo(customerId.toString());
+        assertThat(acceptance.get("providerId").asText()).isEqualTo(providerId.toString());
+        assertThat(acceptance.has("bookingCreatedAt")).isTrue();
+        assertThat(acceptance.has("acceptedAt")).isTrue();
+        assertThat(outboxRows(reference, "BookingCancelled")).isEmpty();
+        assertContiguousAudit(reference);
+
+        // The job then runs exactly as an automatically matched one, and shows in the Tenant's jobs.
+        assertStatus(post(reference + "/on-the-way", providerToken()), "PROVIDER_ON_THE_WAY");
+        ResponseEntity<List> jobs = rest.exchange(url("/tenant/bookings?status=PROVIDER_ON_THE_WAY"),
+                HttpMethod.GET, new HttpEntity<>(authHeaders(araToken)), List.class);
+        assertThat(jobs.getBody()).extracting(r -> ((Map<?, ?>) r).get("reference")).containsExactly(reference);
+    }
+
+    @Test
+    @DisplayName("A booking cancelled while awaiting a Tenant assignment carries no fee")
+    void cancellationWhileAwaitingAssignmentIsFeeFree() {
+        TenantSummary ara = TENANTS.addTenant("Ara Home Services", "ACTIVE");
+        TENANTS.covering.add(new CoveringTenant(ara.tenantId(), ara.name(), 1.2));
+        ADDRESS.set(Optional.of(new ServiceAddress("12 Station Rd, Ara", 25.556, 84.663)));
+        String reference = createAndConfirmScheduled();
+        dispatchOutcomeService.markSearchingFailed(requireBooking(reference).getId());
+
+        ResponseEntity<Map> cancelled = rest.exchange(url("/bookings/" + reference + "/cancellation"),
+                HttpMethod.POST, jsonEntity(customerToken(), "{\"reason\":\"found someone\"}"), Map.class);
+        assertThat(cancelled.getStatusCode()).isEqualTo(HttpStatus.OK);
+
+        assertThat(requireBooking(reference).getCancellationFee()).isEqualByComparingTo("0.00");
+        JsonNode event = singleOutboxPayload(reference, "BookingCancelled");
+        assertThat(event.get("previousStatus").asText()).isEqualTo("AWAITING_ASSIGNMENT");
+    }
+
+    private List<Map<String, Object>> queue(String token) {
+        ResponseEntity<List> response = rest.exchange(url("/tenant/bookings/queue"), HttpMethod.GET,
+                new HttpEntity<>(authHeaders(token)), List.class);
+        assertThat(response.getStatusCode()).as("%s", response.getBody()).isEqualTo(HttpStatus.OK);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> rows = response.getBody();
+        return rows;
+    }
+
+    private ResponseEntity<Map> assign(String token, String reference, UUID provider) {
+        return rest.exchange(url("/tenant/bookings/" + reference + "/assignment"), HttpMethod.POST,
+                jsonEntity(token, "{\"providerId\":\"" + provider + "\"}"), Map.class);
+    }
+
+    // ----- Tenant directory and address fakes ------------------------------
+
+    /** The Provider Service's Tenant registry, scripted per test; empty means "no Tenant covers". */
+    static final FakeTenantDirectory TENANTS = new FakeTenantDirectory();
+
+    /** Service addresses resolve to nothing (as with the stub adapter) unless a test sets one. */
+    static final AtomicReference<Optional<ServiceAddress>> ADDRESS = new AtomicReference<>(Optional.empty());
+
+    @AfterEach
+    void resetFakes() {
+        TENANTS.reset();
+        ADDRESS.set(Optional.empty());
+    }
+
+    /**
+     * Replaces the two cross-service lookups the Tenant fallback needs. With nothing scripted they
+     * answer like the stub adapters, so every other flow in this class behaves exactly as before.
+     */
+    @TestConfiguration
+    static class FakeLookups {
+
+        @Bean
+        @Primary
+        TenantDirectoryPort fakeTenantDirectory() {
+            return TENANTS;
+        }
+
+        @Bean
+        @Primary
+        CustomerAddressPort fakeCustomerAddresses() {
+            return id -> ADDRESS.get();
+        }
     }
 
     // =====================================================================

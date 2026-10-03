@@ -23,7 +23,9 @@ import { describeBookingStatus } from '@lib/bookingStatus';
 import { formatCurrency, formatDateTime } from '@lib/format';
 import { useJobDetail } from './hooks';
 import { PaymentStatusNotice } from './PaymentStatusNotice';
-import { isJobFinished } from './status';
+import { AssignmentDecisionCard } from './AssignmentDecisionCard';
+import { declinedNotice, type DashboardNoticeState } from './assignmentNotice';
+import { isAwaitingProviderAnswer, isJobFinished } from './status';
 import { buildNavigationDeepLink } from './navigation';
 import type { JobDetail } from './api';
 
@@ -31,7 +33,10 @@ import type { JobDetail } from './api';
  * Job Details screen (Requirement 11.1): customer display name, service
  * address, description, customer-uploaded media, and a navigation deep-link to
  * the customer's coordinates. Also routes the Provider onward to the active-job
- * or completion flow depending on the booking state.
+ * or completion flow depending on the booking state. A job the provider's
+ * agency assigned shows who assigned it with Accept and Decline instead
+ * (Requirement MT-6.4): accepting continues into the active-job flow, declining
+ * returns to the dashboard with a message.
  */
 export function JobDetailsScreen() {
   const { bookingId = '' } = useParams();
@@ -59,8 +64,8 @@ function DetailContent({ job }: { job: JobDetail }) {
     ? buildNavigationDeepLink(job.coordinates.latitude, job.coordinates.longitude)
     : null;
 
+  const awaitingAnswer = isAwaitingProviderAnswer(job.status);
   const showActiveCta =
-    job.status === 'PROVIDER_ASSIGNED' ||
     job.status === 'PROVIDER_ACCEPTED' ||
     job.status === 'PROVIDER_ON_THE_WAY' ||
     job.status === 'PROVIDER_ARRIVED' ||
@@ -72,6 +77,19 @@ function DetailContent({ job }: { job: JobDetail }) {
 
   return (
     <Stack spacing={2}>
+      {awaitingAnswer ? (
+        <AssignmentDecisionCard
+          job={job}
+          onAccepted={() => navigate(`/jobs/${job.bookingId}/active`)}
+          onDeclined={(tenantName) =>
+            navigate('/dashboard', {
+              replace: true,
+              state: { notice: declinedNotice(tenantName) } satisfies DashboardNoticeState,
+            })
+          }
+          onGone={() => navigate('/dashboard', { replace: true })}
+        />
+      ) : null}
       <Card variant="outlined">
         <CardContent>
           <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>

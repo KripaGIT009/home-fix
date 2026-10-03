@@ -13,8 +13,10 @@ import com.homefix.booking.domain.BookingStatus;
 /**
  * Encodes the cancellation-fee rules (Requirement 9.16-9.18):
  * <ul>
- *   <li>No fee when cancelling in CREATED, SEARCHING_PROVIDER, PROVIDER_ASSIGNED, or
- *       PROVIDER_ACCEPTED (Requirement 9.16).</li>
+ *   <li>No fee when cancelling in CREATED, SEARCHING_PROVIDER, AWAITING_ASSIGNMENT,
+ *       PROVIDER_ASSIGNED, or PROVIDER_ACCEPTED (Requirement 9.16). Nobody has set out yet in the
+ *       two Tenant-assignment states, so they are fee-free like the automatic ones (Requirement
+ *       MT-9.3).</li>
  *   <li>A configured fee once the provider is on the way or later — PROVIDER_ON_THE_WAY,
  *       PROVIDER_ARRIVED, JOB_STARTED (Requirement 9.17-9.18).</li>
  * </ul>
@@ -30,6 +32,7 @@ public class CancellationFeePolicy {
     private static final Set<BookingStatus> FEE_FREE = EnumSet.of(
             BookingStatus.CREATED,
             BookingStatus.SEARCHING_PROVIDER,
+            BookingStatus.AWAITING_ASSIGNMENT,
             BookingStatus.PROVIDER_ASSIGNED,
             BookingStatus.PROVIDER_ACCEPTED);
 

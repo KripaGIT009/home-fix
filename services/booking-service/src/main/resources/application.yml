@@ -70,6 +70,14 @@ homefix:
     # Default cancellation fee applied when a Service_Subcategory has none configured
     # (Requirement 9.18 range 0.00-999.99).
     default-cancellation-fee: 0.00
+    # Provider Service, owner of the Tenant registry (multi-tenant design D1). booking-service asks
+    # its /internal/tenants/** endpoints with the internal-api-key above (Requirement MT-10.5).
+    provider-service-url: ${PROVIDER_SERVICE_URL:http://provider-service:8083}
+    # TenantDirectoryPort adapter: 'http' (default, production) or 'stub' (knows no Tenants, so a
+    # booking nobody accepts fails as before the Tenant feature).
+    tenant-directory-client: ${TENANT_DIRECTORY_CLIENT:http}
+    # How long a booking may wait for a Tenant assignment before it fails (Requirement MT-7.1).
+    tenant-assignment-timeout: ${TENANT_ASSIGNMENT_TIMEOUT:PT60M}
     topics:
       # Settles a paid booking at PAYMENT_COMPLETED (Requirement 12.6).
       payment-completed: ${BOOKING_TOPIC_PAYMENT_COMPLETED:PaymentCompleted}

@@ -63,6 +63,18 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    void aLostOptimisticLockMapsTo409BookingChanged() {
+        MDC.put("correlationId", "corr-2");
+
+        ResponseEntity<ErrorResponseDto> resp = handler.handleConcurrentChange(
+                new org.springframework.orm.ObjectOptimisticLockingFailureException("Booking", UUID.randomUUID()));
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(resp.getBody().getErrorCode()).isEqualTo("BOOKING_CHANGED");
+        assertThat(resp.getBody().getCorrelationId()).isEqualTo("corr-2");
+    }
+
+    @Test
     void handleBookingNotFoundMapsTo404() {
         ResponseEntity<ErrorResponseDto> resp =
                 handler.handleBooking(BookingException.notFound("HFX-404"));

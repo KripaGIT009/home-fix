@@ -8,7 +8,9 @@ import { PhotoUploadCard } from './PhotoUploadCard';
 import { PartsEntryCard } from './PartsEntryCard';
 import { PauseResumeCard } from './PauseResumeCard';
 import { PaymentStatusNotice } from './PaymentStatusNotice';
-import { isJobFinished } from './status';
+import { AssignmentDecisionCard } from './AssignmentDecisionCard';
+import { declinedNotice, type DashboardNoticeState } from './assignmentNotice';
+import { isAwaitingProviderAnswer, isJobFinished } from './status';
 import {
   useCompleteJob,
   useJobDetail,
@@ -28,7 +30,9 @@ import type { JobDetail } from './api';
  * parts/materials entry, and after-photo upload (required before
  * JOB_COMPLETED). Start and complete actions are guarded client-side by the
  * presence of the relevant photo, with the Booking Service as the
- * authoritative check.
+ * authoritative check. A job the provider's agency assigned must be accepted
+ * first (Requirement MT-6): until then the screen offers only Accept and
+ * Decline, and after Accept it continues here with "I'm on my way".
  */
 export function ActiveJobScreen() {
   const { bookingId = '' } = useParams();
@@ -64,8 +68,10 @@ function ActiveContent({ job }: { job: JobDetail }) {
   const status = describeBookingStatus(job.status);
 
   // Before the job: set off, arrive, then photograph and start. The Booking
-  // Service only allows JOB_STARTED from PROVIDER_ARRIVED.
-  const notSetOff = job.status === 'PROVIDER_ASSIGNED' || job.status === 'PROVIDER_ACCEPTED';
+  // Service only allows JOB_STARTED from PROVIDER_ARRIVED, and on-the-way only
+  // once the provider has accepted.
+  const awaitingAnswer = isAwaitingProviderAnswer(job.status);
+  const notSetOff = job.status === 'PROVIDER_ACCEPTED';
   const enRoute = job.status === 'PROVIDER_ON_THE_WAY';
   const arrivedOnSite = job.status === 'PROVIDER_ARRIVED';
   const inProgress = job.status === 'JOB_STARTED' || job.status === 'JOB_PAUSED';
@@ -83,19 +89,43 @@ function ActiveContent({ job }: { job: JobDetail }) {
     });
   };
 
+  const header = (
+    <Stack direction="row" justifyContent="space-between" alignItems="center">
+      <Box>
+        <Typography variant="h6" fontWeight={700}>
+          {job.serviceName}
+        </Typography>
+        <Typography variant="caption" color="text.secondary">
+          {job.reference}
+        </Typography>
+      </Box>
+      <Chip label={status.label} color={status.color} />
+    </Stack>
+  );
+
+  if (awaitingAnswer) {
+    return (
+      <Stack spacing={2}>
+        {header}
+        <AssignmentDecisionCard
+          job={job}
+          // The refetched job is PROVIDER_ACCEPTED: this screen carries on.
+          onAccepted={() => undefined}
+          onDeclined={(tenantName) =>
+            navigate('/dashboard', {
+              replace: true,
+              state: { notice: declinedNotice(tenantName) } satisfies DashboardNoticeState,
+            })
+          }
+          onGone={() => navigate('/dashboard', { replace: true })}
+        />
+      </Stack>
+    );
+  }
+
   return (
     <Stack spacing={2}>
-      <Stack direction="row" justifyContent="space-between" alignItems="center">
-        <Box>
-          <Typography variant="h6" fontWeight={700}>
-            {job.serviceName}
-          </Typography>
-          <Typography variant="caption" color="text.secondary">
-            {job.reference}
-          </Typography>
-        </Box>
-        <Chip label={status.label} color={status.color} />
-      </Stack>
+      {header}
 
       <PhotoUploadCard
         bookingId={job.bookingId}
@@ -254,6 +284,16 @@ function TransitionButton({
 
 /** Tells the provider whether the customer can see them on the map. */
 function LocationShareNotice({ state }: { state: LocationShareState }) {
+  if (state === 'starting') {
+    // The explanation for the permission prompt the device may show next
+    // (Requirement MT-14.3).
+    return (
+      <Alert severity="info">
+        Allow location access if asked, so the customer can follow you on the map while you&apos;re
+        on the way.
+      </Alert>
+    );
+  }
   if (state === 'sharing') {
     return <Alert severity="success">Sharing your location with the customer.</Alert>;
   }

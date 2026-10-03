@@ -11,6 +11,7 @@ export type TrackingPhase =
   | 'booked'
   | 'searching'
   | 'searchFailed'
+  | 'confirming'
   | 'assigned'
   | 'enRoute'
   | 'arrived'
@@ -28,7 +29,11 @@ const PHASE_BY_STATUS: Record<BookingStatus, TrackingPhase> = {
   CREATED: 'booked',
   SEARCHING_PROVIDER: 'searching',
   SEARCHING_FAILED: 'searchFailed',
-  PROVIDER_ASSIGNED: 'assigned',
+  // A local partner is assigning a pro: still the search, from the customer's
+  // side (Requirement MT-4.5).
+  AWAITING_ASSIGNMENT: 'searching',
+  // Assigned by a partner, waiting for the pro to confirm (Requirement MT-13.1).
+  PROVIDER_ASSIGNED: 'confirming',
   PROVIDER_ACCEPTED: 'assigned',
   PROVIDER_ON_THE_WAY: 'enRoute',
   PROVIDER_ARRIVED: 'arrived',
@@ -56,9 +61,12 @@ export const LOCATION_STATUSES: readonly BookingStatus[] = [
   'PROVIDER_ARRIVED',
 ];
 
-/** Statuses during which the booking chat is meaningful. */
+/**
+ * Statuses during which the booking chat is meaningful. The chat channel opens
+ * when a professional accepts, so a partner's assignment that the professional
+ * has not confirmed yet (`PROVIDER_ASSIGNED`) has no chat.
+ */
 export const CHAT_STATUSES: readonly BookingStatus[] = [
-  'PROVIDER_ASSIGNED',
   'PROVIDER_ACCEPTED',
   'PROVIDER_ON_THE_WAY',
   'PROVIDER_ARRIVED',
@@ -90,6 +98,7 @@ const STEP_BY_STATUS: Partial<Record<BookingStatus, JourneyKey>> = {
   CREATED: 'booked',
   SEARCHING_PROVIDER: 'searching',
   SEARCHING_FAILED: 'searching',
+  AWAITING_ASSIGNMENT: 'searching',
   PROVIDER_ASSIGNED: 'assigned',
   PROVIDER_ACCEPTED: 'assigned',
   PROVIDER_ON_THE_WAY: 'enRoute',
@@ -110,7 +119,8 @@ const STEP_BY_STATUS: Partial<Record<BookingStatus, JourneyKey>> = {
 const CURRENT_NOTE: Partial<Record<BookingStatus, string>> = {
   CREATED: 'Confirming your booking.',
   SEARCHING_PROVIDER: 'Offering your job to verified pros nearby.',
-  PROVIDER_ASSIGNED: 'Waiting for them to start the trip.',
+  AWAITING_ASSIGNMENT: 'A local partner is assigning a professional.',
+  PROVIDER_ASSIGNED: 'Waiting for them to confirm.',
   PROVIDER_ACCEPTED: 'Waiting for them to start the trip.',
   PROVIDER_ON_THE_WAY: 'Heading to your address now.',
   PROVIDER_ARRIVED: 'Your professional is at your door.',

@@ -12,6 +12,7 @@ export type BookingStatus =
   | 'CREATED'
   | 'SEARCHING_PROVIDER'
   | 'SEARCHING_FAILED'
+  | 'AWAITING_ASSIGNMENT'
   | 'PROVIDER_ASSIGNED'
   | 'PROVIDER_ACCEPTED'
   | 'PROVIDER_ON_THE_WAY'
@@ -45,7 +46,11 @@ const STATUS_MAP: Record<BookingStatus, StatusDescriptor> = {
   CREATED: { label: 'Created', color: 'default' },
   SEARCHING_PROVIDER: { label: 'Finding a provider', color: 'info' },
   SEARCHING_FAILED: { label: 'No provider found', color: 'error' },
-  PROVIDER_ASSIGNED: { label: 'Assigned', color: 'default' },
+  // With a partner agency, before any provider is chosen (Requirement MT-4.2).
+  AWAITING_ASSIGNMENT: { label: 'Awaiting assignment', color: 'default' },
+  // Assigned by the provider's agency: the provider still has to accept or
+  // decline it, so it asks for action (Requirement MT-6.4).
+  PROVIDER_ASSIGNED: { label: 'Accept or decline', color: 'warning' },
   PROVIDER_ACCEPTED: { label: 'Accepted', color: 'info' },
   PROVIDER_ON_THE_WAY: { label: 'On the way', color: 'info' },
   PROVIDER_ARRIVED: { label: 'Arrived', color: 'warning' },

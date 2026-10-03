@@ -7,8 +7,10 @@ import java.util.UUID;
 
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Persistence for {@link ProviderProfile} aggregates.
@@ -90,4 +92,46 @@ public interface ProviderProfileRepository extends JpaRepository<ProviderProfile
             where p.id in :ids
             """)
     List<ProviderSkillTag> findSkillTags(@Param("ids") Collection<UUID> ids);
+
+    // ============================= Tenant membership (Requirement MT-3) =================
+
+    /** A Tenant's team, by display name (Requirement MT-3.4). */
+    @Query("""
+            select p from ProviderProfile p
+            where p.tenantId = :tenantId
+            order by lower(p.displayName) asc, p.id asc
+            """)
+    List<ProviderProfile> findByTenantId(@Param("tenantId") UUID tenantId);
+
+    long countByTenantId(UUID tenantId);
+
+    /** Team size per Tenant, for the Platform_Admin list (Requirement MT-1.5). */
+    @Query("select new com.homefix.provider.domain.TenantCount(p.tenantId, count(p)) "
+            + "from ProviderProfile p where p.tenantId is not null group by p.tenantId")
+    List<TenantCount> countPerTenant();
+
+    /**
+     * Attaches an independent provider to {@code tenantId} in one conditional statement, so two
+     * Tenants adding the same provider at once cannot both succeed (Requirement MT-3.2,
+     * Property MT8).
+     *
+     * @return 1 when attached, 0 when the provider is unknown or already belongs to a Tenant
+     */
+    @Transactional
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("update ProviderProfile p set p.tenantId = :tenantId "
+            + "where p.id = :providerId and p.tenantId is null")
+    int attachToTenant(@Param("providerId") UUID providerId, @Param("tenantId") UUID tenantId);
+
+    /**
+     * Detaches a provider from {@code tenantId} only — a Tenant can never release another Tenant's
+     * provider (Requirements MT-3.3, MT-10.2).
+     *
+     * @return 1 when detached, 0 when the provider is not on that Tenant's team
+     */
+    @Transactional
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("update ProviderProfile p set p.tenantId = null "
+            + "where p.id = :providerId and p.tenantId = :tenantId")
+    int detachFromTenant(@Param("providerId") UUID providerId, @Param("tenantId") UUID tenantId);
 }

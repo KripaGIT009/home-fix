@@ -33,6 +33,8 @@ class CancellationFeePolicyTest {
         CancellationFeePolicy policy = policyWithFee(new BigDecimal("100.00"), new BigDecimal("0.00"));
         for (BookingStatus s : new BookingStatus[]{
                 BookingStatus.CREATED, BookingStatus.SEARCHING_PROVIDER,
+                // Both pre-acceptance Tenant states are fee-free (Requirement MT-9.3).
+                BookingStatus.AWAITING_ASSIGNMENT,
                 BookingStatus.PROVIDER_ASSIGNED, BookingStatus.PROVIDER_ACCEPTED}) {
             Booking b = Bookings.inState(s);
             assertThat(policy.feeFor(b))

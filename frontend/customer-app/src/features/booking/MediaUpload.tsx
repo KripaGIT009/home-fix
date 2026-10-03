@@ -11,7 +11,9 @@ import {
   Typography,
 } from '@mui/material';
 import AddPhotoAlternateRoundedIcon from '@mui/icons-material/AddPhotoAlternateRounded';
+import PhotoCameraRoundedIcon from '@mui/icons-material/PhotoCameraRounded';
 import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
+import { env } from '@config/env';
 import {
   ACCEPTED_MEDIA_LABEL,
   MAX_MEDIA_FILES,
@@ -31,9 +33,16 @@ interface MediaUploadProps {
  * Enforces the 10-file cap and validates each file's type (JPEG/PNG/MP4/MOV)
  * and size (≤ 50 MB), surfacing a descriptive error for any rejected file. The
  * accepted files are lifted to the parent form as a File[].
+ *
+ * In the Android and iOS apps a "Take a photo" button opens the camera directly
+ * (Requirement MT-14.4): Android's file chooser offers no camera for a plain
+ * file input, while one marked `capture` makes the WebView launch the camera
+ * and ask for the camera permission. The web app is unchanged, since `capture`
+ * would take the gallery choice away from mobile browsers.
  */
 export function MediaUpload({ files, onChange }: MediaUploadProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
   const [rejections, setRejections] = useState<string[]>([]);
 
   const handleSelect = useCallback(
@@ -95,6 +104,29 @@ export function MediaUpload({ files, onChange }: MediaUploadProps) {
       >
         {atLimit ? `Maximum ${MAX_MEDIA_FILES} files added` : 'Add photos or videos'}
       </Button>
+      {env.isNative ? (
+        <>
+          <input
+            ref={cameraRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            onChange={handleSelect}
+            style={{ display: 'none' }}
+            aria-hidden
+          />
+          <Button
+            type="button"
+            variant="text"
+            startIcon={<PhotoCameraRoundedIcon />}
+            onClick={() => cameraRef.current?.click()}
+            disabled={atLimit}
+            fullWidth
+          >
+            Take a photo
+          </Button>
+        </>
+      ) : null}
 
       {rejections.length > 0 ? (
         <Alert severity="warning" onClose={() => setRejections([])}>

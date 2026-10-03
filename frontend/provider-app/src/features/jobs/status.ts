@@ -12,6 +12,15 @@ export function isJobRunning(status: BookingStatus): boolean {
   return status === 'JOB_STARTED';
 }
 
+/**
+ * Whether the provider's agency has assigned the job and the provider has yet
+ * to accept or decline it (Requirement MT-6). Until they accept, the job is not
+ * theirs to work: the screens offer only Accept and Decline.
+ */
+export function isAwaitingProviderAnswer(status: BookingStatus): boolean {
+  return status === 'PROVIDER_ASSIGNED';
+}
+
 /** Whether the job is before the on-site "arrived" milestone. */
 export function isBeforeArrival(status: BookingStatus): boolean {
   return (

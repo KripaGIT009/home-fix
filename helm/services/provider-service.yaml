@@ -26,3 +26,5 @@ config:
   CATALOG_SERVICE_URI: "http://catalog-service:8085"
   # Batch APPROVED lookup behind the dispatch eligibility search (Req 5.10, 8.2).
   VERIFICATION_SERVICE_URL: "http://verification-service:8094"
+  # Account lookup and TENANT_ADMIN grants for Tenant administration (Requirement MT-2).
+  AUTH_SERVICE_URL: "http://auth-service:8081"

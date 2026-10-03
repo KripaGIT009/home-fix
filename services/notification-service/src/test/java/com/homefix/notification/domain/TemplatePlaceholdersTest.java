@@ -29,6 +29,19 @@ class TemplatePlaceholdersTest {
     }
 
     @Test
+    void onlyProviderAssignedSuppliesTheAssigningAgencysName() {
+        // Requirement MT-5.3: the admin template editor accepts {{tenantName}} for this event only.
+        assertThat(TemplatePlaceholders.allowedFor(NotificationEventType.PROVIDER_ASSIGNED))
+                .containsExactlyInAnyOrder("bookingReference", "tenantName");
+        assertThat(TemplatePlaceholders.problems(NotificationEventType.PROVIDER_ASSIGNED,
+                "{{bookingReference}} assigned to you by {{tenantName}}")).isEmpty();
+        assertThat(TemplatePlaceholders.problems(NotificationEventType.PROVIDER_ACCEPTED, "{{tenantName}}"))
+                .hasSize(1);
+        assertThat(TemplatePlaceholders.values(NotificationEventType.PROVIDER_ASSIGNED,
+                Map.of("tenantName", "Sharma Home Services"))).containsEntry("tenantName", "Sharma Home Services");
+    }
+
+    @Test
     void everyBuiltInTemplateUsesOnlyItsEventsPlaceholders() {
         for (TemplateDefinition template : BuiltInTemplates.all()) {
             assertThat(TemplatePlaceholders.problems(template.eventType(), template.title())).as(template.key()).isEmpty();

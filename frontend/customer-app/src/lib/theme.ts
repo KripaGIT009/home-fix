@@ -26,7 +26,7 @@ export const brand = {
   warmDark: '#8A5300',
   warmSoft: '#FFF6E2',
   /** Text. */
-  ink: '#101828',
+  ink: '#0F0F0F',
   body: '#344054',
   muted: '#5F6B7E',
   subtle: '#98A2B3',
@@ -393,15 +393,6 @@ export const surfaces = {
     boxShadow: shadows.bar,
   },
 } as const;
-
-/** Soft blue wash used behind heroes and brand panels. */
-export const heroBackground = `radial-gradient(1200px 420px at 85% -10%, ${alpha(
-  brand.accent,
-  0.14,
-)} 0%, transparent 60%), radial-gradient(800px 360px at 0% 0%, ${alpha(
-  brand.warm,
-  0.1,
-)} 0%, transparent 55%), linear-gradient(180deg, #F3F6FE 0%, ${brand.canvas} 100%)`;
 
 /** Deep brand gradient for the sign-in panel and splash. */
 export const brandGradient = `radial-gradient(900px 500px at 10% 0%, ${alpha(

@@ -48,6 +48,9 @@ homefix:
     max-horizon: 90d
     additional-quote-timeout: 60m
     default-cancellation-fee: 0.00
+    # No Provider Service in the IT: the Tenant directory is the scripted fake the test class
+    # registers (@Primary); the stub keeps the HTTP adapter, which needs the internal key, unbuilt.
+    tenant-directory-client: stub
   catalog:
     client: stub
   pricing:

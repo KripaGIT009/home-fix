@@ -54,7 +54,10 @@ public class DevAccountSeeder implements ApplicationRunner {
             new SeedAccount("superadmin", "+919000000022", Set.of(Role.SUPER_ADMIN, Role.ADMIN)),
             new SeedAccount("finance", "+919000000023", Set.of(Role.FINANCE_ADMIN)),
             new SeedAccount("dispatcher", "+919000000024", Set.of(Role.DISPATCHER)),
-            new SeedAccount("support", "+919000000025", Set.of(Role.SUPPORT_AGENT)));
+            new SeedAccount("support", "+919000000025", Set.of(Role.SUPPORT_AGENT)),
+            // The demo Tenant's administrator (Requirement MT-15.5). The Tenant membership itself
+            // lives in provider-service; docker/seed-tenants.sql links this account by mobile.
+            new SeedAccount("tenantadmin", "+919000000031", Set.of(Role.TENANT_ADMIN)));
 
     private final UserAccountRepository userRepository;
     private final PasswordEncoder passwordEncoder;
@@ -80,7 +83,7 @@ public class DevAccountSeeder implements ApplicationRunner {
             return;
         }
 
-        // Hash once rather than per account: bcrypt at cost 12 is ~250ms, and nine of those
+        // Hash once rather than per account: bcrypt at cost 12 is ~250ms, and ten of those
         // would be a visible delay on every start.
         String hash = passwordEncoder.encode(password);
 

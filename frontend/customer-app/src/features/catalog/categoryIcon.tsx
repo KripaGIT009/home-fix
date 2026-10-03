@@ -10,6 +10,16 @@ import PestControlRoundedIcon from '@mui/icons-material/PestControlRounded';
 import KitchenRoundedIcon from '@mui/icons-material/KitchenRounded';
 import ContentCutRoundedIcon from '@mui/icons-material/ContentCutRounded';
 import HandymanRoundedIcon from '@mui/icons-material/HandymanRounded';
+import AirRoundedIcon from '@mui/icons-material/AirRounded';
+import ElectricalServicesRoundedIcon from '@mui/icons-material/ElectricalServicesRounded';
+import LightRoundedIcon from '@mui/icons-material/LightRounded';
+import WaterDropRoundedIcon from '@mui/icons-material/WaterDropRounded';
+import BathtubRoundedIcon from '@mui/icons-material/BathtubRounded';
+import ShowerRoundedIcon from '@mui/icons-material/ShowerRounded';
+import CountertopsRoundedIcon from '@mui/icons-material/CountertopsRounded';
+import WeekendRoundedIcon from '@mui/icons-material/WeekendRounded';
+import LocalLaundryServiceRoundedIcon from '@mui/icons-material/LocalLaundryServiceRounded';
+import MicrowaveRoundedIcon from '@mui/icons-material/MicrowaveRounded';
 import { matchCategoryKey } from './categoryArt';
 
 /**
@@ -45,5 +55,49 @@ interface CategoryIconProps extends SvgIconProps {
 export function CategoryIcon({ iconKey, categoryName, ...props }: CategoryIconProps) {
   const key = matchCategoryKey(iconKey, categoryName);
   const IconComponent = (key ? ICON_BY_KEY[key] : undefined) ?? HandymanRoundedIcon;
+  return <IconComponent {...props} />;
+}
+
+/**
+ * Service-level icons, matched on words in the service name. Two services in
+ * one category would otherwise share an identical tile; the name is the only
+ * thing the catalog says about a service, so it is what tells them apart.
+ * Ordered so specific words win; short words must match a whole word.
+ */
+const ICON_BY_SERVICE_WORD: ReadonlyArray<[string, ComponentType<SvgIconProps>]> = [
+  ['washing', LocalLaundryServiceRoundedIcon],
+  ['refrigerator', KitchenRoundedIcon],
+  ['fridge', KitchenRoundedIcon],
+  ['microwave', MicrowaveRoundedIcon],
+  ['switch', ElectricalServicesRoundedIcon],
+  ['wiring', ElectricalServicesRoundedIcon],
+  ['socket', ElectricalServicesRoundedIcon],
+  ['light', LightRoundedIcon],
+  ['fan', AirRoundedIcon],
+  ['leak', WaterDropRoundedIcon],
+  ['bathroom', BathtubRoundedIcon],
+  ['shower', ShowerRoundedIcon],
+  ['kitchen', CountertopsRoundedIcon],
+  ['sofa', WeekendRoundedIcon],
+  ['ac', AcUnitRoundedIcon],
+];
+
+interface ServiceIconProps extends CategoryIconProps {
+  serviceName: string;
+}
+
+/** Renders the icon for a service, falling back to its category's icon. */
+export function ServiceIcon({ serviceName, iconKey, categoryName, ...props }: ServiceIconProps) {
+  const words = serviceName
+    .toLowerCase()
+    .split(/[^a-z]+/)
+    .filter(Boolean);
+  const joined = words.join('');
+  const IconComponent = ICON_BY_SERVICE_WORD.find(([word]) =>
+    word.length <= 3 ? words.includes(word) : joined.includes(word),
+  )?.[1];
+  if (!IconComponent) {
+    return <CategoryIcon iconKey={iconKey} categoryName={categoryName} {...props} />;
+  }
   return <IconComponent {...props} />;
 }

@@ -30,6 +30,10 @@ import com.homefix.booking.service.JobExecutionService;
  * {@code netDurationSeconds}. Only the booking's customer, its assigned provider and staff can
  * read a detail at all.
  *
+ * <p>While a Tenant-assigned booking waits for the Provider's confirmation (PROVIDER_ASSIGNED),
+ * {@code tenantName} names the agency that assigned it, for the provider app's "Assigned by ..."
+ * and the customer app's partner copy (Requirement MT-6.4, MT-13.1); it is absent otherwise.
+ *
  * <h2>Deliberately absent</h2>
  * The customer app's contract also allows {@code description}, {@code provider} and
  * {@code invoice}. None is sent: the provider's name, rating and verification live in the Provider
@@ -55,7 +59,8 @@ public record BookingDetailResponse(
         Coordinates coordinates,
         List<Photo> photos,
         List<Part> parts,
-        Integer netDurationSeconds) {
+        Integer netDurationSeconds,
+        String tenantName) {
 
     /** Where the job is, for the provider's navigation link. */
     public record Coordinates(double latitude, double longitude) {
@@ -102,6 +107,7 @@ public record BookingDetailResponse(
                 address == null ? null : new Coordinates(address.latitude(), address.longitude()),
                 job == null ? null : job.photos().stream().map(Photo::of).toList(),
                 job == null ? null : job.parts().stream().map(Part::of).toList(),
-                b.getNetDurationSeconds());
+                b.getNetDurationSeconds(),
+                job == null ? null : job.tenantName());
     }
 }

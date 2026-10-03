@@ -31,6 +31,13 @@ import com.homefix.auth.token.TokenService;
  *       an ADMIN cannot lock the platform's owners out.</li>
  * </ul>
  *
+ * <p>TENANT_ADMIN is deliberately not one of the administrator roles for that rule. A Tenant
+ * administrator runs one agency and reaches only the Tenant Portal; Platform_Admins, ADMIN
+ * included, create Tenants and appoint and remove their administrators (Requirement MT-12.3), so
+ * an ADMIN must also be able to suspend one. Making it SUPER_ADMIN-only would let an ADMIN appoint
+ * a Tenant administrator they could not then stop. An account holding TENANT_ADMIN alongside
+ * ADMIN or SUPER_ADMIN still needs a SUPER_ADMIN, because any administrator role is enough.
+ *
  * <p>What a status means is enforced where accounts authenticate, not here: every sign-in path and
  * refresh refuses a non-ACTIVE account, and introspection reports its access tokens inactive.
  * Disabling an account additionally revokes its refresh tokens, so a later reactivation does not

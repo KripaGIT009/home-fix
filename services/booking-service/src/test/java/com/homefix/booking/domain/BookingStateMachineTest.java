@@ -23,6 +23,7 @@ import static com.homefix.booking.domain.BookingStatus.PAYMENT_PENDING;
 import static com.homefix.booking.domain.BookingStatus.PROVIDER_ACCEPTED;
 import static com.homefix.booking.domain.BookingStatus.PROVIDER_ARRIVED;
 import static com.homefix.booking.domain.BookingStatus.PROVIDER_ASSIGNED;
+import static com.homefix.booking.domain.BookingStatus.AWAITING_ASSIGNMENT;
 import static com.homefix.booking.domain.BookingStatus.PROVIDER_ON_THE_WAY;
 import static com.homefix.booking.domain.BookingStatus.REFUNDED;
 import static com.homefix.booking.domain.BookingStatus.SEARCHING_FAILED;
@@ -41,8 +42,10 @@ class BookingStateMachineTest {
     private static Map<BookingStatus, Set<BookingStatus>> expected() {
         Map<BookingStatus, Set<BookingStatus>> m = new EnumMap<>(BookingStatus.class);
         m.put(CREATED, EnumSet.of(SEARCHING_PROVIDER));
-        m.put(SEARCHING_PROVIDER, EnumSet.of(PROVIDER_ASSIGNED, SEARCHING_FAILED, CANCELLED));
-        m.put(PROVIDER_ASSIGNED, EnumSet.of(PROVIDER_ACCEPTED, CANCELLED));
+        m.put(SEARCHING_PROVIDER, EnumSet.of(PROVIDER_ASSIGNED, AWAITING_ASSIGNMENT, SEARCHING_FAILED, CANCELLED));
+        // Tenant fallback (Requirement MT-9.1).
+        m.put(AWAITING_ASSIGNMENT, EnumSet.of(PROVIDER_ASSIGNED, SEARCHING_FAILED, CANCELLED));
+        m.put(PROVIDER_ASSIGNED, EnumSet.of(PROVIDER_ACCEPTED, AWAITING_ASSIGNMENT, CANCELLED));
         m.put(PROVIDER_ACCEPTED, EnumSet.of(PROVIDER_ON_THE_WAY, CANCELLED));
         m.put(PROVIDER_ON_THE_WAY, EnumSet.of(PROVIDER_ARRIVED, CANCELLED));
         m.put(PROVIDER_ARRIVED, EnumSet.of(JOB_STARTED));
@@ -105,6 +108,21 @@ class BookingStateMachineTest {
         assertThat(sm.isTerminal(CANCELLED)).isTrue();
         assertThat(sm.isTerminal(CREATED)).isFalse();
         assertThat(sm.isTerminal(JOB_STARTED)).isFalse();
+    }
+
+    @Test
+    void awaitingAssignmentIsEnteredOnlyFromSearchingOrADeclinedAssignment() {
+        // Property MT1: the queue is reached from automatic matching (fallback) or by the assigned
+        // Provider's decline, never from CREATED, an accepted job or a terminal state.
+        for (BookingStatus from : BookingStatus.values()) {
+            boolean allowed = from == SEARCHING_PROVIDER || from == PROVIDER_ASSIGNED;
+            assertThat(sm.isPermitted(from, AWAITING_ASSIGNMENT))
+                    .as("%s -> AWAITING_ASSIGNMENT", from)
+                    .isEqualTo(allowed);
+        }
+        // A queued booking cannot skip the Provider's confirmation (Requirement MT-6.1).
+        assertThat(sm.isPermitted(AWAITING_ASSIGNMENT, PROVIDER_ACCEPTED)).isFalse();
+        assertThat(sm.isTerminal(AWAITING_ASSIGNMENT)).isFalse();
     }
 
     @Test

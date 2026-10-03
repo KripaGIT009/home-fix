@@ -33,6 +33,12 @@ public class BookingProperties {
      */
     private BigDecimal defaultCancellationFee = new BigDecimal("0.00");
 
+    /**
+     * How long a booking may wait in AWAITING_ASSIGNMENT, measured from when it first entered the
+     * queue, before the sweeper fails it (Requirement MT-7.1, MT-7.2).
+     */
+    private Duration tenantAssignmentTimeout = Duration.ofMinutes(60);
+
     private final Media media = new Media();
 
     public Duration getMinLeadTime() {
@@ -81,6 +87,14 @@ public class BookingProperties {
 
     public void setDefaultCancellationFee(BigDecimal defaultCancellationFee) {
         this.defaultCancellationFee = defaultCancellationFee;
+    }
+
+    public Duration getTenantAssignmentTimeout() {
+        return tenantAssignmentTimeout;
+    }
+
+    public void setTenantAssignmentTimeout(Duration tenantAssignmentTimeout) {
+        this.tenantAssignmentTimeout = tenantAssignmentTimeout;
     }
 
     public Media getMedia() {

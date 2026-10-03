@@ -1,5 +1,6 @@
 package com.homefix.booking.support;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -39,6 +40,53 @@ public class InMemoryBookingRepository implements BookingRepository {
             Comparator.comparing(Booking::getCreatedAt).thenComparing(Booking::getId).reversed();
 
     private final Map<UUID, Booking> store = new LinkedHashMap<>();
+
+    /** Candidate_Tenants for {@link #findAssignmentQueue}; none unless a test supplies them. */
+    private final InMemoryBookingTenantCandidateRepository candidates;
+
+    public InMemoryBookingRepository() {
+        this(new InMemoryBookingTenantCandidateRepository());
+    }
+
+    public InMemoryBookingRepository(InMemoryBookingTenantCandidateRepository candidates) {
+        this.candidates = candidates;
+    }
+
+    @Override
+    public List<Booking> findAssignmentQueue(UUID tenantId, Pageable pageable) {
+        return store.values().stream()
+                .filter(b -> b.getStatus() == BookingStatus.AWAITING_ASSIGNMENT
+                        && (tenantId.equals(b.getTenantId())
+                            || (b.getTenantId() == null
+                                && candidates.existsByBookingIdAndTenantId(b.getId(), tenantId))))
+                .sorted(Comparator.comparing(Booking::getQueuedForAssignmentAt,
+                        Comparator.nullsLast(Comparator.naturalOrder())))
+                .skip(pageable.getOffset())
+                .limit(pageable.getPageSize())
+                .toList();
+    }
+
+    @Override
+    public List<Booking> findByTenantIdAndStatusInOrderByCreatedAtDescIdDesc(
+            UUID tenantId, Collection<BookingStatus> statuses, Pageable pageable) {
+        return store.values().stream()
+                .filter(b -> tenantId.equals(b.getTenantId()) && statuses.contains(b.getStatus()))
+                .sorted(NEWEST_FIRST)
+                .skip(pageable.getOffset())
+                .limit(pageable.getPageSize())
+                .toList();
+    }
+
+    @Override
+    public List<Booking> findByStatusInAndQueuedForAssignmentAtBeforeOrderByQueuedForAssignmentAtAsc(
+            Collection<BookingStatus> statuses, Instant cutoff, Pageable pageable) {
+        return store.values().stream()
+                .filter(b -> statuses.contains(b.getStatus()) && b.getQueuedForAssignmentAt() != null
+                        && b.getQueuedForAssignmentAt().isBefore(cutoff))
+                .sorted(Comparator.comparing(Booking::getQueuedForAssignmentAt))
+                .limit(pageable.getPageSize())
+                .toList();
+    }
 
     @Override
     public Optional<Booking> findByReference(String reference) {

@@ -220,6 +220,25 @@ class RefreshServiceTest {
     }
 
     @Test
+    void roleGrantedOrRevokedAfterSignIn_showsUpInTheNextRefreshedToken() {
+        // Requirement MT-2.5: the family stores no roles; every rotation reads the account's.
+        UserAccount account = accountWithRoles(Role.CUSTOMER);
+        when(userRepository.findById(account.getId())).thenReturn(Optional.of(account));
+        String refresh = tokenService.issueTokens(account.getId().toString(), List.of("CUSTOMER")).refreshToken();
+
+        account.addRole(Role.TENANT_ADMIN);
+        RefreshService.RefreshResult granted = refreshService.refresh(refresh);
+        assertThat(tokenService.parseAndVerify(granted.tokens().accessToken())
+                .get(TokenService.ROLES_CLAIM, List.class)).containsExactly("CUSTOMER", "TENANT_ADMIN");
+
+        account.removeRole(Role.TENANT_ADMIN);
+        RefreshService.RefreshResult revoked = refreshService.refresh(granted.tokens().refreshToken());
+        assertThat(revoked.roles()).containsExactly("CUSTOMER");
+        assertThat(tokenService.parseAndVerify(revoked.tokens().accessToken())
+                .get(TokenService.ROLES_CLAIM, List.class)).containsExactly("CUSTOMER");
+    }
+
+    @Test
     void issueTokens_startsUsableFamily_sanityCheck() {
         // Guards TokenService.issueTokens wiring used by registration & social login.
         UUID userId = stubAccount(Role.CUSTOMER);

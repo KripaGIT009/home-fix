@@ -19,7 +19,9 @@ export type UserRole =
   | 'ADMIN'
   | 'SUPER_ADMIN'
   | 'SUPPORT_AGENT'
-  | 'FINANCE_ADMIN';
+  | 'FINANCE_ADMIN'
+  /** Administers exactly one Tenant (service agency) — Requirement MT-2. */
+  | 'TENANT_ADMIN';
 
 export interface UserProfile {
   /** Account id, from the Auth Service's `userId`. */

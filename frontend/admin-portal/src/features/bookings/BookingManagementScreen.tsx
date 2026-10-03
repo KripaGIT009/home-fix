@@ -33,6 +33,7 @@ const TERMINAL_STATUSES: ReadonlySet<BookingStatus> = new Set<BookingStatus>([
 const STATUS_OPTIONS: ReadonlyArray<BookingStatus> = [
   'CREATED',
   'SEARCHING_PROVIDER',
+  'AWAITING_ASSIGNMENT',
   'PROVIDER_ASSIGNED',
   'PROVIDER_ACCEPTED',
   'JOB_STARTED',

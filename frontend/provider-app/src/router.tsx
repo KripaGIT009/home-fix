@@ -19,7 +19,7 @@ import { EarningsScreen } from '@features/earnings/EarningsScreen';
  *
  * Task 34 implemented Login/OTP, Dashboard, and Verification status. Task 35
  * implements Job Request, Job Details, Active Job, Job Completion, and
- * Earnings/settlement history. Profile remains a placeholder.
+ * Earnings/settlement history and the provider's profile.
  */
 export const router = createBrowserRouter([
   {

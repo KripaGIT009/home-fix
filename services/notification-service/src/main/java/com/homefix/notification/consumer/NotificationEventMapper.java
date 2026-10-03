@@ -45,6 +45,9 @@ public class NotificationEventMapper {
         if (payload.status() != null) {
             attributes.put("bookingStatus", payload.status());
         }
+        if (payload.tenantName() != null && !payload.tenantName().isBlank()) {
+            attributes.put("tenantName", payload.tenantName().strip());
+        }
 
         return new InboundEvent(eventType, eventId, payload.participants(), attributes);
     }

@@ -24,6 +24,9 @@ import jakarta.annotation.PostConstruct;
  *       limits status changes on administrator accounts to SUPER_ADMIN.</li>
  * </ul>
  *
+ * <p>TENANT_ADMIN is not admitted to User Management: Tenant administrators never reach platform
+ * administration endpoints (Requirement MT-10.3).
+ *
  * <p>Deliberately no rule for the public {@code /auth/**} surface (registration, sign-in, refresh,
  * logout, introspection) or the health / metrics surface: the filter runs even for
  * {@code permitAll()} paths, and a rule there would turn every unauthenticated call into a 401.

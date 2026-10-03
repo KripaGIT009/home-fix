@@ -103,6 +103,14 @@ public class ProviderRbacConfig {
      */
     private static final List<String> ADMIN_TIER = List.of("ADMIN", "SUPER_ADMIN");
 
+    /**
+     * The Tenant Portal (Requirements MT-10.1, MT-11): Tenant administrators only. Platform
+     * administrators manage Tenants through {@code /admin/tenants/**} instead, so they are not
+     * admitted here — {@code /tenant/**} always means "the caller's own Tenant", which a Platform
+     * Admin does not have.
+     */
+    private static final List<String> TENANT_ADMIN_TIER = List.of("TENANT_ADMIN");
+
     private final RbacProperties rbacProperties;
 
     public ProviderRbacConfig(RbacProperties rbacProperties) {
@@ -121,6 +129,17 @@ public class ProviderRbacConfig {
         // rules below cannot shadow them or be shadowed by them.
         rules.put("GET /admin/providers/**", ADMIN_TIER);
         rules.put("PATCH /admin/providers/**", ADMIN_TIER);
+        // Admin Portal Tenants module (Requirements MT-1, MT-2, MT-3, MT-12). A TENANT_ADMIN is
+        // refused here with 403 (Requirement MT-10.3). "/admin/tenants/**" also matches the bare
+        // "/admin/tenants" list and create.
+        for (String method : List.of("GET", "POST", "PUT", "DELETE")) {
+            rules.put(method + " /admin/tenants/**", ADMIN_TIER);
+        }
+        // Tenant Portal (Requirement MT-10.1): every method under /tenant/** is TENANT_ADMIN only.
+        // The caller's Tenant is resolved from the subject in TenantService, never from the path.
+        for (String method : List.of("GET", "POST", "PUT", "PATCH", "DELETE")) {
+            rules.put(method + " /tenant/**", TENANT_ADMIN_TIER);
+        }
         // Mutating provider self-service: profile, radius, availability, emergency availability
         // (Requirements 4.1-4.6, 4.8).
         rules.put("PUT /providers/**", PROVIDER_WRITE_TIER);

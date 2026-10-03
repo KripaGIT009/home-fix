@@ -250,6 +250,20 @@ class DispatchServiceTest {
     }
 
     @Test
+    void bookingRoutedToTenantsSkipsTheNoProviderNotices() {
+        // Requirement MT-4.2: booking-service answered AWAITING_ASSIGNMENT — a partner agency will
+        // assign someone, so "no provider available" would be untrue and the dispatcher alert noise.
+        bookingTransition.routeToTenants();
+
+        assertThat(service.dispatch(emergencyRequest())).isNull();
+
+        assertThat(bookingTransition.searchingFailedCalled()).isTrue();
+        assertThat(notification.customerNotifications()).isZero();
+        assertThat(notification.dispatcherAlerts()).isZero();
+        assertThat(acceptedPublisher.published()).isFalse();
+    }
+
+    @Test
     void doesNotReofferAProviderThatDeclinedInAnEarlierRadius() {
         // Provider eligible from the initial radius but declines; when the radius expands it is
         // still eligible but must not be offered again (Requirement 8.7).

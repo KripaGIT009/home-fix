@@ -32,6 +32,11 @@ export const env = {
    * for social login to work at all.
    */
   googleClientId: import.meta.env.VITE_GOOGLE_CLIENT_ID ?? '',
+  /**
+   * Origin of the Provider App, linked from the footer's "Join as a
+   * professional". Professionals sign up there, not in this app.
+   */
+  providerAppUrl: import.meta.env.VITE_PROVIDER_APP_URL ?? 'http://localhost:5174',
   /** True when running the production build. */
   isProduction: import.meta.env.PROD,
   /** True when running inside the Capacitor native shell (Android/iOS). */

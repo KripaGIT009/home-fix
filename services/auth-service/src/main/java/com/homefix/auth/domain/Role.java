@@ -14,6 +14,11 @@ package com.homefix.auth.domain;
  * {@code FINANCE_ADMIN} gates reconciliation and settlement reports in
  * reporting-service, and {@code DISPATCHER} and {@code SUPPORT_AGENT} appear in
  * the requirements as the manual-assignment and complaint-handling actors.
+ *
+ * <p>{@link #TENANT_ADMIN} is not platform staff: it administers one service agency (a Tenant)
+ * inside the marketplace and reaches only the Tenant Portal. It is granted and revoked by
+ * provider-service, which owns Tenants, through the internal role endpoints when a Platform_Admin
+ * adds or removes a Tenant administrator (Requirement MT-2.1, MT-2.2, MT-2.4).
  */
 public enum Role {
 
@@ -36,7 +41,13 @@ public enum Role {
     DISPATCHER(false),
 
     /** Support desk: complaint triage, status changes and refunds. */
-    SUPPORT_AGENT(false);
+    SUPPORT_AGENT(false),
+
+    /**
+     * Administrator of one Tenant: its team and its assignment queue (Requirement MT-2.1). Never
+     * self-assignable; granted only through {@code /internal/users/{userId}/roles/TENANT_ADMIN}.
+     */
+    TENANT_ADMIN(false);
 
     private final boolean selfAssignable;
 

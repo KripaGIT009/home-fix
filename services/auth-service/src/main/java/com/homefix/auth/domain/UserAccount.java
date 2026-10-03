@@ -133,8 +133,23 @@ public class UserAccount {
         return roles;
     }
 
-    public void addRole(Role role) {
-        this.roles.add(role);
+    /**
+     * Adds a role to the account.
+     *
+     * @return true if the account did not already hold it
+     */
+    public boolean addRole(Role role) {
+        return this.roles.add(role);
+    }
+
+    /**
+     * Removes a role from the account. Only {@code AccountRoleService} calls this, for the
+     * roles it may manage (Requirement MT-2.4).
+     *
+     * @return true if the account held it
+     */
+    public boolean removeRole(Role role) {
+        return this.roles.remove(role);
     }
 
     public String getUsername() {

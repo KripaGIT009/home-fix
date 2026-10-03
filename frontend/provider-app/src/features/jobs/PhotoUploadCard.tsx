@@ -12,7 +12,9 @@ import {
 } from '@mui/material';
 import AddAPhotoRoundedIcon from '@mui/icons-material/AddAPhotoRounded';
 import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded';
+import PhotoLibraryRoundedIcon from '@mui/icons-material/PhotoLibraryRounded';
 import { isApiError } from '@api/client';
+import { env } from '@config/env';
 import type { JobPhoto, PhotoKind } from './api';
 import { useUploadJobPhotos } from './hooks';
 
@@ -32,6 +34,12 @@ interface PhotoUploadCardProps {
  * Reusable card for uploading and previewing before/after photos. Enforces
  * image-only selection at the input level; the Booking Service is the source of
  * truth for the "at least one photo" rule (Requirement 11.2, 11.4).
+ *
+ * In the Android and iOS apps a second button opens the camera directly
+ * (Requirement MT-14.4): Android's file chooser offers no camera for a plain
+ * file input, while one marked `capture` makes the WebView launch the camera
+ * and ask for the camera permission. The web app keeps its single picker,
+ * since `capture` would take the gallery choice away from mobile browsers.
  */
 export function PhotoUploadCard({
   bookingId,
@@ -42,12 +50,14 @@ export function PhotoUploadCard({
   disabled = false,
 }: PhotoUploadCardProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
   const upload = useUploadJobPhotos(bookingId);
 
   const handleFiles = (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
     upload.mutate({ kind, files: Array.from(fileList) });
     if (inputRef.current) inputRef.current.value = '';
+    if (cameraRef.current) cameraRef.current.value = '';
   };
 
   const hasPhotos = photos.length > 0;
@@ -114,16 +124,49 @@ export function PhotoUploadCard({
           hidden
           onChange={(event) => handleFiles(event.target.files)}
         />
-        <Button
-          variant={hasPhotos ? 'outlined' : 'contained'}
-          startIcon={<AddAPhotoRoundedIcon />}
-          onClick={() => inputRef.current?.click()}
-          disabled={disabled || upload.isPending}
-          sx={{ mt: 1.5 }}
-          fullWidth
-        >
-          {upload.isPending ? 'Uploading…' : hasPhotos ? 'Add another photo' : 'Upload photo'}
-        </Button>
+        {env.isNative ? (
+          <>
+            <input
+              ref={cameraRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              hidden
+              onChange={(event) => handleFiles(event.target.files)}
+            />
+            <Stack direction="row" spacing={1} sx={{ mt: 1.5 }}>
+              <Button
+                variant={hasPhotos ? 'outlined' : 'contained'}
+                startIcon={<AddAPhotoRoundedIcon />}
+                onClick={() => cameraRef.current?.click()}
+                disabled={disabled || upload.isPending}
+                fullWidth
+              >
+                {upload.isPending ? 'Uploading…' : 'Take photo'}
+              </Button>
+              <Button
+                variant="outlined"
+                startIcon={<PhotoLibraryRoundedIcon />}
+                onClick={() => inputRef.current?.click()}
+                disabled={disabled || upload.isPending}
+                fullWidth
+              >
+                Choose
+              </Button>
+            </Stack>
+          </>
+        ) : (
+          <Button
+            variant={hasPhotos ? 'outlined' : 'contained'}
+            startIcon={<AddAPhotoRoundedIcon />}
+            onClick={() => inputRef.current?.click()}
+            disabled={disabled || upload.isPending}
+            sx={{ mt: 1.5 }}
+            fullWidth
+          >
+            {upload.isPending ? 'Uploading…' : hasPhotos ? 'Add another photo' : 'Upload photo'}
+          </Button>
+        )}
       </CardContent>
     </Card>
   );

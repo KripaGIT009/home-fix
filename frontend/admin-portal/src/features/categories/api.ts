@@ -91,6 +91,27 @@ export async function fetchCategories(): Promise<ServiceCategory[]> {
   );
 }
 
+/** A category without its subcategories, for pickers that only need the name. */
+export interface CategorySummary {
+  id: string;
+  name: string;
+  status: CatalogStatus;
+}
+
+/**
+ * Categories only, active and inactive, in one call. The Tenants module picks
+ * a Tenant's categories from these (Requirement MT-12.2) and has no use for the
+ * per-category subcategory fetches fetchCategories makes.
+ */
+export async function fetchCategorySummaries(): Promise<CategorySummary[]> {
+  const { data } = await apiClient.get<CatalogCategoryResponse[]>('/admin/catalog/categories');
+  return data.map((category) => ({
+    id: category.id,
+    name: category.name,
+    status: toStatus(category.active),
+  }));
+}
+
 /** Activate or deactivate a category. */
 export async function updateCategoryStatus(
   id: string,

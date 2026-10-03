@@ -31,43 +31,71 @@ import com.homefix.notification.domain.TemplateDefinition;
 import com.homefix.notification.domain.TemplateText;
 
 /**
- * Keeps the V2 seed of {@code notification_template} and the built-in catalogue in step: the
- * migration must contain exactly one row per built-in template and channel, with exactly the
- * built-in text, so that seeding the table changes no notification. (The migration itself is
- * PostgreSQL DDL and is not run by the H2 tests; this reads it as text.)
+ * Keeps the seeded {@code notification_template} rows and the built-in catalogue in step: after
+ * the V2 seed and the migrations that update it (V3: the Tenant-assigned ProviderAssigned texts,
+ * Requirement MT-5.3), the table must hold exactly one row per built-in template and channel, with
+ * exactly the built-in text, so that seeding the table changes no notification. (The migrations
+ * are PostgreSQL DDL and are not run by the H2 tests; this reads them as text and applies their
+ * inserts and per-row updates in order.)
  */
 class NotificationTemplateSeedTest {
 
-    private static final String MIGRATION = "db/migration/V2__notification_templates.sql";
-    private static final Pattern ROW = Pattern.compile("^\\s*\\((.*), now\\(\\)\\)[,;]\\s*$", Pattern.MULTILINE);
+    private static final List<String> MIGRATIONS = List.of(
+            "db/migration/V2__notification_templates.sql",
+            "db/migration/V3__tenant_assigned_templates.sql");
+    private static final Pattern ROW = Pattern.compile("^\\s*\\((.*), now\\(\\)\\)[,;]?\\s*$", Pattern.MULTILINE);
+    /** The one UPDATE shape the migrations use: re-seed one row's text unless an admin edited it. */
+    private static final Pattern UPDATE = Pattern.compile(
+            "^UPDATE notification\\.notification_template SET subject = ('(?:[^']|'')*'|NULL), "
+                    + "body = ('(?:[^']|'')*'), updated_at = now\\(\\) "
+                    + "WHERE id = '([^']+)' AND updated_by IS NULL;\\s*$", Pattern.MULTILINE);
     private static final Pattern VALUE = Pattern.compile("'((?:[^']|'')*)'|NULL");
 
     private static Map<String, List<String>> seededRows;
 
     @BeforeAll
-    static void readMigration() throws IOException {
-        String sql;
-        try (InputStream in = NotificationTemplateSeedTest.class.getClassLoader().getResourceAsStream(MIGRATION)) {
-            assertThat(in).as(MIGRATION).isNotNull();
-            sql = new String(in.readAllBytes(), StandardCharsets.UTF_8);
-        }
+    static void readMigrations() throws IOException {
         seededRows = new LinkedHashMap<>();
-        Matcher row = ROW.matcher(sql);
-        while (row.find()) {
-            List<String> values = new ArrayList<>();
-            Matcher value = VALUE.matcher(row.group(1));
-            while (value.find()) {
-                values.add(value.group(1) == null ? null : value.group(1).replace("''", "'"));
+        for (String migration : MIGRATIONS) {
+            String sql;
+            try (InputStream in = NotificationTemplateSeedTest.class.getClassLoader().getResourceAsStream(migration)) {
+                assertThat(in).as(migration).isNotNull();
+                sql = new String(in.readAllBytes(), StandardCharsets.UTF_8);
             }
-            assertThat(values).as(row.group()).hasSize(6);
-            assertThat(seededRows.put(values.get(0), values)).as("duplicate " + values.get(0)).isNull();
+            Matcher update = UPDATE.matcher(sql);
+            while (update.find()) {
+                List<String> row = seededRows.get(update.group(3));
+                assertThat(row).as("%s updates unknown row %s", migration, update.group(3)).isNotNull();
+                row.set(4, values(update.group(1)).get(0));
+                row.set(5, values(update.group(2)).get(0));
+            }
+            assertThat(sql.lines().filter(line -> line.startsWith("UPDATE")).count())
+                    .as("%s: every UPDATE has the shape this test applies", migration)
+                    .isEqualTo(UPDATE.matcher(sql).results().count());
+            Matcher row = ROW.matcher(sql);
+            while (row.find()) {
+                List<String> values = values(row.group(1));
+                assertThat(values).as(row.group()).hasSize(6);
+                assertThat(seededRows.put(values.get(0), values)).as("duplicate " + values.get(0)).isNull();
+            }
         }
+    }
+
+    private static List<String> values(String sql) {
+        List<String> values = new ArrayList<>();
+        Matcher value = VALUE.matcher(sql);
+        while (value.find()) {
+            values.add(value.group(1) == null ? null : value.group(1).replace("''", "'"));
+        }
+        return values;
     }
 
     @Test
     void seedHasExactlyOneRowPerBuiltInTemplateAndChannelWithTheBuiltInText() {
         List<ChannelTemplate> catalogue = BuiltInTemplates.allChannelTemplates();
-        assertThat(seededRows.keySet()).containsExactlyElementsOf(catalogue.stream().map(ChannelTemplate::id).toList());
+        // The table has no order; later migrations append rows.
+        assertThat(seededRows.keySet())
+                .containsExactlyInAnyOrderElementsOf(catalogue.stream().map(ChannelTemplate::id).toList());
 
         for (ChannelTemplate template : catalogue) {
             TemplateDefinition definition = template.definition();
@@ -93,7 +121,7 @@ class NotificationTemplateSeedTest {
             for (NotificationAudience audience : policy.audiencesFor(type)) {
                 for (Map<String, String> attributes : List.of(Map.<String, String>of(),
                         Map.of("bookingReference", "HFX-42", "bookingStatus", "SEARCHING_FAILED",
-                                "complaintStatus", "IN_PROGRESS"))) {
+                                "complaintStatus", "IN_PROGRESS", "tenantName", "Sharma Home Services"))) {
                     NotificationEvent event = new NotificationEvent(type, UUID.randomUUID(), UUID.randomUUID(),
                             audience, NotificationContact.empty(), attributes);
                     RenderedMessage expected = builtIn.resolve(event);

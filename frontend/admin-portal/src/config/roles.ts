@@ -10,13 +10,17 @@ import type { UserRole } from '@stores/authStore';
  * sidebar, the route guard and the API agree on who gets in.
  */
 
-/** Every role that may sign in to the Admin Portal. */
+/**
+ * Every role that may sign in to the Admin Portal. TENANT_ADMIN signs in to the
+ * same application but sees only the Tenant Portal modules (Requirement MT-11.1).
+ */
 export const STAFF_ROLES: readonly UserRole[] = [
   'ADMIN',
   'SUPER_ADMIN',
   'FINANCE_ADMIN',
   'DISPATCHER',
   'SUPPORT_AGENT',
+  'TENANT_ADMIN',
 ];
 
 /**
@@ -55,6 +59,17 @@ export const REPORT_ROLES: readonly UserRole[] = ['ADMIN', 'SUPER_ADMIN', 'FINAN
 
 /** System Configuration is SUPER_ADMIN-only (Requirement 19.6/19.7). */
 export const SUPER_ADMIN_ROLES: readonly UserRole[] = ['SUPER_ADMIN'];
+
+/**
+ * The Tenant Portal modules (Requests, Team, Jobs): TENANT_ADMIN only.
+ *
+ * Platform staff are deliberately absent. These modules are scoped to the
+ * caller's own Tenant, which provider-service and booking-service resolve from
+ * the caller's identity (Requirement MT-10.1); a platform admin administers no
+ * Tenant, so every call would answer 403/404. Platform admins manage Tenants
+ * through the Tenants module instead (Requirement MT-12).
+ */
+export const TENANT_ROLES: readonly UserRole[] = ['TENANT_ADMIN'];
 
 /** True when the account holds any role that belongs in the Admin Portal. */
 export function isStaff(roles: readonly UserRole[]): boolean {

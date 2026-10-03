@@ -1,5 +1,6 @@
 package com.homefix.booking.domain;
 
+import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -8,6 +9,8 @@ import java.util.UUID;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 /**
  * Repository over the {@code booking} aggregate.
@@ -81,4 +84,42 @@ public interface BookingRepository extends JpaRepository<Booking, UUID> {
      */
     Optional<Booking> findFirstByCustomerIdAndAddressIdAndStatusIn(
             UUID customerId, UUID addressId, Collection<BookingStatus> statuses);
+
+    /**
+     * A Tenant's Assignment_Queue (Requirement MT-5.1), oldest queued first: bookings in
+     * AWAITING_ASSIGNMENT for which {@code tenantId} was a Candidate_Tenant, plus those returned to
+     * this Tenant by its Provider's decline. A declined booking carries its Tenant and belongs to
+     * that Tenant's queue alone (Requirement MT-6.2), so candidacy counts only while the booking has
+     * no Tenant yet. Served by {@code idx_booking_tenant_candidate_tenant} and
+     * {@code idx_booking_assignment_deadline} (migration V3).
+     */
+    @Query("""
+            select b from Booking b
+            where b.status = com.homefix.booking.domain.BookingStatus.AWAITING_ASSIGNMENT
+              and (b.tenantId = :tenantId
+                   or (b.tenantId is null and exists (
+                         select c from BookingTenantCandidate c
+                         where c.bookingId = b.id and c.tenantId = :tenantId)))
+            order by b.queuedForAssignmentAt asc, b.id asc
+            """)
+    List<Booking> findAssignmentQueue(@Param("tenantId") UUID tenantId, Pageable pageable);
+
+    /**
+     * A Tenant's bookings in the given states, newest first (Requirement MT-8.3), served by
+     * {@code idx_booking_tenant_created}. The id breaks ties as in
+     * {@link #findByCustomerIdOrderByCreatedAtDescIdDesc}.
+     */
+    List<Booking> findByTenantIdAndStatusInOrderByCreatedAtDescIdDesc(
+            UUID tenantId, Collection<BookingStatus> statuses, Pageable pageable);
+
+    /**
+     * Bookings in one of {@code statuses} first queued before {@code cutoff}, oldest first — the
+     * assignment-timeout sweeper's batch (Requirement MT-7.1, Property MT6): waiting in the queue, or
+     * assigned to a Provider who has not confirmed. Served by the partial
+     * {@code idx_booking_assignment_deadline} ({@code status, queued_for_assignment_at} where the
+     * queue time is set, migration V3); the range condition implies the index predicate whatever the
+     * bound values, so the lookup stays indexed under a generic prepared-statement plan.
+     */
+    List<Booking> findByStatusInAndQueuedForAssignmentAtBeforeOrderByQueuedForAssignmentAtAsc(
+            Collection<BookingStatus> statuses, Instant cutoff, Pageable pageable);
 }

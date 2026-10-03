@@ -6,6 +6,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
@@ -102,7 +103,10 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(ex.getStatus()).body(body);
     }
 
-    /** A refused Admin Portal user-management action (self-change, ADMIN acting on an admin). */
+    /**
+     * A refused Admin Portal user-management action (self-change, ADMIN acting on an admin), or an
+     * internal role change naming a role other than TENANT_ADMIN.
+     */
     @ExceptionHandler(AdminUserException.class)
     public ResponseEntity<ErrorResponseDto> handleAdminUser(AdminUserException ex) {
         ErrorResponseDto body = ErrorResponseDto.builder()
@@ -135,6 +139,18 @@ public class GlobalExceptionHandler {
                 .message("Request validation failed")
                 .correlationId(MDC.get(CORRELATION_MDC_KEY))
                 .addDetail(ex.getName() + ": invalid value")
+                .build();
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
+    }
+
+    /** A missing required query parameter (e.g. {@code mobileNumber} on the internal lookup). */
+    @ExceptionHandler(MissingServletRequestParameterException.class)
+    public ResponseEntity<ErrorResponseDto> handleMissingParameter(MissingServletRequestParameterException ex) {
+        ErrorResponseDto body = ErrorResponseDto.builder()
+                .errorCode("VALIDATION_ERROR")
+                .message("Request validation failed")
+                .correlationId(MDC.get(CORRELATION_MDC_KEY))
+                .addDetail(ex.getParameterName() + ": is required")
                 .build();
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
     }

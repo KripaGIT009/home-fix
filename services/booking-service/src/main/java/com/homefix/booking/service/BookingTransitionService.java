@@ -66,7 +66,20 @@ public class BookingTransitionService {
      */
     @Transactional
     public Booking transition(Booking booking, BookingStatus target, Actor actor, String reason) {
-        return apply(booking, target, actor, reason, true);
+        return apply(booking, target, actor, reason, true, null);
+    }
+
+    /**
+     * {@link #transition} for a step a Tenant causes, so the state-driven event can name it: a
+     * Tenant assignment's {@code ProviderAssigned} carries the Tenant's name (Requirement MT-5.3).
+     *
+     * @param tenantName the Tenant's display name, or null when it is unknown
+     * @throws InvalidTransitionException if the transition is not permitted (Requirement 9.2)
+     */
+    @Transactional
+    public Booking transitionForTenant(Booking booking, BookingStatus target, Actor actor, String reason,
+                                       String tenantName) {
+        return apply(booking, target, actor, reason, true, tenantName);
     }
 
     /**
@@ -89,11 +102,11 @@ public class BookingTransitionService {
         if (stateMachine.isTerminal(target)) {
             throw new IllegalArgumentException("Cannot pass through terminal state " + target);
         }
-        return apply(booking, target, actor, reason, false);
+        return apply(booking, target, actor, reason, false, null);
     }
 
     private Booking apply(Booking booking, BookingStatus target, Actor actor, String reason,
-                          boolean publishLifecycleEvent) {
+                          boolean publishLifecycleEvent, String tenantName) {
         BookingStatus from = booking.getStatus();
         if (!stateMachine.isPermitted(from, target)) {
             // Requirement 9.2: log the rejected attempt with all identifying detail.
@@ -104,7 +117,7 @@ public class BookingTransitionService {
         booking.applyStatus(target);
         recordAudit(booking, from, target, actor, reason);
         if (publishLifecycleEvent) {
-            lifecycleEvents.onTransition(booking, from, target, actor, reason);
+            lifecycleEvents.onTransition(booking, from, target, actor, reason, tenantName);
         }
         log.info("Applied booking transition bookingId={} from={} to={} actorRole={}",
                 booking.getId(), from, target, actor.role());

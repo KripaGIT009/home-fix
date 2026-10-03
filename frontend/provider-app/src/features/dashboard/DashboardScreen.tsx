@@ -1,11 +1,14 @@
-import { useNavigate } from 'react-router-dom';
-import { Avatar, Box, Skeleton, Stack, Typography } from '@mui/material';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { Alert, Avatar, Box, Skeleton, Stack, Typography } from '@mui/material';
 import PersonRoundedIcon from '@mui/icons-material/PersonRounded';
 import { AppShell } from '@components/AppShell';
 import { QueryStateView } from '@components/QueryStateView';
 import { useAuthStore } from '@stores/authStore';
 import { EarningsSummaryCard } from './EarningsSummaryCard';
+import { readDashboardNotice } from '@features/jobs/assignmentNotice';
+import { isAwaitingProviderAnswer } from '@features/jobs/status';
 import { ActiveJobCard } from './ActiveJobCard';
+import { AssignedJobCard } from './AssignedJobCard';
 import { PendingOffersSection } from './PendingOffersSection';
 import { useActiveJobs, useEarningsSummary } from './hooks';
 
@@ -14,9 +17,16 @@ import { useActiveJobs, useEarningsSummary } from './hooks';
  * while there are any), the earnings summary (wallet balance + today's
  * earnings), and the active job list with status indicators. Mobile-first
  * single-column layout inside the shared AppShell.
+ *
+ * Jobs the provider's agency assigned and the provider has yet to accept or
+ * decline are listed first, apart from the jobs already underway
+ * (Requirement MT-13.2). After a decline the dashboard says where the job went
+ * (Requirement MT-6.2).
  */
 export function DashboardScreen() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const notice = readDashboardNotice(location.state);
   const displayName = useAuthStore((state) => state.user?.displayName);
 
   const summary = useEarningsSummary();
@@ -32,7 +42,13 @@ export function DashboardScreen() {
     .map((part) => part[0]?.toUpperCase())
     .join('');
 
-  const jobCount = activeJobs.data?.length ?? 0;
+  const assignedJobs = (activeJobs.data ?? []).filter((job) =>
+    isAwaitingProviderAnswer(job.status),
+  );
+  const runningJobs = (activeJobs.data ?? []).filter(
+    (job) => !isAwaitingProviderAnswer(job.status),
+  );
+  const jobCount = runningJobs.length;
 
   return (
     <AppShell title="Dashboard" branded>
@@ -51,7 +67,33 @@ export function DashboardScreen() {
           </Box>
         </Stack>
 
+        {notice ? (
+          <Alert
+            severity="info"
+            role="status"
+            onClose={() => navigate(location.pathname, { replace: true, state: null })}
+          >
+            {notice}
+          </Alert>
+        ) : null}
+
         <PendingOffersSection onOpen={openOffer} />
+
+        {assignedJobs.length > 0 ? (
+          <Stack spacing={1.5}>
+            <Stack direction="row" justifyContent="space-between" alignItems="baseline">
+              <Typography variant="subtitle1" fontWeight={700}>
+                Assigned to you
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                {assignedJobs.length} waiting for your answer
+              </Typography>
+            </Stack>
+            {assignedJobs.map((job) => (
+              <AssignedJobCard key={job.bookingId} job={job} onOpen={openJob} />
+            ))}
+          </Stack>
+        ) : null}
 
         {summary.isLoading ? (
           <Skeleton variant="rounded" height={168} sx={{ borderRadius: 4 }} />
@@ -91,7 +133,7 @@ export function DashboardScreen() {
           emptyMessage="No active jobs right now. New job offers will appear above."
         >
           <Stack spacing={1.5}>
-            {activeJobs.data?.map((job) => (
+            {runningJobs.map((job) => (
               <ActiveJobCard key={job.bookingId} job={job} onOpen={openJob} />
             ))}
           </Stack>

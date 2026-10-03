@@ -249,4 +249,31 @@ public class InMemoryProviderProfileRepository implements ProviderProfileReposit
             java.util.function.Function<org.springframework.data.repository.query.FluentQuery.FetchableFluentQuery<S>, R> queryFunction) {
         throw new UnsupportedOperationException();
     }
+
+    // Tenant membership is exercised against H2 (TenantServiceJpaTest), not this fake.
+
+    @Override
+    public List<ProviderProfile> findByTenantId(UUID tenantId) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long countByTenantId(UUID tenantId) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public List<com.homefix.provider.domain.TenantCount> countPerTenant() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int attachToTenant(UUID providerId, UUID tenantId) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int detachFromTenant(UUID providerId, UUID tenantId) {
+        throw new UnsupportedOperationException();
+    }
 }

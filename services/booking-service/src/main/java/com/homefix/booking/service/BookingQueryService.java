@@ -13,6 +13,7 @@ import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 
@@ -26,6 +27,8 @@ import com.homefix.booking.domain.JobMedia;
 import com.homefix.booking.domain.JobMediaRepository;
 import com.homefix.booking.domain.PartsLineItem;
 import com.homefix.booking.domain.PartsLineItemRepository;
+import com.homefix.booking.tenant.TenantDirectoryPort;
+import com.homefix.booking.tenant.TenantDirectoryPort.TenantSummary;
 
 /**
  * Read side of the booking aggregate: a customer's service history and the detail of a single
@@ -81,17 +84,33 @@ public class BookingQueryService {
     private final JobMediaRepository mediaRepository;
     private final PartsLineItemRepository partsRepository;
     private final CustomerAddressPort addresses;
+    private final TenantDirectoryPort tenantDirectory;
 
+    @Autowired
     public BookingQueryService(BookingRepository bookingRepository,
                                CatalogClientPort catalogClient,
                                JobMediaRepository mediaRepository,
                                PartsLineItemRepository partsRepository,
-                               CustomerAddressPort addresses) {
+                               CustomerAddressPort addresses,
+                               TenantDirectoryPort tenantDirectory) {
         this.bookingRepository = bookingRepository;
         this.catalogClient = catalogClient;
         this.mediaRepository = mediaRepository;
         this.partsRepository = partsRepository;
         this.addresses = addresses;
+        this.tenantDirectory = tenantDirectory;
+    }
+
+    /**
+     * For read-side tests that involve no Tenant: Tenant names are never resolved, so a detail
+     * carries no {@code tenantName}.
+     */
+    public BookingQueryService(BookingRepository bookingRepository,
+                               CatalogClientPort catalogClient,
+                               JobMediaRepository mediaRepository,
+                               PartsLineItemRepository partsRepository,
+                               CustomerAddressPort addresses) {
+        this(bookingRepository, catalogClient, mediaRepository, partsRepository, addresses, null);
     }
 
     /**
@@ -192,6 +211,17 @@ public class BookingQueryService {
         return new BookingView(booking, serviceName(booking, subcategoryNames()));
     }
 
+    /**
+     * {@code bookings} with their service labels, from one catalog call (none for an empty list),
+     * for the Tenant Portal's queue and job list.
+     */
+    public List<BookingView> labelled(List<Booking> bookings) {
+        Map<UUID, String> names = bookings.isEmpty() ? Map.of() : subcategoryNames();
+        return bookings.stream()
+                .map(booking -> new BookingView(booking, serviceName(booking, names)))
+                .toList();
+    }
+
     // ----- internals -------------------------------------------------------
 
     /** {@code value} as a UUID only in its canonical 36-character form, else {@code null}. */
@@ -223,7 +253,30 @@ public class BookingQueryService {
         return new JobFacts(
                 addresses.find(booking.getAddressId()).orElse(null),
                 photos,
-                partsRepository.findByBookingIdOrderByAddedAtAsc(booking.getId()));
+                partsRepository.findByBookingIdOrderByAddedAtAsc(booking.getId()),
+                assigningTenantName(booking));
+    }
+
+    /**
+     * The name of the Tenant that assigned the job, while the Provider has yet to confirm it — what
+     * the provider app shows as "Assigned by ..." and the customer app as the partner assigning a
+     * professional (Requirement MT-6.4, MT-13.1). Looked up only in PROVIDER_ASSIGNED, so the
+     * Provider Service is not asked on every tracking poll of a running job. A label: an unknown
+     * Tenant or an unreachable Provider Service simply leaves it out.
+     */
+    private String assigningTenantName(Booking booking) {
+        if (tenantDirectory == null
+                || booking.getTenantId() == null
+                || booking.getStatus() != BookingStatus.PROVIDER_ASSIGNED) {
+            return null;
+        }
+        try {
+            return tenantDirectory.byId(booking.getTenantId()).map(TenantSummary::name).orElse(null);
+        } catch (RuntimeException e) {
+            log.warn("Tenant {} name unavailable for booking {}: {}",
+                    booking.getTenantId(), booking.getId(), e.getMessage());
+            return null;
+        }
     }
 
     private Map<UUID, String> subcategoryNames() {
@@ -274,8 +327,10 @@ public class BookingQueryService {
      * @param address where the job is; null when the Customer Service cannot resolve it
      * @param photos  before/after photos, oldest first
      * @param parts   parts and materials recorded, oldest first
+     * @param tenantName the Tenant that assigned the job, while PROVIDER_ASSIGNED; null otherwise
      */
-    public record JobFacts(ServiceAddress address, List<JobMedia> photos, List<PartsLineItem> parts) {
+    public record JobFacts(ServiceAddress address, List<JobMedia> photos, List<PartsLineItem> parts,
+                           String tenantName) {
     }
 
     /** One page of history; {@code page} is 1-based (see {@link #history}). */

@@ -66,7 +66,8 @@ class AuthRbacConfigTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"CUSTOMER", "SERVICE_PROVIDER", "FINANCE_ADMIN", "DISPATCHER", "SUPPORT_AGENT"})
+    @ValueSource(strings = {"CUSTOMER", "SERVICE_PROVIDER", "FINANCE_ADMIN", "DISPATCHER", "SUPPORT_AGENT",
+            "TENANT_ADMIN"})
     void everyOtherRoleIsRefused(String role) throws Exception {
         assertThat(status(role, "GET", USERS)).isEqualTo(403);
         assertThat(status(role, "PATCH", USERS + "/" + UUID.randomUUID() + "/status")).isEqualTo(403);

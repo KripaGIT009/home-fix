@@ -6,6 +6,7 @@ import com.homefix.dispatch.domain.DispatchRequest;
 import com.homefix.dispatch.domain.MatchingWeights;
 import com.homefix.dispatch.domain.MatchingWeightsStore;
 import com.homefix.dispatch.domain.ProviderCandidate;
+import com.homefix.dispatch.domain.SearchingFailedOutcome;
 import com.homefix.dispatch.event.ProviderRejectedEvent;
 import com.homefix.dispatch.port.BookingCancellationPort;
 import com.homefix.dispatch.port.BookingTransitionPort;
@@ -46,8 +47,9 @@ import java.util.UUID;
  *       to the next (Requirement 8.7);</li>
  *   <li>when a radius is exhausted with no acceptance, expands by the configured increment up to
  *       the cycle limit (Requirement 8.8);</li>
- *   <li>if all cycles are exhausted, transitions the booking to SEARCHING_FAILED and fires the
- *       customer + dispatcher notifications (Requirement 8.9).</li>
+ *   <li>if all cycles are exhausted, asks the Booking Service to fail the booking and fires the
+ *       customer + dispatcher notifications (Requirement 8.9) — unless it routed the booking to
+ *       partner agencies instead (AWAITING_ASSIGNMENT, Requirement MT-4.2).</li>
  * </ol>
  *
  * <p>The search stops early, quietly, once the booking no longer needs a provider: the
@@ -302,11 +304,21 @@ public class DispatchService {
         }
     }
 
-    /** Handles the all-cycles-exhausted terminal path (Requirement 8.9). */
+    /**
+     * Handles the all-cycles-exhausted terminal path (Requirement 8.9). The Booking Service may
+     * route the booking to the partner agencies covering it instead of failing it; that booking is
+     * still being served, so the customer is not told nobody is available and the dispatcher team
+     * is not alerted (Requirement MT-4.2).
+     */
     private UUID searchFailed(DispatchRequest request) {
         log.warn("Dispatch exhausted all radius cycles for booking {}; marking SEARCHING_FAILED",
                 request.bookingId());
-        bookingTransition.markSearchingFailed(request.bookingId());
+        SearchingFailedOutcome outcome = bookingTransition.markSearchingFailed(request.bookingId());
+        if (outcome == SearchingFailedOutcome.AWAITING_ASSIGNMENT) {
+            log.info("Booking {} was routed to partner agencies for assignment; skipping the"
+                    + " no-provider notices", request.bookingId());
+            return null;
+        }
         notification.notifyCustomerNoProviderAvailable(request.bookingId(), request.customerId());
         notification.alertDispatcherTeam(request.bookingId());
         return null;

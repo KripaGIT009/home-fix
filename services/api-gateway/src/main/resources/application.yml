@@ -141,6 +141,22 @@ spring:
           uri: ${DISPATCH_ENGINE_URI:http://dispatch-engine:8087}
           predicates:
             - Path=/admin/dispatch/**
+        # Tenants (service agencies) are owned by provider-service: platform admins manage them
+        # under /admin/tenants, Tenant admins work their own team under /tenant/**. A Tenant's
+        # assignment queue and jobs are bookings, so /tenant/bookings/** goes to booking-service
+        # and must stay above the /tenant/** route (Requirement MT-10, design "api-gateway").
+        - id: admin-tenants
+          uri: ${PROVIDER_SERVICE_URI:http://provider-service:8083}
+          predicates:
+            - Path=/admin/tenants/**,/admin/tenants
+        - id: tenant-bookings
+          uri: ${BOOKING_SERVICE_URI:http://booking-service:8084}
+          predicates:
+            - Path=/tenant/bookings/**,/tenant/bookings
+        - id: tenant
+          uri: ${PROVIDER_SERVICE_URI:http://provider-service:8083}
+          predicates:
+            - Path=/tenant/**
         - id: admin-service
           uri: ${ADMIN_SERVICE_URI:http://admin-service:8095}
           predicates:

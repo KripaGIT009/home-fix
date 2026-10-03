@@ -16,6 +16,8 @@ import type { BookingStatus } from '@lib/bookingStatus';
  * - GET   /dispatch/offers/{bookingId}          — one offer made to me, in any status
  * - POST  /dispatch/offers/{bookingId}/accept   — accept it (Req 8.6)
  * - POST  /dispatch/offers/{bookingId}/decline  — decline it (Req 8.7)
+ * - POST  /bookings/{bookingId}/assignment/acceptance — accept a job my agency assigned (Req MT-6.1)
+ * - POST  /bookings/{bookingId}/assignment/rejection  — decline it (Req MT-6.2)
  * - GET   /bookings/{bookingId}                 — job detail (Req 11.1)
  * - POST  /bookings/{bookingId}/on-the-way      — transition to PROVIDER_ON_THE_WAY (Req 9.3)
  * - POST  /bookings/{bookingId}/arrived         — transition to PROVIDER_ARRIVED (Req 9.4)
@@ -95,6 +97,12 @@ export interface JobDetail {
   amount: number | null;
   /** Net working time (pauses excluded), set once the job is completed (Req 11.6). */
   netDurationSeconds: number | null;
+  /**
+   * The agency (Tenant) that assigned the job, sent while it is
+   * `PROVIDER_ASSIGNED` and waiting for this provider's answer (Req MT-6.4);
+   * `null` otherwise.
+   */
+  tenantName: string | null;
 }
 
 /**
@@ -187,6 +195,7 @@ export function toJobDetail(raw: unknown): JobDetail {
     estimatedEarning: typeof r.estimatedEarning === 'number' ? r.estimatedEarning : null,
     amount: typeof r.amount === 'number' ? r.amount : null,
     netDurationSeconds: typeof r.netDurationSeconds === 'number' ? r.netDurationSeconds : null,
+    tenantName: str(r.tenantName),
   };
 }
 
@@ -211,6 +220,26 @@ export async function acceptJobOffer(bookingId: string): Promise<JobOffer> {
 export async function declineJobOffer(bookingId: string): Promise<JobOffer> {
   const { data } = await apiClient.post<JobOffer>(`/dispatch/offers/${bookingId}/decline`);
   return data;
+}
+
+/**
+ * POST /bookings/{bookingId}/assignment/acceptance — accept a job the
+ * provider's agency assigned (Requirement MT-6.1). The booking moves to
+ * PROVIDER_ACCEPTED and from there runs exactly like an automatically matched
+ * job. 404 when the job is not (or no longer) assigned to this provider, 409
+ * when it has moved on (e.g. the customer cancelled).
+ */
+export async function acceptAssignment(bookingId: string): Promise<void> {
+  await apiClient.post(`/bookings/${bookingId}/assignment/acceptance`);
+}
+
+/**
+ * POST /bookings/{bookingId}/assignment/rejection — decline an assigned job
+ * (Requirement MT-6.2). The booking returns to the agency's queue for someone
+ * else and stops being this provider's, so its detail answers 404 afterwards.
+ */
+export async function declineAssignment(bookingId: string): Promise<void> {
+  await apiClient.post(`/bookings/${bookingId}/assignment/rejection`);
 }
 
 /** POST /bookings/{bookingId}/on-the-way — the provider has set off (Req 9.3). */

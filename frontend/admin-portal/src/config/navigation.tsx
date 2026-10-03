@@ -15,6 +15,10 @@ import MarkEmailReadRoundedIcon from '@mui/icons-material/MarkEmailReadRounded';
 import AssessmentRoundedIcon from '@mui/icons-material/AssessmentRounded';
 import HistoryRoundedIcon from '@mui/icons-material/HistoryRounded';
 import SettingsRoundedIcon from '@mui/icons-material/SettingsRounded';
+import ApartmentRoundedIcon from '@mui/icons-material/ApartmentRounded';
+import AssignmentIndRoundedIcon from '@mui/icons-material/AssignmentIndRounded';
+import GroupsRoundedIcon from '@mui/icons-material/GroupsRounded';
+import WorkHistoryRoundedIcon from '@mui/icons-material/WorkHistoryRounded';
 import type { UserRole } from '@stores/authStore';
 import {
   ADMIN_ROLES,
@@ -24,7 +28,11 @@ import {
   REPORT_ROLES,
   SUPER_ADMIN_ROLES,
   SUPPORT_ROLES,
+  TENANT_ROLES,
 } from './roles';
+
+/** Live counters a sidebar entry can carry; the shell resolves each one. */
+export type NavBadge = 'tenantQueue';
 
 /** A single sidebar navigation entry / operational module (Requirement 19.2). */
 export interface NavItem {
@@ -37,10 +45,16 @@ export interface NavItem {
    * that ends in a Forbidden screen (Requirement 19.6/19.7).
    */
   roles: readonly UserRole[];
+  /**
+   * Optional live counter shown beside the label, e.g. the number of requests
+   * waiting in the Tenant's queue (Requirement MT-11.2).
+   */
+  badge?: NavBadge;
 }
 
 /**
- * The 15 operational modules from Requirement 19.2, plus the Dashboard. This
+ * The 15 operational modules from Requirement 19.2, plus the Dashboard, the
+ * Tenants module (Requirement MT-12) and the Tenant Portal (Requirement MT-11). This
  * list is the single source of truth for both the sidebar (AppShell) and the
  * router, so navigation and routing never drift apart.
  *
@@ -62,6 +76,14 @@ export const NAV_ITEMS: readonly NavItem[] = [
     label: 'Verification Queue',
     path: '/verification',
     icon: <FactCheckRoundedIcon />,
+    roles: ADMIN_ROLES,
+  },
+  {
+    // Agencies that take over bookings automatic matching could not place
+    // (Requirement MT-12). Platform administrators only.
+    label: 'Tenants',
+    path: '/tenants',
+    icon: <ApartmentRoundedIcon />,
     roles: ADMIN_ROLES,
   },
   {
@@ -131,4 +153,15 @@ export const NAV_ITEMS: readonly NavItem[] = [
     icon: <SettingsRoundedIcon />,
     roles: SUPER_ADMIN_ROLES,
   },
+  // Tenant Portal (Requirement MT-11.1). Requests comes first: it is the
+  // TENANT_ADMIN's landing module (see homePathFor).
+  {
+    label: 'Requests',
+    path: '/tenant/requests',
+    icon: <AssignmentIndRoundedIcon />,
+    roles: TENANT_ROLES,
+    badge: 'tenantQueue',
+  },
+  { label: 'Team', path: '/tenant/team', icon: <GroupsRoundedIcon />, roles: TENANT_ROLES },
+  { label: 'Jobs', path: '/tenant/jobs', icon: <WorkHistoryRoundedIcon />, roles: TENANT_ROLES },
 ] as const;

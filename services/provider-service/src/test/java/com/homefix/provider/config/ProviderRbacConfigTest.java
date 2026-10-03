@@ -254,6 +254,59 @@ class ProviderRbacConfigTest {
                 .isEqualTo(HttpStatus.UNAUTHORIZED.value());
     }
 
+    // ------------------------------------------------------------------ Tenants (Requirement MT-10)
+
+    private static final List<String[]> ADMIN_TENANT_CALLS = List.of(
+            new String[] {"GET", "/admin/tenants"},
+            new String[] {"POST", "/admin/tenants"},
+            new String[] {"PUT", "/admin/tenants/7e0a1f3c-2b4d-4c6e-8f10-a1b2c3d4e5f6"},
+            new String[] {"GET", "/admin/tenants/7e0a1f3c-2b4d-4c6e-8f10-a1b2c3d4e5f6/members"},
+            new String[] {"POST", "/admin/tenants/7e0a1f3c-2b4d-4c6e-8f10-a1b2c3d4e5f6/admins"},
+            new String[] {"DELETE", "/admin/tenants/7e0a1f3c-2b4d-4c6e-8f10-a1b2c3d4e5f6/providers/x"});
+
+    private static final List<String[]> TENANT_PORTAL_CALLS = List.of(
+            new String[] {"GET", "/tenant/me"},
+            new String[] {"GET", "/tenant/providers"},
+            new String[] {"POST", "/tenant/providers"},
+            new String[] {"DELETE", "/tenant/providers/7e0a1f3c-2b4d-4c6e-8f10-a1b2c3d4e5f6"});
+
+    private void assertCalls(List<String[]> calls, List<String> roles, int expectedStatus) throws Exception {
+        for (String role : roles) {
+            SecurityContextHolder.clearContext();
+            authenticateAs(role);
+            for (String[] call : calls) {
+                FilterChain chain = mock(FilterChain.class);
+
+                assertThat(invoke(call[0], call[1], chain).getStatus())
+                        .as(role + " " + call[0] + " " + call[1]).isEqualTo(expectedStatus);
+                verify(chain, times(expectedStatus == HttpStatus.OK.value() ? 1 : 0)).doFilter(any(), any());
+            }
+        }
+    }
+
+    @Test
+    void tenantRegistryIsForPlatformAdminsOnly() throws Exception {
+        assertCalls(ADMIN_TENANT_CALLS, List.of("ADMIN", "SUPER_ADMIN"), HttpStatus.OK.value());
+        // A Tenant_Admin never reaches platform administration (Requirement MT-10.3).
+        assertCalls(ADMIN_TENANT_CALLS, List.of("TENANT_ADMIN", "SERVICE_PROVIDER", "DISPATCHER",
+                "FINANCE_ADMIN", "CUSTOMER"), HttpStatus.FORBIDDEN.value());
+    }
+
+    @Test
+    void tenantPortalIsForTenantAdminsOnly() throws Exception {
+        assertCalls(TENANT_PORTAL_CALLS, List.of("TENANT_ADMIN"), HttpStatus.OK.value());
+        assertCalls(TENANT_PORTAL_CALLS, List.of("ADMIN", "SUPER_ADMIN", "SERVICE_PROVIDER", "CUSTOMER"),
+                HttpStatus.FORBIDDEN.value());
+    }
+
+    @Test
+    void unauthenticatedTenantCallsAreUnauthorized() throws Exception {
+        assertThat(invoke("GET", "/admin/tenants", mock(FilterChain.class)).getStatus())
+                .isEqualTo(HttpStatus.UNAUTHORIZED.value());
+        assertThat(invoke("GET", "/tenant/me", mock(FilterChain.class)).getStatus())
+                .isEqualTo(HttpStatus.UNAUTHORIZED.value());
+    }
+
     @Test
     void healthAndMetricsSurfacePassesThroughWithNoAuthentication() throws Exception {
         for (String path : List.of("/health/liveness", "/health/readiness", "/actuator/health",

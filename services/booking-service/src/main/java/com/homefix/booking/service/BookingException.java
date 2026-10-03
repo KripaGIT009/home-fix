@@ -81,4 +81,21 @@ public class BookingException extends RuntimeException {
     public static BookingException sagaFailed(String message) {
         return new BookingException(HttpStatus.INTERNAL_SERVER_ERROR, "BOOKING_NOT_COMPLETED", message);
     }
+
+    /**
+     * A Tenant assignment for a booking that is no longer waiting for one: another Tenant_Admin
+     * assigned it first (the optimistic lock settled the race), or it timed out, was cancelled, or
+     * was returned to a different Tenant (Requirement MT-5.4, Property MT3).
+     */
+    public static BookingException notAssignable(String message) {
+        return new BookingException(HttpStatus.CONFLICT, "BOOKING_NOT_ASSIGNABLE", message);
+    }
+
+    /**
+     * The chosen Provider is not an Assignable_Provider of the caller's Tenant: not a member, not
+     * APPROVED, or under review (Requirement MT-5.5, Property MT4).
+     */
+    public static BookingException providerNotAssignable(String message) {
+        return new BookingException(HttpStatus.CONFLICT, "PROVIDER_NOT_ASSIGNABLE", message);
+    }
 }

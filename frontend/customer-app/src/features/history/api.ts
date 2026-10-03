@@ -79,6 +79,12 @@ export interface BookingDetail {
   /** Parts and materials the professional has recorded (Requirement 11.3). */
   parts?: Array<{ id: string; itemName: string; quantity: number; unitCost: number }>;
   description?: string;
+  /**
+   * The local partner agency that assigned the professional, sent while the
+   * booking is `PROVIDER_ASSIGNED` and waiting for their confirmation
+   * (Requirement MT-6.4).
+   */
+  tenantName?: string;
   provider?: {
     displayName: string;
     verified: boolean;

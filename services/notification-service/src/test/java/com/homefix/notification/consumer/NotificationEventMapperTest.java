@@ -51,6 +51,31 @@ class NotificationEventMapperTest {
     }
 
     @Test
+    void mapsTheAssigningAgencysNameAndIgnoresItsId() {
+        // booking-service's ProviderAssigned for a Tenant assignment (Requirement MT-5.3).
+        String json = "{\"bookingId\":\"" + UUID.randomUUID() + "\",\"reference\":\"BR-11\","
+                + "\"customerId\":\"" + UUID.randomUUID() + "\",\"providerId\":\"" + UUID.randomUUID() + "\","
+                + "\"tenantId\":\"" + UUID.randomUUID() + "\",\"tenantName\":\" Sharma Home Services \","
+                + "\"bookingCreatedAt\":\"2026-10-03T10:00:00Z\",\"occurredAt\":\"2026-10-03T10:05:00Z\"}";
+
+        InboundEvent event = mapper.map(NotificationEventType.PROVIDER_ASSIGNED, record(json, UUID.randomUUID()));
+
+        assertThat(event.attributes()).containsEntry("tenantName", "Sharma Home Services")
+                .doesNotContainKey("tenantId");
+    }
+
+    @Test
+    void aMissingOrBlankAgencyNameIsNoAttribute() {
+        String withoutTenant = "{\"reference\":\"BR-12\",\"tenantId\":null,\"tenantName\":null}";
+        String blankTenant = "{\"reference\":\"BR-13\",\"tenantName\":\"  \"}";
+
+        assertThat(mapper.map(NotificationEventType.PROVIDER_ASSIGNED, record(withoutTenant, UUID.randomUUID()))
+                .attributes()).doesNotContainKey("tenantName");
+        assertThat(mapper.map(NotificationEventType.PROVIDER_ASSIGNED, record(blankTenant, UUID.randomUUID()))
+                .attributes()).doesNotContainKey("tenantName");
+    }
+
+    @Test
     void legacyBookingReferenceSpellingIsStillAccepted() {
         String json = "{\"bookingReference\":\"BR-10\",\"customerId\":\"" + UUID.randomUUID() + "\"}";
 
