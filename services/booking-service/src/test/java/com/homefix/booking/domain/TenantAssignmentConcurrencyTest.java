@@ -288,7 +288,7 @@ class TenantAssignmentConcurrencyTest {
         };
         BookingTransitionService racing = transitions(racingPublisher);
         ProviderAssignmentService assignments = new ProviderAssignmentService(bookingRepository, racing,
-                mock(OutboxEventPublisher.class), CLOCK);
+                mock(OutboxEventPublisher.class), directory, transactions, CLOCK);
         AssignmentTimeoutSweeper sweeper = new AssignmentTimeoutSweeper(bookingRepository, racing,
                 transactions, properties, CLOCK);
 

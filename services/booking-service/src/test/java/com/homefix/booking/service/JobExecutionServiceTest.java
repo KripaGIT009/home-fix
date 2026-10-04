@@ -220,6 +220,22 @@ class JobExecutionServiceTest {
         assertThat(event.reference()).isEqualTo(b.getReference());
     }
 
+    @Test
+    void theProviderCannotCompleteWhileTheCustomerIsStillDecidingOnTheQuote() {
+        // CUSTOMER_APPROVAL_PENDING -> JOB_COMPLETED is the customer's rejection or the timeout
+        // (Requirement 9.8, 9.9); the provider taking it would bill the unapproved parts total.
+        JobExecutionService service = newService();
+        Booking b = bookingInState(BookingStatus.CUSTOMER_APPROVAL_PENDING);
+        b.setFinalTotal(new BigDecimal("400.00"));
+
+        assertThatThrownBy(() -> service.completeJob(b.getReference(), providerActor()))
+                .isInstanceOf(InvalidTransitionException.class);
+
+        assertThat(b.getStatus()).isEqualTo(BookingStatus.CUSTOMER_APPROVAL_PENDING);
+        assertThat(b.getFinalTotal()).isEqualByComparingTo("400.00");
+        verify(outboxPublisher, never()).publish(any(), any(), any(), any());
+    }
+
     /** The payload of the single {@code eventType} outbox write for {@code b}. */
     private Object publishedPayload(Booking b, String eventType) {
         ArgumentCaptor<Object> payload = ArgumentCaptor.forClass(Object.class);

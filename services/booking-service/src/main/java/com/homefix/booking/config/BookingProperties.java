@@ -39,6 +39,14 @@ public class BookingProperties {
      */
     private Duration tenantAssignmentTimeout = Duration.ofMinutes(60);
 
+    /**
+     * How long a booking may stay in SEARCHING_PROVIDER before the stalled-search sweeper settles it
+     * as if dispatch had found nobody (review 17.5 item 4). It must exceed the longest search the
+     * Dispatch Engine can legitimately run (offer timeout × candidates × radius cycles); the sweeper
+     * only rescues searches that were lost, such as one interrupted by a restart.
+     */
+    private Duration providerSearchTimeout = Duration.ofMinutes(60);
+
     private final Media media = new Media();
 
     public Duration getMinLeadTime() {
@@ -95,6 +103,14 @@ public class BookingProperties {
 
     public void setTenantAssignmentTimeout(Duration tenantAssignmentTimeout) {
         this.tenantAssignmentTimeout = tenantAssignmentTimeout;
+    }
+
+    public Duration getProviderSearchTimeout() {
+        return providerSearchTimeout;
+    }
+
+    public void setProviderSearchTimeout(Duration providerSearchTimeout) {
+        this.providerSearchTimeout = providerSearchTimeout;
     }
 
     public Media getMedia() {

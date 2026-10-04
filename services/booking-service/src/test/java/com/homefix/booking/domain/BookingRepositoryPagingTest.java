@@ -41,6 +41,9 @@ class BookingRepositoryPagingTest {
     @Autowired
     private BookingRepository repository;
 
+    @Autowired
+    private BookingAuditRepository auditRepository;
+
     private Booking place(UUID customer, String reference, long minutes) {
         return repository.save(Bookings.placed(customer, UUID.randomUUID(), reference,
                 T0.plus(Duration.ofMinutes(minutes)), null));
@@ -103,5 +106,38 @@ class BookingRepositoryPagingTest {
         }
 
         assertThat(seen).hasSize(5).doesNotHaveDuplicates();
+    }
+
+    /**
+     * The sweepers' JPQL (a scalar subquery over the audit trail) runs on the database: only bookings
+     * still in the state, whose latest entry into it is before the cutoff, oldest first.
+     */
+    @Test
+    void sweeperQueriesReadStateEntryTimesFromTheAuditTrail() {
+        Booking stalled = inStateSince("HFX-STALLED", 1, BookingStatus.SEARCHING_PROVIDER, T0);
+        inStateSince("HFX-FRESH", 2, BookingStatus.SEARCHING_PROVIDER, T0.plus(Duration.ofMinutes(90)));
+        Booking accepted = inStateSince("HFX-MOVED-ON", 3, BookingStatus.SEARCHING_PROVIDER, T0);
+        accepted.applyStatus(BookingStatus.PROVIDER_ACCEPTED);
+        repository.save(accepted);
+        Booking unanswered = inStateSince("HFX-QUOTE", 4, BookingStatus.CUSTOMER_APPROVAL_PENDING, T0);
+        Booking requoted = inStateSince("HFX-REQUOTE", 5, BookingStatus.CUSTOMER_APPROVAL_PENDING, T0);
+        auditRepository.save(BookingAudit.of(requoted.getId(), BookingStatus.ADDITIONAL_QUOTE_REQUIRED,
+                BookingStatus.CUSTOMER_APPROVAL_PENDING, null, "booking-service",
+                T0.plus(Duration.ofMinutes(90)), "second quote"));
+        Instant cutoff = T0.plus(Duration.ofMinutes(60));
+
+        assertThat(repository.findSearchingProviderSince(cutoff, PageRequest.of(0, 10)))
+                .extracting(Booking::getId).containsExactly(stalled.getId());
+        assertThat(repository.findCustomerApprovalPendingSince(cutoff, PageRequest.of(0, 10)))
+                .extracting(Booking::getId).containsExactly(unanswered.getId());
+    }
+
+    private Booking inStateSince(String reference, long createdMinutes, BookingStatus status, Instant enteredAt) {
+        Booking booking = place(UUID.randomUUID(), reference, createdMinutes);
+        booking.applyStatus(status);
+        booking = repository.save(booking);
+        auditRepository.save(BookingAudit.of(booking.getId(), BookingStatus.CREATED, status,
+                null, "booking-service", enteredAt, "test"));
+        return booking;
     }
 }

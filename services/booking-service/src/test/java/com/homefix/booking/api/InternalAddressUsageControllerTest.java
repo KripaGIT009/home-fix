@@ -1,11 +1,16 @@
 package com.homefix.booking.api;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.EnumSet;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Stream;
 
@@ -18,6 +23,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import com.homefix.booking.domain.Booking;
+import com.homefix.booking.domain.BookingStateMachine;
 import com.homefix.booking.domain.BookingStatus;
 import com.homefix.booking.support.InMemoryBookingRepository;
 
@@ -75,7 +81,7 @@ class InternalAddressUsageControllerTest {
 
     @ParameterizedTest
     @EnumSource(value = BookingStatus.class, names = {
-            "CREATED", "SEARCHING_FAILED", "JOB_COMPLETED", "CUSTOMER_CONFIRMED", "PAYMENT_PENDING",
+            "SEARCHING_FAILED", "JOB_COMPLETED", "CUSTOMER_CONFIRMED", "PAYMENT_PENDING",
             "PAYMENT_COMPLETED", "DISPUTED", "REFUNDED", "CANCELLED"})
     void bookingsThatNoLongerNeedTheAddressDoNotBlockIt(BookingStatus status) throws Exception {
         book("HFX-20261002-AAAAAA", CUSTOMER, HOME, status);
@@ -101,5 +107,41 @@ class InternalAddressUsageControllerTest {
                         .param("addressId", HOME.toString()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.bookingReference").value("HFX-20261002-CCCCCC"));
+    }
+
+    /**
+     * The set is exactly the states from which the job can still be done, so a state added to the
+     * lifecycle later (as AWAITING_ASSIGNMENT was, and was missed here) fails this test until it is
+     * classified.
+     */
+    @Test
+    void theInUseStatesAreExactlyThoseThatCanStillReachACompletedJob() {
+        BookingStateMachine machine = new BookingStateMachine();
+        Set<BookingStatus> beforeCompletion = EnumSet.noneOf(BookingStatus.class);
+        for (BookingStatus status : BookingStatus.values()) {
+            if (status != BookingStatus.JOB_COMPLETED && reaches(machine, status, BookingStatus.JOB_COMPLETED)) {
+                beforeCompletion.add(status);
+            }
+        }
+
+        assertThat(InternalAddressUsageController.ADDRESS_IN_USE_STATUSES)
+                .containsExactlyInAnyOrderElementsOf(beforeCompletion)
+                .contains(BookingStatus.AWAITING_ASSIGNMENT, BookingStatus.PROVIDER_ASSIGNED);
+    }
+
+    private static boolean reaches(BookingStateMachine machine, BookingStatus from, BookingStatus target) {
+        Set<BookingStatus> seen = EnumSet.of(from);
+        Deque<BookingStatus> pending = new ArrayDeque<>(Set.of(from));
+        while (!pending.isEmpty()) {
+            for (BookingStatus next : machine.permittedTargets(pending.pop())) {
+                if (next == target) {
+                    return true;
+                }
+                if (seen.add(next)) {
+                    pending.push(next);
+                }
+            }
+        }
+        return false;
     }
 }

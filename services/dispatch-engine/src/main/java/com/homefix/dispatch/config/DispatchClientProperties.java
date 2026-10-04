@@ -15,7 +15,11 @@ public class DispatchClientProperties {
     /** Base URL of the Booking Service (state transitions). */
     private String bookingServiceBaseUrl = "http://booking-service";
 
-    /** Base URL of the Notification Service (customer/dispatcher alerts). */
+    /**
+     * Base URL of the Notification Service. Not called at present: the Notification Service reacts
+     * to events and has no endpoint for the Dispatch Engine (see {@code LoggingNotificationAdapter}).
+     * Kept so an adapter for a future contract needs no configuration change.
+     */
     private String notificationServiceBaseUrl = "http://notification-service";
 
     /** Base URL of the Customer Service (booking address to coordinates, Requirement 8.2). */

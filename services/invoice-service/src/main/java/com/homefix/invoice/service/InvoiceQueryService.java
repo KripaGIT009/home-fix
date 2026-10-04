@@ -33,6 +33,12 @@ import org.springframework.stereotype.Service;
 @Service
 public class InvoiceQueryService {
 
+    /** Earliest statement year accepted; no invoice can predate the platform. */
+    static final int MIN_YEAR = 2000;
+
+    /** Latest statement year accepted; keeps the period's instants well inside the supported range. */
+    static final int MAX_YEAR = 9999;
+
     private final InvoiceRepository invoiceRepository;
     private final InvoiceStoragePort storagePort;
     private final InvoiceProperties properties;
@@ -75,8 +81,20 @@ public class InvoiceQueryService {
      * Builds a provider's earnings statement for the given month. The statement is only
      * {@code available} on/after the first day of the following month (Requirement 13.6); before
      * then an empty, unavailable statement is returned.
+     *
+     * @throws InvoiceException 400 {@code VALIDATION_ERROR} for a month outside 1-12 or a year outside
+     *                          {@value #MIN_YEAR}-{@value #MAX_YEAR}. {@link YearMonth#of} would
+     *                          otherwise throw a {@code DateTimeException} no handler maps, which
+     *                          reached the client as a 500.
      */
     public ProviderEarningsStatement providerMonthlyStatement(UUID providerId, int year, int month) {
+        if (month < 1 || month > 12) {
+            throw InvoiceException.validation("month must be between 1 and 12, was " + month);
+        }
+        if (year < MIN_YEAR || year > MAX_YEAR) {
+            throw InvoiceException.validation(
+                    "year must be between " + MIN_YEAR + " and " + MAX_YEAR + ", was " + year);
+        }
         YearMonth period = YearMonth.of(year, month);
         Instant from = period.atDay(1).atStartOfDay(ZoneOffset.UTC).toInstant();
         Instant to = period.plusMonths(1).atDay(1).atStartOfDay(ZoneOffset.UTC).toInstant();

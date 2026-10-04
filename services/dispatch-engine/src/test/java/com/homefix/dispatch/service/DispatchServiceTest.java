@@ -5,15 +5,17 @@ import com.homefix.dispatch.domain.DispatchRequest;
 import com.homefix.dispatch.domain.MatchingWeights;
 import com.homefix.dispatch.domain.MatchingWeightsStore;
 import com.homefix.dispatch.domain.ProviderCandidate;
+import com.homefix.dispatch.domain.ProviderSearchUnavailableException;
 import com.homefix.dispatch.domain.ScoreComponents;
 import com.homefix.dispatch.port.JobOfferPort.OfferOutcome;
 import com.homefix.dispatch.service.fake.FlagCancellation;
+import com.homefix.dispatch.service.fake.InMemoryAcceptanceLedger;
+import com.homefix.dispatch.service.fake.InMemoryAcceptanceLedger.Announcement;
 import com.homefix.dispatch.service.fake.InMemoryLock;
 import com.homefix.dispatch.service.fake.MutableClock;
 import com.homefix.dispatch.service.fake.RecordingBookingTransition;
 import com.homefix.dispatch.service.fake.RecordingNotification;
 import com.homefix.dispatch.event.ProviderRejectedEvent;
-import com.homefix.dispatch.service.fake.RecordingProviderAcceptedPublisher;
 import com.homefix.dispatch.service.fake.RecordingProviderRejectedPublisher;
 import com.homefix.dispatch.service.fake.RecordingProviderRejectedPublisher.Rejection;
 import com.homefix.dispatch.service.fake.ScriptedJobOffer;
@@ -27,6 +29,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Behavioural unit tests for the dispatch orchestration (Requirements 8.2-8.11) using deterministic
@@ -39,7 +42,7 @@ class DispatchServiceTest {
     private ScriptedJobOffer jobOffer;
     private RecordingBookingTransition bookingTransition;
     private RecordingNotification notification;
-    private RecordingProviderAcceptedPublisher acceptedPublisher;
+    private InMemoryAcceptanceLedger acceptanceLedger;
     private RecordingProviderRejectedPublisher rejectedPublisher;
     private MatchingWeightsStore weightsStore;
     private DispatchProperties properties;
@@ -56,7 +59,7 @@ class DispatchServiceTest {
         jobOffer = new ScriptedJobOffer(lock);
         bookingTransition = new RecordingBookingTransition();
         notification = new RecordingNotification();
-        acceptedPublisher = new RecordingProviderAcceptedPublisher();
+        acceptanceLedger = new InMemoryAcceptanceLedger();
         rejectedPublisher = new RecordingProviderRejectedPublisher();
         weightsStore = new MatchingWeightsStore();
         properties = new DispatchProperties(); // defaults: 10 km, +5 km, 3 cycles, 60 s
@@ -69,7 +72,7 @@ class DispatchServiceTest {
 
     private DispatchService newService(RecordingProviderRejectedPublisher rejections) {
         return new DispatchService(providerQuery, lock, jobOffer, bookingTransition,
-                notification, weightsStore, properties, acceptedPublisher, rejections, cancellation,
+                notification, weightsStore, properties, acceptanceLedger, rejections, cancellation,
                 clock, pause -> {
                     clock.advance(pause);
                     onPause.run();
@@ -100,8 +103,8 @@ class DispatchServiceTest {
         assertThat(accepted).isEqualTo(best.providerId());
         assertThat(jobOffer.offeredProviders()).first().isEqualTo(best.providerId());
         assertThat(bookingTransition.acceptedProviderId()).isEqualTo(best.providerId());
-        assertThat(acceptedPublisher.published()).isTrue();
-        assertThat(notification.customerNotifications()).isZero();
+        assertThat(acceptanceLedger.published()).isTrue();
+        assertThat(notification.dispatcherAlerts()).isZero();
     }
 
     @Test
@@ -238,15 +241,17 @@ class DispatchServiceTest {
     }
 
     @Test
-    void searchingFailedNotifiesCustomerAndDispatcher() {
+    void searchingFailedAlertsTheDispatcherTeam() {
+        // The customer's "no provider" notice comes from the Notification Service, off the
+        // BookingCancelled (SEARCHING_FAILED) the Booking Service publishes; dispatch only alerts
+        // the dispatcher team. The NotificationPort no longer has a customer notice at all.
         DispatchRequest request = emergencyRequest();
 
         service.dispatch(request);
 
-        assertThat(notification.customerNotifications()).isEqualTo(1);
+        assertThat(bookingTransition.searchingFailedCalled()).isTrue();
         assertThat(notification.dispatcherAlerts()).isEqualTo(1);
-        assertThat(notification.lastCustomerId()).isEqualTo(request.customerId());
-        assertThat(acceptedPublisher.published()).isFalse();
+        assertThat(acceptanceLedger.published()).isFalse();
     }
 
     @Test
@@ -258,9 +263,8 @@ class DispatchServiceTest {
         assertThat(service.dispatch(emergencyRequest())).isNull();
 
         assertThat(bookingTransition.searchingFailedCalled()).isTrue();
-        assertThat(notification.customerNotifications()).isZero();
         assertThat(notification.dispatcherAlerts()).isZero();
-        assertThat(acceptedPublisher.published()).isFalse();
+        assertThat(acceptanceLedger.published()).isFalse();
     }
 
     @Test
@@ -358,7 +362,7 @@ class DispatchServiceTest {
         UUID accepted = service.dispatch(emergencyRequest());
 
         assertThat(accepted).isEqualTo(acceptor.providerId());
-        assertThat(acceptedPublisher.published()).isTrue();
+        assertThat(acceptanceLedger.published()).isTrue();
     }
 
     // ---- Cancelled booking stops the search (Requirement 8.7) ----------------------------------
@@ -378,7 +382,6 @@ class DispatchServiceTest {
         assertThat(jobOffer.offeredProviders()).containsExactly(first.providerId());
         assertThat(rejectedPublisher.rejections()).isEmpty();
         assertThat(bookingTransition.searchingFailedCalled()).isFalse();
-        assertThat(notification.customerNotifications()).isZero();
         assertThat(notification.dispatcherAlerts()).isZero();
     }
 
@@ -405,7 +408,10 @@ class DispatchServiceTest {
         UUID accepted = service.dispatch(emergencyRequest());
 
         assertThat(accepted).isNull();
-        assertThat(acceptedPublisher.published()).isFalse();
+        assertThat(acceptanceLedger.published()).isFalse();
+        // The recorded acceptance is dropped, so the reconciler never retries it either.
+        assertThat(acceptanceLedger.outstanding()).isEmpty();
+        assertThat(acceptanceLedger.discarded()).hasSize(1);
         assertThat(jobOffer.offeredProviders()).containsExactly(acceptor.providerId());
     }
 
@@ -415,7 +421,130 @@ class DispatchServiceTest {
 
         assertThat(service.dispatch(emergencyRequest())).isNull();
 
-        assertThat(notification.customerNotifications()).isZero();
+        assertThat(notification.dispatcherAlerts()).isZero();
+    }
+
+    // ---- ProviderAccepted is never lost (Requirement 8.6) --------------------------------------
+
+    @Test
+    void acceptancePublishesProviderAcceptedWithTheBookingFactsAndLeavesNothingOutstanding() {
+        ProviderCandidate acceptor = candidate(0.9);
+        providerQuery.whenRadiusAtLeast(10.0, acceptor);
+        jobOffer.respond(acceptor.providerId(), OfferOutcome.ACCEPTED);
+        DispatchRequest request = emergencyRequest();
+
+        service.dispatch(request);
+
+        assertThat(acceptanceLedger.announcements()).containsExactly(new Announcement(
+                request.bookingId(), request.customerId(), acceptor.providerId(), request.bookingCreatedAt()));
+        assertThat(acceptanceLedger.outstanding()).isEmpty();
+    }
+
+    @Test
+    void outboxFailureAfterTheBookingWasAcceptedKeepsTheAcceptanceForTheReconciler() {
+        // The dual write: booking-service has applied PROVIDER_ACCEPTED, then the outbox write fails.
+        // Before the fix the event was simply lost; now the acceptance stays recorded, marked as
+        // already applied, and the reconciler writes the event without asking booking-service again.
+        ProviderCandidate acceptor = candidate(0.9);
+        providerQuery.whenRadiusAtLeast(10.0, acceptor);
+        jobOffer.respond(acceptor.providerId(), OfferOutcome.ACCEPTED);
+        acceptanceLedger.failAnnouncing();
+        DispatchRequest request = emergencyRequest();
+
+        UUID accepted = service.dispatch(request);
+
+        assertThat(accepted).isEqualTo(acceptor.providerId());
+        assertThat(bookingTransition.acceptedProviderId()).isEqualTo(acceptor.providerId());
+        assertThat(acceptanceLedger.published()).isFalse();
+        assertThat(acceptanceLedger.outstanding().get(request.bookingId()).bookingAccepted()).isTrue();
+
+        acceptanceLedger.recover();
+        new AcceptanceReconciler(acceptanceLedger, bookingTransition).reconcile();
+
+        assertThat(acceptanceLedger.announcements()).singleElement()
+                .satisfies(a -> assertThat(a.providerId()).isEqualTo(acceptor.providerId()));
+        assertThat(bookingTransition.acceptCalls()).isEqualTo(1);
+        assertThat(acceptanceLedger.outstanding()).isEmpty();
+    }
+
+    @Test
+    void bookingServiceOutageOnAcceptanceKeepsTheAcceptanceAndEndsTheSearch() {
+        ProviderCandidate acceptor = candidate(0.9);
+        ProviderCandidate next = candidate(0.6);
+        providerQuery.whenRadiusAtLeast(10.0, acceptor, next);
+        jobOffer.respond(acceptor.providerId(), OfferOutcome.ACCEPTED);
+        bookingTransition.unavailableFor(1);
+        DispatchRequest request = emergencyRequest();
+
+        UUID accepted = service.dispatch(request);
+
+        // The provider said yes: nobody else is offered the job and nothing is announced yet.
+        assertThat(accepted).isEqualTo(acceptor.providerId());
+        assertThat(jobOffer.offeredProviders()).containsExactly(acceptor.providerId());
+        assertThat(acceptanceLedger.published()).isFalse();
+        assertThat(acceptanceLedger.outstanding()).containsKey(request.bookingId());
+        assertThat(acceptanceLedger.postponed()).containsExactly(request.bookingId());
+        assertThat(bookingTransition.searchingFailedCalled()).isFalse();
+    }
+
+    @Test
+    void acceptanceThatCannotBeRecordedIsNeverRequestedFromTheBookingService() {
+        ProviderCandidate acceptor = candidate(0.9);
+        providerQuery.whenRadiusAtLeast(10.0, acceptor);
+        jobOffer.respond(acceptor.providerId(), OfferOutcome.ACCEPTED);
+        acceptanceLedger.failOpening();
+
+        assertThatThrownBy(() -> service.dispatch(emergencyRequest()))
+                .isInstanceOf(IllegalStateException.class);
+
+        // No booking accepted without a record from which its event could be written.
+        assertThat(bookingTransition.acceptCalls()).isZero();
+        assertThat(acceptanceLedger.published()).isFalse();
+    }
+
+    // ---- An unavailable provider search is not an empty market ---------------------------------
+
+    @Test
+    void providerSearchUnavailableIsRetriedAndThenAbandonedWithoutFailingTheBooking() {
+        // A refused credential (401/403) or a Provider Service outage: before the fix the adapter
+        // answered "no providers", every radius came back empty, and the booking was failed as
+        // "no provider available".
+        providerQuery.whenRadiusAtLeast(10.0, candidate(0.9)).unavailableFor(Integer.MAX_VALUE);
+        Instant start = clock.instant();
+
+        assertThatThrownBy(() -> service.dispatch(emergencyRequest()))
+                .isInstanceOf(ProviderSearchUnavailableException.class);
+
+        // Retried for one offer window at the first radius, never moved on to the next one.
+        assertThat(Duration.between(start, clock.instant())).isEqualTo(Duration.ofSeconds(60));
+        assertThat(providerQuery.queriedRadii()).hasSizeGreaterThan(1).containsOnly(10.0);
+        assertThat(bookingTransition.searchingFailedCalled()).isFalse();
+        assertThat(notification.dispatcherAlerts()).isZero();
+        assertThat(jobOffer.offeredProviders()).isEmpty();
+    }
+
+    @Test
+    void providerSearchThatRecoversWithinTheWindowCarriesOn() {
+        ProviderCandidate acceptor = candidate(0.9);
+        providerQuery.whenRadiusAtLeast(10.0, acceptor).unavailableFor(2);
+        jobOffer.respond(acceptor.providerId(), OfferOutcome.ACCEPTED);
+
+        UUID accepted = service.dispatch(emergencyRequest());
+
+        assertThat(accepted).isEqualTo(acceptor.providerId());
+        assertThat(providerQuery.queriedRadii()).containsExactly(10.0, 10.0, 10.0);
+        assertThat(acceptanceLedger.published()).isTrue();
+    }
+
+    @Test
+    void cancellationWhileTheProviderSearchIsUnavailableStopsQuietly() {
+        providerQuery.unavailableFor(Integer.MAX_VALUE);
+        DispatchRequest request = emergencyRequest();
+        onPause = () -> cancellation.markCancelled(request.bookingId());
+
+        assertThat(service.dispatch(request)).isNull();
+
+        assertThat(bookingTransition.searchingFailedCalled()).isFalse();
         assertThat(notification.dispatcherAlerts()).isZero();
     }
 }

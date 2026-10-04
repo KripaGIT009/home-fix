@@ -6,8 +6,10 @@ import com.homefix.dispatch.domain.DispatchRequest;
 import com.homefix.dispatch.domain.MatchingWeights;
 import com.homefix.dispatch.domain.MatchingWeightsStore;
 import com.homefix.dispatch.domain.ProviderCandidate;
+import com.homefix.dispatch.domain.ProviderSearchUnavailableException;
 import com.homefix.dispatch.domain.SearchingFailedOutcome;
 import com.homefix.dispatch.event.ProviderRejectedEvent;
+import com.homefix.dispatch.port.AcceptanceLedger;
 import com.homefix.dispatch.port.BookingCancellationPort;
 import com.homefix.dispatch.port.BookingTransitionPort;
 import com.homefix.dispatch.port.DistributedLockPort;
@@ -41,16 +43,26 @@ import java.util.UUID;
  *       the next candidate, then waits for the busy ones (at most one offer window) before giving
  *       up on the radius. A busy provider has not seen this job, so they are not dropped from the
  *       pool the way a decliner is;</li>
- *   <li>on acceptance, transitions the booking to PROVIDER_ACCEPTED and publishes ProviderAccepted
- *       (Requirement 8.6);</li>
+ *   <li>on acceptance, records it durably, transitions the booking to PROVIDER_ACCEPTED and
+ *       publishes ProviderAccepted (Requirement 8.6) — see {@link AcceptanceLedger} for why the
+ *       record comes first;</li>
  *   <li>on reject/timeout, publishes ProviderRejected, drops that provider from the pool and moves
  *       to the next (Requirement 8.7);</li>
  *   <li>when a radius is exhausted with no acceptance, expands by the configured increment up to
  *       the cycle limit (Requirement 8.8);</li>
- *   <li>if all cycles are exhausted, asks the Booking Service to fail the booking and fires the
- *       customer + dispatcher notifications (Requirement 8.9) — unless it routed the booking to
- *       partner agencies instead (AWAITING_ASSIGNMENT, Requirement MT-4.2).</li>
+ *   <li>if all cycles are exhausted, asks the Booking Service to fail the booking and alerts the
+ *       dispatcher team (Requirement 8.9) — unless it routed the booking to partner agencies instead
+ *       (AWAITING_ASSIGNMENT, Requirement MT-4.2). The customer is told by the Notification Service,
+ *       from the {@code BookingCancelled} the Booking Service publishes for SEARCHING_FAILED.</li>
  * </ol>
+ *
+ * <p>Only an answer from the Provider Service counts towards "nobody available". When the
+ * eligible-provider query cannot be made ({@link ProviderSearchUnavailableException}: an outage, an
+ * open breaker, a refused service credential) it is retried for up to one offer window; if the
+ * Provider Service is still unavailable the run is abandoned with an ERROR and the exception, as a
+ * Booking Service outage on the SEARCHING_FAILED transition ends it, and the booking is left in
+ * SEARCHING_PROVIDER for the customer to cancel. It is never failed as having no provider on the strength of a search that did not
+ * happen.
  *
  * <p>The search stops early, quietly, once the booking no longer needs a provider: the
  * {@code BookingCancelled} flag is checked before every offer and again before a declined or
@@ -67,6 +79,9 @@ public class DispatchService {
 
     private static final Logger log = LoggerFactory.getLogger(DispatchService.class);
 
+    /** Pause between attempts to reach the Provider Service while it is unavailable. */
+    static final Duration PROVIDER_SEARCH_RETRY_PAUSE = Duration.ofSeconds(5);
+
     /** Pause between attempts on busy providers; abstracted so tests can drive time. */
     @FunctionalInterface
     public interface Sleeper {
@@ -80,7 +95,7 @@ public class DispatchService {
     private final NotificationPort notification;
     private final MatchingWeightsStore weightsStore;
     private final DispatchProperties properties;
-    private final ProviderAcceptedPublisher acceptedPublisher;
+    private final AcceptanceLedger acceptanceLedger;
     private final ProviderRejectedPublisher rejectedPublisher;
     private final BookingCancellationPort cancellation;
     private final Clock clock;
@@ -94,12 +109,12 @@ public class DispatchService {
                            NotificationPort notification,
                            MatchingWeightsStore weightsStore,
                            DispatchProperties properties,
-                           ProviderAcceptedPublisher acceptedPublisher,
+                           AcceptanceLedger acceptanceLedger,
                            ProviderRejectedPublisher rejectedPublisher,
                            BookingCancellationPort cancellation,
                            Clock clock) {
         this(providerQuery, lock, jobOffer, bookingTransition, notification, weightsStore, properties,
-                acceptedPublisher, rejectedPublisher, cancellation, clock, Thread::sleep);
+                acceptanceLedger, rejectedPublisher, cancellation, clock, Thread::sleep);
     }
 
     DispatchService(ProviderQueryPort providerQuery,
@@ -109,7 +124,7 @@ public class DispatchService {
                            NotificationPort notification,
                            MatchingWeightsStore weightsStore,
                            DispatchProperties properties,
-                           ProviderAcceptedPublisher acceptedPublisher,
+                           AcceptanceLedger acceptanceLedger,
                            ProviderRejectedPublisher rejectedPublisher,
                            BookingCancellationPort cancellation,
                            Clock clock,
@@ -121,7 +136,7 @@ public class DispatchService {
         this.notification = notification;
         this.weightsStore = weightsStore;
         this.properties = properties;
-        this.acceptedPublisher = acceptedPublisher;
+        this.acceptanceLedger = acceptanceLedger;
         this.rejectedPublisher = rejectedPublisher;
         this.cancellation = cancellation;
         this.clock = clock;
@@ -133,6 +148,8 @@ public class DispatchService {
      *
      * @return the accepted provider's id, or {@code null} if the search failed after all cycles or
      *         was abandoned because the booking no longer needs a provider
+     * @throws ProviderSearchUnavailableException if the Provider Service stayed unavailable for a
+     *         whole offer window; the booking is left in SEARCHING_PROVIDER
      */
     public UUID dispatch(DispatchRequest request) {
         try {
@@ -186,7 +203,8 @@ public class DispatchService {
                 if (busyDeadline == null) {
                     busyDeadline = now.plus(timeout);
                 }
-                if (!now.isBefore(busyDeadline) || !pause(busyDeadline, now)) {
+                Duration poll = Duration.ofMillis(properties.getOfferPollIntervalMillis());
+                if (!now.isBefore(busyDeadline) || !pause(poll, busyDeadline, now)) {
                     log.debug("Dispatch booking {} cycle {}: {} provider(s) still busy; moving on",
                             request.bookingId(), cycle, busy.size());
                     break;
@@ -200,15 +218,14 @@ public class DispatchService {
     }
 
     /**
-     * Sleeps one poll interval, or until the deadline if that is sooner.
+     * Sleeps one {@code step}, or until the deadline if that is sooner.
      *
      * @return {@code false} if interrupted, in which case the caller stops waiting
      */
-    private boolean pause(Instant deadline, Instant now) {
-        Duration poll = Duration.ofMillis(properties.getOfferPollIntervalMillis());
+    private boolean pause(Duration step, Instant deadline, Instant now) {
         Duration remaining = Duration.between(now, deadline);
         try {
-            sleeper.sleep(remaining.compareTo(poll) < 0 ? remaining : poll);
+            sleeper.sleep(remaining.compareTo(step) < 0 ? remaining : step);
             return true;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -237,11 +254,42 @@ public class DispatchService {
                                                      double radiusKm,
                                                      MatchingWeights weights,
                                                      Set<UUID> exhausted) {
-        List<ProviderCandidate> candidates =
-                new ArrayList<>(providerQuery.findEligibleProviders(request, radiusKm));
+        List<ProviderCandidate> candidates = new ArrayList<>(eligibleProviders(request, radiusKm));
         candidates.removeIf(c -> exhausted.contains(c.providerId()));
         candidates.sort(Comparator.comparingDouble((ProviderCandidate c) -> c.score(weights)).reversed());
         return candidates;
+    }
+
+    /**
+     * Asks the Provider Service for eligible providers, riding out a short outage: an unavailable
+     * search is retried every {@link #PROVIDER_SEARCH_RETRY_PAUSE} for up to one offer window (the
+     * adapter has already retried transient failures within each attempt).
+     *
+     * @throws ProviderSearchUnavailableException if it is still unavailable when the window closes;
+     *         the run ends there rather than counting the radius as empty
+     */
+    private List<ProviderCandidate> eligibleProviders(DispatchRequest request, double radiusKm) {
+        Instant deadline = null;
+        while (true) {
+            try {
+                return providerQuery.findEligibleProviders(request, radiusKm);
+            } catch (ProviderSearchUnavailableException unavailable) {
+                Instant now = clock.instant();
+                if (deadline == null) {
+                    deadline = now.plusSeconds(properties.getOfferTimeoutSeconds());
+                }
+                if (!now.isBefore(deadline) || !pause(PROVIDER_SEARCH_RETRY_PAUSE, deadline, now)) {
+                    log.error("Dispatch for booking {} abandoned at radius {} km: the Provider Service could"
+                            + " not be queried for eligible providers ({}). The booking stays in"
+                            + " SEARCHING_PROVIDER; it is not failed as having no provider.",
+                            request.bookingId(), radiusKm, unavailable.getMessage());
+                    throw unavailable;
+                }
+                log.warn("Provider search for booking {} unavailable; retrying: {}",
+                        request.bookingId(), unavailable.getMessage());
+                ensureStillSearching(request);
+            }
+        }
     }
 
     /**
@@ -276,13 +324,70 @@ public class DispatchService {
         }
     }
 
-    /** Applies the acceptance transition and publishes the event (Requirement 8.6). */
+    /**
+     * Applies an acceptance (Requirement 8.6) so that the booking's transition and the
+     * {@code ProviderAccepted} event cannot come apart:
+     * <ol>
+     *   <li>the acceptance is recorded in the {@link AcceptanceLedger} first; if even that fails,
+     *       the run ends with the exception before the Booking Service is asked, so no booking is
+     *       ever accepted without a record from which its event can be written;</li>
+     *   <li>the Booking Service is asked for PROVIDER_ACCEPTED. A 409/404 means the booking will
+     *       never be this provider's (it was cancelled): the record is dropped and the run stops
+     *       quietly, as before. Any other failure leaves the record for the
+     *       {@link AcceptanceReconciler}, which retries until the Booking Service answers;</li>
+     *   <li>the record is replaced by the outbox row in one local transaction. If that fails the
+     *       reconciler writes the event later, without asking the Booking Service again.</li>
+     * </ol>
+     * Steps 2 and 3 failing do not end the run with an error: the provider has accepted and the
+     * acceptance will be completed, so the search is over either way.
+     *
+     * @return the accepting provider
+     */
     private UUID accept(DispatchRequest request, UUID providerId) {
-        bookingTransition.markProviderAccepted(request.bookingId(), providerId);
-        acceptedPublisher.publish(
-                request.bookingId(), request.customerId(), providerId, request.bookingCreatedAt());
-        log.info("Booking {} accepted by provider {}", request.bookingId(), providerId);
+        UUID bookingId = request.bookingId();
+        acceptanceLedger.open(bookingId, request.customerId(), providerId, request.bookingCreatedAt());
+
+        try {
+            bookingTransition.markProviderAccepted(bookingId, providerId);
+        } catch (BookingNotSearchableException refused) {
+            discardQuietly(bookingId);
+            throw refused;
+        } catch (RuntimeException unavailable) {
+            log.warn("Provider {} accepted booking {}, but the Booking Service could not record it yet;"
+                    + " the acceptance is kept and will be retried: {}",
+                    providerId, bookingId, unavailable.toString());
+            postponeQuietly(bookingId, unavailable);
+            return providerId;
+        }
+
+        try {
+            acceptanceLedger.announce(bookingId);
+        } catch (RuntimeException e) {
+            log.warn("Booking {} accepted by provider {}, but ProviderAccepted could not be written yet;"
+                    + " it will be retried: {}", bookingId, providerId, e.toString());
+            AcceptanceReconciler.markBookingAcceptedQuietly(acceptanceLedger, bookingId);
+            return providerId;
+        }
+        log.info("Booking {} accepted by provider {}", bookingId, providerId);
         return providerId;
+    }
+
+    /** Drops a refused acceptance; if that fails, the reconciler is refused again and drops it. */
+    private void discardQuietly(UUID bookingId) {
+        try {
+            acceptanceLedger.discard(bookingId);
+        } catch (RuntimeException e) {
+            log.debug("Could not drop the refused acceptance of booking {}: {}", bookingId, e.toString());
+        }
+    }
+
+    /** Records the failed attempt; if that fails, the entry is retried when its lease ends. */
+    private void postponeQuietly(UUID bookingId, RuntimeException cause) {
+        try {
+            acceptanceLedger.postpone(bookingId, cause.toString());
+        } catch (RuntimeException e) {
+            log.debug("Could not postpone the acceptance of booking {}: {}", bookingId, e.toString());
+        }
     }
 
     /**
@@ -307,8 +412,11 @@ public class DispatchService {
     /**
      * Handles the all-cycles-exhausted terminal path (Requirement 8.9). The Booking Service may
      * route the booking to the partner agencies covering it instead of failing it; that booking is
-     * still being served, so the customer is not told nobody is available and the dispatcher team
-     * is not alerted (Requirement MT-4.2).
+     * still being served, so the dispatcher team is not alerted (Requirement MT-4.2).
+     *
+     * <p>The customer's "no provider available" notice is not sent from here: failing the booking
+     * publishes {@code BookingCancelled} ({@code status = SEARCHING_FAILED}), from which the
+     * Notification Service tells the customer; a routed booking publishes no such event.
      */
     private UUID searchFailed(DispatchRequest request) {
         log.warn("Dispatch exhausted all radius cycles for booking {}; marking SEARCHING_FAILED",
@@ -316,10 +424,9 @@ public class DispatchService {
         SearchingFailedOutcome outcome = bookingTransition.markSearchingFailed(request.bookingId());
         if (outcome == SearchingFailedOutcome.AWAITING_ASSIGNMENT) {
             log.info("Booking {} was routed to partner agencies for assignment; skipping the"
-                    + " no-provider notices", request.bookingId());
+                    + " dispatcher alert", request.bookingId());
             return null;
         }
-        notification.notifyCustomerNoProviderAvailable(request.bookingId(), request.customerId());
         notification.alertDispatcherTeam(request.bookingId());
         return null;
     }

@@ -98,6 +98,7 @@ class AdminComplaintControllerTest {
     void updateDelegatesAndReturnsTheUpdatedComplaint() throws Exception {
         Complaint c = complaint();
         c.resolve(SLA);
+        c.recordResolutionNote("Refunded");
         when(service.adminUpdate(eq(c.getId()), eq(ComplaintStatus.RESOLVED), eq("Refunded")))
                 .thenReturn(c);
 
@@ -106,7 +107,9 @@ class AdminComplaintControllerTest {
                         .content("{\"status\":\"RESOLVED\",\"resolutionNote\":\"Refunded\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(c.getId().toString()))
-                .andExpect(jsonPath("$.status").value("RESOLVED"));
+                .andExpect(jsonPath("$.status").value("RESOLVED"))
+                // The note is returned, not only stored.
+                .andExpect(jsonPath("$.resolutionNote").value("Refunded"));
     }
 
     @Test

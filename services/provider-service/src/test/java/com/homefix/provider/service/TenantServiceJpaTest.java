@@ -444,7 +444,7 @@ class TenantServiceJpaTest {
     }
 
     @Test
-    void removeAdmin_deletesTheMembershipThenRevokes() {
+    void removeAdmin_revokesTheRoleAndDeletesTheMembership() {
         Tenant t = createTenant("Ara Home Services", LAT, LON, "20", plumbing);
         UUID user = auth.register("+919000000031");
         service.addAdmin(t.getId(), "+919000000031", platformAdmin);

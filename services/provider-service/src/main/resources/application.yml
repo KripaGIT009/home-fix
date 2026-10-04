@@ -39,6 +39,10 @@ homefix:
     # Must match the Booking Service's homefix.booking.internal-api-key.
     internal-api-key: ${INTERNAL_API_KEY:}
   catalog:
+    # 'http' checks categories against the Service Catalog (GET /catalog/categories), so an
+    # inactive category is refused for a Tenant or a provider profile; 'stub' (the default)
+    # accepts every id.
+    client: ${CATALOG_CLIENT:stub}
     base-url: ${CATALOG_SERVICE_URI:http://catalog-service:8085}
   verification:
     # Batch APPROVED lookup behind the dispatch eligibility search (Req 5.10, 8.2).

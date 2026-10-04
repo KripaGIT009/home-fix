@@ -4,6 +4,7 @@ import PersonRoundedIcon from '@mui/icons-material/PersonRounded';
 import { AppShell } from '@components/AppShell';
 import { QueryStateView } from '@components/QueryStateView';
 import { useAuthStore } from '@stores/authStore';
+import { ProfileCompletionPrompt } from '@features/profile/ProfileCompletionPrompt';
 import { EarningsSummaryCard } from './EarningsSummaryCard';
 import { readDashboardNotice } from '@features/jobs/assignmentNotice';
 import { isAwaitingProviderAnswer } from '@features/jobs/status';
@@ -13,7 +14,8 @@ import { PendingOffersSection } from './PendingOffersSection';
 import { useActiveJobs, useEarningsSummary } from './hooks';
 
 /**
- * Provider Dashboard (Requirement 28.8): open job offers (polled, shown only
+ * Provider Dashboard (Requirement 28.8): a "complete your profile" prompt
+ * while dispatch cannot match the provider yet, open job offers (polled, shown only
  * while there are any), the earnings summary (wallet balance + today's
  * earnings), and the active job list with status indicators. Mobile-first
  * single-column layout inside the shared AppShell.
@@ -76,6 +78,8 @@ export function DashboardScreen() {
             {notice}
           </Alert>
         ) : null}
+
+        <ProfileCompletionPrompt />
 
         <PendingOffersSection onOpen={openOffer} />
 

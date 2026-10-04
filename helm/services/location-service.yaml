@@ -17,6 +17,10 @@ dependencies:
 secrets:
   env:
     JWT_SECRET: jwt_secret
+    # Presented to the Booking Service's internal endpoints to check who may read or
+    # post a booking's position.
+    INTERNAL_API_KEY: internal_api_key
 
 config:
   LOCATION_STORE: "redis"
+  BOOKING_SERVICE_URL: "http://booking-service:8084"

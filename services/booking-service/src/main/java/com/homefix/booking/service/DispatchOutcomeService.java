@@ -1,6 +1,7 @@
 package com.homefix.booking.service;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -100,6 +101,13 @@ public class DispatchOutcomeService {
      * this call through its resilience stack and must be able to do so safely. A different provider
      * claiming an already-accepted booking is still rejected.
      *
+     * <p>Only a booking still {@code SEARCHING_PROVIDER} can be accepted this way. Once dispatch has
+     * given up and the booking sits in a Tenant's queue ({@code AWAITING_ASSIGNMENT}) or has been
+     * assigned by a Tenant ({@code PROVIDER_ASSIGNED}), the Tenant owns it (Requirement MT-4.2,
+     * MT-5.2, Property MT1): the state machine alone would let a late offer acceptance pass from the
+     * queue through PROVIDER_ASSIGNED to PROVIDER_ACCEPTED, pulling the booking away from the Tenant
+     * and its candidates, so this refuses it with 409 like any other illegal transition.
+     *
      * <p>The Tenant lookup is best effort: when the Provider Service cannot answer, the acceptance
      * still succeeds and the booking carries no Tenant (Requirement MT-8.2). It only labels the
      * booking for the Tenant's oversight; failing an acceptance over it would lose the customer a
@@ -113,7 +121,9 @@ public class DispatchOutcomeService {
             throw BookingException.validation("providerId is required");
         }
         Booking current = requireBooking(bookingId);
-        UUID tenantId = current.getStatus() == BookingStatus.PROVIDER_ACCEPTED ? null : tenantOf(providerId);
+        // Only a still-searching booking can be accepted; anything else is refused in the transaction
+        // below without asking the Provider Service first.
+        UUID tenantId = current.getStatus() == BookingStatus.SEARCHING_PROVIDER ? tenantOf(providerId) : null;
         return transactions.execute(tx -> applyProviderAccepted(bookingId, providerId, tenantId));
     }
 
@@ -130,6 +140,13 @@ public class DispatchOutcomeService {
                     providerId, bookingId, booking.getProviderId());
             throw new InvalidTransitionException(bookingId,
                     BookingStatus.PROVIDER_ACCEPTED, BookingStatus.PROVIDER_ACCEPTED);
+        }
+
+        if (booking.getStatus() != BookingStatus.SEARCHING_PROVIDER) {
+            // A late acceptance after dispatch gave up: the booking is the Tenants' now, or settled.
+            log.warn("Provider {} tried to accept booking {} through dispatch, but it is {}; refused",
+                    providerId, bookingId, booking.getStatus());
+            throw new InvalidTransitionException(bookingId, booking.getStatus(), BookingStatus.PROVIDER_ACCEPTED);
         }
 
         booking.setProviderId(providerId);
@@ -155,6 +172,33 @@ public class DispatchOutcomeService {
      *                          from the current state
      */
     public Booking markSearchingFailed(UUID bookingId) {
+        return settleSearch(bookingId, "Dispatch Engine found no available provider", "No provider accepted");
+    }
+
+    /**
+     * Settles a booking whose provider search never reported back (review 17.5 item 4): the
+     * {@link StalledSearchSweeper} calls this for a booking still {@code SEARCHING_PROVIDER} longer
+     * than {@code homefix.booking.provider-search-timeout} after it entered that state, typically
+     * because the Dispatch Engine failed or restarted mid-search after acknowledging
+     * {@code BookingCreated}. The outcome is exactly the one {@link #markSearchingFailed} would have
+     * produced — the covering Tenants' queue, or SEARCHING_FAILED with the customer told through the
+     * state-driven {@code BookingCancelled} — so a lost search ends the same way as an exhausted one.
+     *
+     * @throws BookingException 404 when the booking does not exist
+     * @throws InvalidTransitionException 409 when the booking left SEARCHING_PROVIDER meanwhile
+     */
+    public Booking expireStalledSearch(UUID bookingId, Duration timeout) {
+        String reason = "Provider search did not finish within " + timeout;
+        return settleSearch(bookingId, reason, reason);
+    }
+
+    /**
+     * Shared by both search outcomes.
+     *
+     * @param failReason  the audit reason when the booking fails
+     * @param routeReason the audit reason's opening when the booking is routed to Tenants
+     */
+    private Booking settleSearch(UUID bookingId, String failReason, String routeReason) {
         Booking current = requireBooking(bookingId);
         if (alreadySettled(current)) {
             log.debug("Booking {} already settled as {}; treating as a retry", bookingId, current.getStatus());
@@ -165,24 +209,25 @@ public class DispatchOutcomeService {
         List<CoveringTenant> tenants = current.getStatus() == BookingStatus.SEARCHING_PROVIDER
                 ? coveringTenants(current)
                 : List.of();
-        return transactions.execute(tx -> applySearchOutcome(bookingId, tenants));
+        return transactions.execute(tx -> applySearchOutcome(bookingId, tenants, failReason, routeReason));
     }
 
-    private Booking applySearchOutcome(UUID bookingId, List<CoveringTenant> tenants) {
+    private Booking applySearchOutcome(UUID bookingId, List<CoveringTenant> tenants,
+                                       String failReason, String routeReason) {
         Booking booking = requireBooking(bookingId);
         if (alreadySettled(booking)) {
             return booking;
         }
         if (tenants.isEmpty()) {
             Booking failed = transitionService.transition(booking, BookingStatus.SEARCHING_FAILED,
-                    Actor.system(), "Dispatch Engine found no available provider");
-            log.warn("Booking {} marked SEARCHING_FAILED: no provider accepted", bookingId);
+                    Actor.system(), failReason);
+            log.warn("Booking {} marked SEARCHING_FAILED: {}", bookingId, failReason);
             return failed;
         }
         // Transition first: an illegal source state throws before any candidate row is written.
         booking.setQueuedForAssignmentAt(Instant.now(clock));
         transitionService.transition(booking, BookingStatus.AWAITING_ASSIGNMENT, Actor.system(),
-                "No provider accepted; routed to " + tenants.size() + " partner(s)");
+                routeReason + "; routed to " + tenants.size() + " partner(s)");
         tenants.stream()
                 .map(CoveringTenant::tenantId)
                 .distinct()

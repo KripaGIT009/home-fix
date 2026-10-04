@@ -2,11 +2,9 @@ package com.homefix.booking.api;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.util.UUID;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
-import org.springframework.security.core.GrantedAuthority;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -157,13 +155,8 @@ public class JobExecutionController {
         }
     }
 
+    /** The caller, judged on all of the token's roles (see {@link CallerIdentity#actorOf}). */
     private static Actor actor(Authentication authentication) {
-        UUID id = UUID.fromString(authentication.getName());
-        String role = authentication.getAuthorities().stream()
-                .map(GrantedAuthority::getAuthority)
-                .map(a -> a.startsWith("ROLE_") ? a.substring("ROLE_".length()) : a)
-                .findFirst()
-                .orElse("SERVICE_PROVIDER");
-        return Actor.user(id, role);
+        return CallerIdentity.actorOf(authentication, "SERVICE_PROVIDER");
     }
 }

@@ -1,6 +1,7 @@
 package com.homefix.dispatch.adapter;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -17,6 +18,7 @@ import ch.qos.logback.core.read.ListAppender;
 import com.homefix.dispatch.config.DispatchClientProperties;
 import com.homefix.dispatch.domain.DispatchRequest;
 import com.homefix.dispatch.domain.ProviderCandidate;
+import com.homefix.dispatch.domain.ProviderSearchUnavailableException;
 import com.homefix.shared.resilience.ResilienceFactory;
 import com.homefix.shared.resilience.ResilientCall;
 import com.sun.net.httpserver.HttpServer;
@@ -29,8 +31,9 @@ import org.slf4j.LoggerFactory;
 /**
  * Integration test for Requirement 24: injects downstream failures at the Provider Service HTTP
  * boundary and verifies the circuit breaker opens after 50% failures over the 10-call window, the
- * caller then receives the degraded fallback response, and a WARN log naming the failed dependency
- * is emitted (Requirements 24.1, 24.4).
+ * caller then fails fast with {@link ProviderSearchUnavailableException} (never an empty "no
+ * providers" list), and a WARN log naming the failed dependency is emitted (Requirements 24.1,
+ * 24.4).
  *
  * <p>The test drives the real {@link HttpProviderQueryAdapter} — including its real
  * {@link ResilienceFactory}-backed circuit breaker — against a stub server bound to a loopback port
@@ -97,19 +100,23 @@ class ProviderQueryResilienceIntegrationTest {
         // Alternate success / failure across a full 10-call window → exactly 50% failure rate.
         for (int i = 0; i < 10; i++) {
             failMode = (i % 2 == 1);
-            List<ProviderCandidate> result = adapter.findEligibleProviders(request, 10.0);
-            // Every call returns a usable response — a real list on success, the degraded empty
-            // list on a failed attempt — so the caller never sees an exception (Requirement 24.4).
-            assertThat(result).isNotNull();
+            if (failMode) {
+                // A failed call is reported as unavailable, not as an empty market.
+                assertThatThrownBy(() -> adapter.findEligibleProviders(request, 10.0))
+                        .isInstanceOf(ProviderSearchUnavailableException.class);
+            } else {
+                List<ProviderCandidate> result = adapter.findEligibleProviders(request, 10.0);
+                assertThat(result).isEmpty();
+            }
         }
 
         // Requirement 24.1: breaker is OPEN once the window shows a 50% failure rate.
         assertThat(breaker.getState()).isEqualTo(CircuitBreaker.State.OPEN);
 
-        // While OPEN the dependency is not called at all; the caller still gets the fallback.
+        // While OPEN the dependency is not called at all; the caller fails fast.
         int servedBeforeOpenCall = requestsServed.get();
-        List<ProviderCandidate> degraded = adapter.findEligibleProviders(request, 10.0);
-        assertThat(degraded).isEmpty();
+        assertThatThrownBy(() -> adapter.findEligibleProviders(request, 10.0))
+                .isInstanceOf(ProviderSearchUnavailableException.class);
         assertThat(requestsServed.get())
                 .as("open breaker must short-circuit and not hit the dependency")
                 .isEqualTo(servedBeforeOpenCall);

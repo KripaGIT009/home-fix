@@ -84,6 +84,10 @@ homefix:
     tenant-directory-client: ${TENANT_DIRECTORY_CLIENT:http}
     # How long a booking may wait for a Tenant assignment before it fails (Requirement MT-7.1).
     tenant-assignment-timeout: ${TENANT_ASSIGNMENT_TIMEOUT:PT60M}
+    # How long a booking may stay SEARCHING_PROVIDER before the stalled-search sweeper treats the
+    # search as lost and settles it like an exhausted one (Tenant queue or SEARCHING_FAILED). Must
+    # exceed the longest legitimate Dispatch Engine search.
+    provider-search-timeout: ${PROVIDER_SEARCH_TIMEOUT:PT60M}
     topics:
       # Settles a paid booking at PAYMENT_COMPLETED (Requirement 12.6).
       payment-completed: ${BOOKING_TOPIC_PAYMENT_COMPLETED:PaymentCompleted}

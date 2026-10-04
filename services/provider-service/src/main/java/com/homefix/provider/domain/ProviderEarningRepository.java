@@ -2,6 +2,7 @@ package com.homefix.provider.domain;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import org.springframework.data.domain.Page;
@@ -22,6 +23,10 @@ public interface ProviderEarningRepository extends JpaRepository<ProviderEarning
      */
     List<ProviderEarning> findByProviderIdAndCreditedAtGreaterThanEqual(UUID providerId, Instant from);
 
-    /** Whether the booking's job credit has already been applied (it may be delivered twice). */
-    boolean existsByBookingIdAndType(UUID bookingId, EarningType type);
+    /**
+     * The booking's job credit line, if one was applied (it may be delivered twice). A booking pays one provider, so there is at
+     * most one (unique index, migration V2); returning it lets the caller tell a repeat of the same
+     * credit apart from a credit of the same booking to a different provider.
+     */
+    Optional<ProviderEarning> findFirstByBookingIdAndType(UUID bookingId, EarningType type);
 }

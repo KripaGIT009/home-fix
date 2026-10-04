@@ -28,9 +28,11 @@ import { useVerificationState } from '@features/verification/hooks';
 import { describeVerificationStatus } from '@features/verification/status';
 import { useAuthStore } from '@stores/authStore';
 import { BankAccountCard } from './BankAccountCard';
+import { WorkProfileCard } from './WorkProfileCard';
 
 /**
- * Provider profile: identity, the live verification badge, the bank account
+ * Provider profile: identity, the live verification badge, the work profile
+ * dispatch matches on (services, service area, availability), the bank account
  * settlements are paid into, and the routes into the other top-level areas.
  *
  * Verification status is the fact a provider checks most often — it decides
@@ -98,6 +100,8 @@ export function ProfileScreen() {
             </Stack>
           </CardContent>
         </Card>
+
+        <WorkProfileCard />
 
         <BankAccountCard />
 

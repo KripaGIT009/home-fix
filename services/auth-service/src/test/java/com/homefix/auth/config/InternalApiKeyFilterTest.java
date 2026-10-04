@@ -65,4 +65,22 @@ class InternalApiKeyFilterTest {
         assertThat(chain.getRequest()).isSameAs(request);
         assertThat(response.getStatus()).isEqualTo(200);
     }
+
+    /**
+     * Spring MVC decodes {@code /%69nternal/...} to {@code /internal/...} before routing it, so the
+     * filter must decide on the decoded path; a raw-URI check would let the request skip the key.
+     */
+    @Test
+    void encodedInternalPath_isStillGuarded() throws Exception {
+        InternalApiKeyFilter filter = new InternalApiKeyFilter("k-123");
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/x");
+        request.setRequestURI("/%69nternal/users/x/contact");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        MockFilterChain chain = new MockFilterChain();
+
+        filter.doFilter(request, response, chain);
+
+        assertThat(response.getStatus()).isEqualTo(401);
+        assertThat(chain.getRequest()).as("chain must not continue").isNull();
+    }
 }

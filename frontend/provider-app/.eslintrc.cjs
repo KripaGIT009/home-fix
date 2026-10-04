@@ -40,6 +40,7 @@ module.exports = {
     'android',
     'ios',
     'vite.config.ts',
+    'vitest.config.ts',
     'capacitor.config.ts',
     '.eslintrc.cjs',
   ],

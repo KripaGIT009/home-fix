@@ -1,6 +1,9 @@
 import { createBrowserRouter } from 'react-router-dom';
 import { PlaceholderScreen } from '@components/PlaceholderScreen';
 import { ProfileScreen } from '@features/profile/ProfileScreen';
+import { ServicesScreen } from '@features/profile/ServicesScreen';
+import { ServiceAreaScreen } from '@features/profile/ServiceAreaScreen';
+import { AvailabilityScreen } from '@features/profile/AvailabilityScreen';
 import { RequireAuth } from '@components/RequireAuth';
 import { LoginScreen } from '@features/auth/LoginScreen';
 import { SplashScreen } from '@features/auth/SplashScreen';
@@ -19,7 +22,9 @@ import { EarningsScreen } from '@features/earnings/EarningsScreen';
  *
  * Task 34 implemented Login/OTP, Dashboard, and Verification status. Task 35
  * implements Job Request, Job Details, Active Job, Job Completion, and
- * Earnings/settlement history and the provider's profile.
+ * Earnings/settlement history and the provider's profile. The work-profile
+ * editors under /profile/* (services, service area, availability) are what
+ * make a newly signed-up provider matchable by dispatch.
  */
 export const router = createBrowserRouter([
   {
@@ -91,6 +96,30 @@ export const router = createBrowserRouter([
     element: (
       <RequireAuth>
         <ProfileScreen />
+      </RequireAuth>
+    ),
+  },
+  {
+    path: '/profile/services',
+    element: (
+      <RequireAuth>
+        <ServicesScreen />
+      </RequireAuth>
+    ),
+  },
+  {
+    path: '/profile/service-area',
+    element: (
+      <RequireAuth>
+        <ServiceAreaScreen />
+      </RequireAuth>
+    ),
+  },
+  {
+    path: '/profile/availability',
+    element: (
+      <RequireAuth>
+        <AvailabilityScreen />
       </RequireAuth>
     ),
   },

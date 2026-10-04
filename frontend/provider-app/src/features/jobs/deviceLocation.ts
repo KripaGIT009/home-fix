@@ -37,6 +37,73 @@ export function watchDevicePosition(handlers: PositionWatchHandlers): () => void
   return env.isNative ? watchNative(handlers) : watchBrowser(handlers);
 }
 
+/** A single position fix, or why there is none. */
+export type PositionReading =
+  | { status: 'ok'; latitude: number; longitude: number; accuracyMeters: number | null }
+  | { status: LocationFailure };
+
+const READ_OPTIONS = { enableHighAccuracy: true, maximumAge: 60_000, timeout: 20_000 } as const;
+
+/**
+ * Reads the device's position once, e.g. to set a provider's base location.
+ * Like the watch, failures are returned rather than thrown, so the caller can
+ * fall back to coordinates typed by hand.
+ */
+export function readDevicePosition(): Promise<PositionReading> {
+  return env.isNative ? readNative() : readBrowser();
+}
+
+function readBrowser(): Promise<PositionReading> {
+  if (typeof navigator === 'undefined' || !navigator.geolocation) {
+    return Promise.resolve({ status: 'unavailable' });
+  }
+  return new Promise((resolve) => {
+    navigator.geolocation.getCurrentPosition(
+      (position) =>
+        resolve({
+          status: 'ok',
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracyMeters: Number.isFinite(position.coords.accuracy)
+            ? position.coords.accuracy
+            : null,
+        }),
+      (error) =>
+        resolve({ status: error.code === error.PERMISSION_DENIED ? 'denied' : 'unavailable' }),
+      READ_OPTIONS,
+    );
+  });
+}
+
+async function readNative(): Promise<PositionReading> {
+  try {
+    if (!(await ensureNativePermission())) return { status: 'denied' };
+    const position = await Geolocation.getCurrentPosition(READ_OPTIONS);
+    return {
+      status: 'ok',
+      latitude: position.coords.latitude,
+      longitude: position.coords.longitude,
+      accuracyMeters: Number.isFinite(position.coords.accuracy) ? position.coords.accuracy : null,
+    };
+  } catch (error: unknown) {
+    // Thrown when location services are off, on timeout, or on a refusal
+    // reported late by the platform.
+    return { status: isPermissionError(error) ? 'denied' : 'unavailable' };
+  }
+}
+
+/**
+ * Asks for the location permission when it is not granted yet. Android 12+
+ * lets the user grant only approximate location; either grant counts.
+ */
+async function ensureNativePermission(): Promise<boolean> {
+  let permission = await Geolocation.checkPermissions();
+  if (permission.location !== 'granted' && permission.coarseLocation !== 'granted') {
+    permission = await Geolocation.requestPermissions();
+  }
+  return permission.location === 'granted' || permission.coarseLocation === 'granted';
+}
+
 function watchBrowser({ onPosition, onFailure }: PositionWatchHandlers): () => void {
   if (typeof navigator === 'undefined' || !navigator.geolocation) {
     onFailure('unavailable');
@@ -55,14 +122,9 @@ function watchNative({ onPosition, onFailure }: PositionWatchHandlers): () => vo
   let watchId: string | null = null;
 
   const start = async () => {
-    // Ask first, so a refusal is told apart from a missing fix. Android 12+
-    // lets the user grant only approximate location; that is enough to show
-    // the provider approaching, so either grant counts.
-    let permission = await Geolocation.checkPermissions();
-    if (permission.location !== 'granted' && permission.coarseLocation !== 'granted') {
-      permission = await Geolocation.requestPermissions();
-    }
-    if (permission.location !== 'granted' && permission.coarseLocation !== 'granted') {
+    // Ask first, so a refusal is told apart from a missing fix. Approximate
+    // location is enough to show the provider approaching.
+    if (!(await ensureNativePermission())) {
       if (!stopped) onFailure('denied');
       return;
     }

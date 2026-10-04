@@ -19,7 +19,9 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder;
+import org.springframework.transaction.support.TransactionOperations;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -31,6 +33,7 @@ import com.homefix.booking.domain.BookingAuditRepository;
 import com.homefix.booking.domain.BookingStateMachine;
 import com.homefix.booking.domain.BookingStatus;
 import com.homefix.booking.support.Bookings;
+import com.homefix.booking.support.FakeTenantDirectory;
 import com.homefix.booking.support.InMemoryBookingRepository;
 import com.homefix.shared.outbox.OutboxEventEntity;
 import com.homefix.shared.outbox.OutboxEventPublisher;
@@ -64,6 +67,7 @@ class ProviderAssignmentServiceTest {
     private OutboxEventRepository outboxRepository;
     private BookingAuditRepository auditRepository;
     private final List<BookingAudit> audits = new ArrayList<>();
+    private FakeTenantDirectory directory;
     private ProviderAssignmentService service;
 
     private final UUID providerId = UUID.randomUUID();
@@ -82,7 +86,10 @@ class ProviderAssignmentServiceTest {
         OutboxEventPublisher outbox = new OutboxEventPublisher(outboxRepository, objectMapper);
         BookingTransitionService transitions = new BookingTransitionService(new BookingStateMachine(),
                 auditRepository, new BookingLifecycleEventPublisher(outbox, CLOCK), CLOCK);
-        service = new ProviderAssignmentService(repository, transitions, outbox, CLOCK);
+        directory = new FakeTenantDirectory();
+        directory.addMember(tenantId, providerId, true);
+        service = new ProviderAssignmentService(repository, transitions, outbox, directory,
+                TransactionOperations.withoutTransaction(), CLOCK);
     }
 
     /** A booking a Tenant assigned to {@link #providerId} after the fallback. */
@@ -166,6 +173,34 @@ class ProviderAssignmentServiceTest {
         assertThatThrownBy(() -> service.accept(booking.getReference(), providerId))
                 .isInstanceOf(InvalidTransitionException.class);
         verify(outboxRepository, never()).save(any());
+    }
+
+    @Test
+    void aProviderRemovedFromTheTenantAfterTheAssignmentCannotAccept() {
+        Booking booking = tenantAssigned();
+        directory.memberships.clear(); // the Tenant removed them after assigning the job
+
+        assertThatThrownBy(() -> service.accept(booking.getReference(), providerId))
+                .isInstanceOf(BookingException.class)
+                .satisfies(e -> assertThat(((BookingException) e).getErrorCode()).isEqualTo("PROVIDER_NOT_ASSIGNABLE"))
+                .satisfies(e -> assertThat(((BookingException) e).getStatus()).isEqualTo(HttpStatus.CONFLICT));
+        assertThat(booking.getStatus()).isEqualTo(BookingStatus.PROVIDER_ASSIGNED);
+        assertThat(audits).isEmpty();
+        verify(outboxRepository, never()).save(any());
+
+        // They can still hand it back, so the Tenant can assign someone else.
+        assertThat(service.decline(booking.getReference(), providerId).getStatus())
+                .isEqualTo(BookingStatus.AWAITING_ASSIGNMENT);
+    }
+
+    @Test
+    void anAcceptanceWhoseMembershipCannotBeCheckedIsRefusedWith503() {
+        Booking booking = tenantAssigned();
+        directory.down = true;
+
+        assertThatThrownBy(() -> service.accept(booking.getReference(), providerId))
+                .satisfies(e -> assertThat(((BookingException) e).getStatus()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE));
+        assertThat(booking.getStatus()).isEqualTo(BookingStatus.PROVIDER_ASSIGNED);
     }
 
     // ----- decline (Requirement MT-6.2, MT-7.2) --------------------------------

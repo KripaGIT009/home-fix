@@ -349,6 +349,10 @@ services:
       SERVER_PORT: "8092"
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
       LOCATION_STORE: redis
+      # Who may read or post a booking's position is looked up from the Booking
+      # Service's internal payment-facts, which requires the shared credential.
+      BOOKING_SERVICE_URL: http://booking-service:8084
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?set INTERNAL_API_KEY, see .env.example}
     ports:
       - "8092:8092"
     healthcheck:

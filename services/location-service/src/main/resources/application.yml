@@ -59,6 +59,12 @@ homefix:
     cache-ttl: 30m
     # Location cache backend: 'redis' (production) or 'memory' (dev/test).
     store: ${LOCATION_STORE:redis}
+    # Ownership checks ask the Booking Service who a booking is between
+    # (GET /internal/bookings/{id}/payment-facts). The key is the shared INTERNAL_API_KEY the Booking
+    # Service checks on /internal/**; it has no default, and without it only staff can read
+    # locations and no provider can post one (lookups fail closed with 503).
+    booking-service-url: ${BOOKING_SERVICE_URL:http://booking-service:8084}
+    internal-api-key: ${INTERNAL_API_KEY:}
   outbox:
     enabled: true
 

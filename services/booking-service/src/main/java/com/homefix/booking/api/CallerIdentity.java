@@ -1,5 +1,6 @@
 package com.homefix.booking.api;
 
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
@@ -66,6 +67,33 @@ public class CallerIdentity {
                 .map(a -> a.substring("ROLE_".length()))
                 .orElseThrow(() -> new BookingException(HttpStatus.FORBIDDEN, "FORBIDDEN",
                         "a staff role is required"));
+        return Actor.user(id, role);
+    }
+
+    /**
+     * The caller of a {@code /bookings/{key}} command as an {@link Actor}, judged on <em>all</em> of
+     * the token's authorities rather than the first one. A token's role order is whatever the issuer
+     * wrote, so taking the first let a staff user whose token listed {@code CUSTOMER} first be refused
+     * other users' bookings by {@code BookingAccess} (and recorded as a customer). The role chosen is,
+     * in order: a staff role (the alphabetically first, as in {@link #requireStaffActor}); the
+     * endpoint's own role ({@code fallbackRole}) if the caller holds it; the first authority; and
+     * {@code fallbackRole} when the token carries none.
+     *
+     * @param fallbackRole the role the endpoint serves, without the {@code ROLE_} prefix
+     */
+    static Actor actorOf(Authentication authentication, String fallbackRole) {
+        UUID id = UUID.fromString(authentication.getName());
+        List<String> authorities = authentication.getAuthorities().stream()
+                .map(GrantedAuthority::getAuthority)
+                .toList();
+        String role = authorities.stream()
+                .filter(STAFF_AUTHORITIES::contains)
+                .sorted()
+                .findFirst()
+                .or(() -> authorities.stream().filter(("ROLE_" + fallbackRole)::equals).findFirst())
+                .or(() -> authorities.stream().findFirst())
+                .map(a -> a.startsWith("ROLE_") ? a.substring("ROLE_".length()) : a)
+                .orElse(fallbackRole);
         return Actor.user(id, role);
     }
 

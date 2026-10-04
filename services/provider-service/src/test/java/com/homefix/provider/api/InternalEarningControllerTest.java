@@ -10,6 +10,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.math.BigDecimal;
+import java.util.Optional;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
@@ -18,6 +19,8 @@ import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -80,6 +83,34 @@ class InternalEarningControllerTest {
                         .header(InternalApiKeyFilter.HEADER, INTERNAL_KEY)
                         .contentType(MediaType.APPLICATION_JSON).content(BODY))
                 .andExpect(status().isNotFound());
+    }
+
+    /** Review finding: the loser of two racing deliveries hit the unique index and answered 500. */
+    @Test
+    void aDeliveryThatLostTheRaceIsAnsweredAsAlreadyApplied() throws Exception {
+        ProviderProfile profile = ProviderProfile.createWithId(PROVIDER);
+        ReflectionTestUtils.setField(profile, "walletBalance", new BigDecimal("492.20"));
+        when(providerService.creditJobEarning(any(), any(), any(), any(), any()))
+                .thenThrow(new DataIntegrityViolationException("uq_provider_earning_job_credit_booking"));
+        when(providerService.jobCreditAlreadyApplied(PROVIDER, BOOKING)).thenReturn(Optional.of(profile));
+
+        mockMvc.perform(post("/internal/providers/{id}/earnings", PROVIDER)
+                        .header(InternalApiKeyFilter.HEADER, INTERNAL_KEY)
+                        .contentType(MediaType.APPLICATION_JSON).content(BODY))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.walletBalance").value(492.20));
+    }
+
+    @Test
+    void aBookingAlreadyCreditedToAnotherProviderIs409() throws Exception {
+        when(providerService.creditJobEarning(any(), any(), any(), any(), any()))
+                .thenThrow(new ProviderException(HttpStatus.CONFLICT, "EARNING_BOOKING_CONFLICT", "taken"));
+
+        mockMvc.perform(post("/internal/providers/{id}/earnings", PROVIDER)
+                        .header(InternalApiKeyFilter.HEADER, INTERNAL_KEY)
+                        .contentType(MediaType.APPLICATION_JSON).content(BODY))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errorCode").value("EARNING_BOOKING_CONFLICT"));
     }
 
     @Test

@@ -3,6 +3,7 @@ package com.homefix.provider.api;
 import java.math.BigDecimal;
 import java.util.UUID;
 
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -37,15 +38,28 @@ public class InternalEarningController {
     /**
      * {@code POST /internal/providers/{providerId}/earnings} — credit one booking's job earning.
      *
+     * <p>Two deliveries of the same credit that race both pass the service's duplicate check, and
+     * the unique index refuses the loser's insert. That loser is a repeat like any other, so it is
+     * answered as one (200, the balance unchanged by it) rather than with a 500 the Payment Service
+     * would keep re-sending.
+     *
      * @return 200 with the wallet balance after the credit; 404 {@code PROVIDER_NOT_FOUND} for an
-     *         unknown provider; 400 {@code VALIDATION_ERROR} for a fee above the gross
+     *         unknown provider; 400 {@code VALIDATION_ERROR} for a fee above the gross; 409
+     *         {@code EARNING_BOOKING_CONFLICT} when the booking was already credited to another
+     *         provider
      */
     @PostMapping("/{providerId}/earnings")
     public ResponseEntity<WalletBalanceResponse> creditJobEarning(
             @PathVariable("providerId") UUID providerId,
             @Valid @RequestBody JobEarningCreditRequest request) {
-        ProviderProfile profile = providerService.creditJobEarning(providerId, request.bookingId(),
-                request.bookingReference(), request.gross(), request.platformFee());
+        ProviderProfile profile;
+        try {
+            profile = providerService.creditJobEarning(providerId, request.bookingId(),
+                    request.bookingReference(), request.gross(), request.platformFee());
+        } catch (DataIntegrityViolationException e) {
+            profile = providerService.jobCreditAlreadyApplied(providerId, request.bookingId())
+                    .orElseThrow(() -> e);
+        }
         return ResponseEntity.ok(new WalletBalanceResponse(providerId, profile.getWalletBalance()));
     }
 

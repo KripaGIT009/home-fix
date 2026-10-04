@@ -125,7 +125,8 @@ public class TenantBookingService {
         if (providerId == null) {
             throw BookingException.validation("providerId is required");
         }
-        TenantSummary tenant = tenantResolver.requireActiveTenant(callerId);
+        // A change: the caller's admin role is confirmed now, never from a cached answer.
+        TenantSummary tenant = tenantResolver.requireActiveTenantNow(callerId);
         UUID tenantId = tenant.tenantId();
 
         Booking snapshot = bookingRepository.findByKey(bookingKey)

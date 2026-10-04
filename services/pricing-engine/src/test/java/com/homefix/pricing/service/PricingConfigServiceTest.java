@@ -109,6 +109,54 @@ class PricingConfigServiceTest {
         assertThat(store.findBySubcategoryId(SUBCATEGORY)).isEmpty();
     }
 
+    /**
+     * Out-of-range values are refused with 400 and every violation listed, rather than stored for
+     * the engine to clamp silently at quote time.
+     */
+    @Test
+    void outOfRangeParametersAreRejectedAndNothingIsStored() {
+        PricingParameters bad = new PricingParameters(SUBCATEGORY, new BigDecimal("-1.00"),
+                new BigDecimal("-2.00"), null, new BigDecimal("-5.00"), null,
+                new BigDecimal("15"), new BigDecimal("1.5"), new BigDecimal("0.5"),
+                new BigDecimal("150"), new BigDecimal("600.00"), new BigDecimal("500.00"));
+
+        assertThatThrownBy(() -> service.updateParameters(bad))
+                .isInstanceOfSatisfying(PricingException.class, e -> {
+                    assertThat(e.getStatus().value()).isEqualTo(400);
+                    assertThat(e.getErrorCode()).isEqualTo("VALIDATION_ERROR");
+                    assertThat(e.getDetails()).containsExactlyInAnyOrder(
+                            "basePrice must not be negative",
+                            "perKmRate must not be negative",
+                            "nightSurcharge must not be negative",
+                            "platformFeeRate must be between 0 and 1",
+                            "taxRate must be between 0 and 1",
+                            "emergencyMultiplier must be between 1 and 10",
+                            "surgeMultiplier must be between 1 and 10",
+                            "overrideFloor must not be greater than overrideCeiling");
+                });
+        assertThat(store.findBySubcategoryId(SUBCATEGORY)).isEmpty();
+    }
+
+    @Test
+    void portalEditIsRangeCheckedAfterTheMerge() {
+        store.save(stored());
+
+        // 150% platform fee from the portal arrives as the fraction 1.5.
+        assertThatThrownBy(() -> service.mergeParameters(portalChanges("120.00", "1.5")))
+                .isInstanceOf(PricingException.class)
+                .extracting("errorCode").isEqualTo("VALIDATION_ERROR");
+        assertThat(store.findBySubcategoryId(SUBCATEGORY)).contains(stored());
+    }
+
+    @Test
+    void boundaryValuesAreAccepted() {
+        PricingParameters edge = new PricingParameters(SUBCATEGORY, BigDecimal.ZERO, BigDecimal.ZERO,
+                BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ONE, BigDecimal.ZERO,
+                BigDecimal.ONE, BigDecimal.TEN, new BigDecimal("10.00"), new BigDecimal("10.00"));
+
+        assertThat(service.updateParameters(edge)).isEqualTo(edge);
+    }
+
     @Test
     void listReturnsEveryConfiguredSubcategory() {
         store.save(stored());

@@ -13,6 +13,7 @@ import static org.mockito.Mockito.when;
 import java.math.BigDecimal;
 import java.time.DayOfWeek;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -86,7 +87,7 @@ class ProviderServiceTest {
     private ProviderService serviceWith(BankAccountVerificationPort bankVerification) {
         return new ProviderService(
                 profileRepository, earningRepository, settlementRepository,
-                catalogClient, kms, adminAlert, props, codec, bankVerification);
+                catalogClient, adminAlert, props, codec, bankVerification);
     }
 
     private static final BankAccountCommand VALID_ACCOUNT =
@@ -279,10 +280,10 @@ class ProviderServiceTest {
             UUID id = UUID.randomUUID();
             UUID booking = UUID.randomUUID();
             seedProfile(id);
-            lenient().when(earningRepository.save(any(ProviderEarning.class)))
-                    .thenAnswer(inv -> inv.getArgument(0));
-            when(earningRepository.existsByBookingIdAndType(booking, EarningType.JOB_CREDIT))
-                    .thenReturn(false, true);
+            ProviderEarning applied = ProviderEarning.jobCredit(id, booking, "BK-001",
+                    new BigDecimal("100.00"), new BigDecimal("15.00"));
+            when(earningRepository.findFirstByBookingIdAndType(booking, EarningType.JOB_CREDIT))
+                    .thenReturn(Optional.empty(), Optional.of(applied));
 
             service.creditJobEarning(id, booking, "BK-001", new BigDecimal("100.00"), new BigDecimal("15.00"));
             // The Payment Service re-sends a credit it could not confirm.
@@ -290,7 +291,54 @@ class ProviderServiceTest {
 
             assertThat(profileRepository.findById(id).orElseThrow().getWalletBalance())
                     .isEqualByComparingTo("85.00");
-            verify(earningRepository, times(1)).save(any(ProviderEarning.class));
+            verify(earningRepository, times(1)).saveAndFlush(any(ProviderEarning.class));
+        }
+
+        /**
+         * Review finding: the duplicate check ignored the provider, so a credit of a booking already
+         * paid to another provider answered 200 as if applied. It is a contradiction, not a repeat.
+         */
+        @Test
+        void aCreditOfABookingAlreadyCreditedToAnotherProviderIsAConflict() {
+            UUID id = UUID.randomUUID();
+            UUID booking = UUID.randomUUID();
+            seedProfile(id);
+            ProviderEarning someoneElses = ProviderEarning.jobCredit(UUID.randomUUID(), booking, "BK-001",
+                    new BigDecimal("100.00"), new BigDecimal("15.00"));
+            when(earningRepository.findFirstByBookingIdAndType(booking, EarningType.JOB_CREDIT))
+                    .thenReturn(Optional.of(someoneElses));
+
+            assertThatThrownBy(() -> service.creditJobEarning(id, booking, "BK-001",
+                    new BigDecimal("100.00"), new BigDecimal("15.00")))
+                    .isInstanceOfSatisfying(ProviderException.class, e -> {
+                        assertThat(e.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                        assertThat(e.getErrorCode()).isEqualTo("EARNING_BOOKING_CONFLICT");
+                    });
+            assertThat(profileRepository.findById(id).orElseThrow().getWalletBalance())
+                    .isEqualByComparingTo("0");
+            verify(earningRepository, never()).saveAndFlush(any(ProviderEarning.class));
+        }
+
+        /** The loser of two racing deliveries is answered like a repeat, with the winner's balance. */
+        @Test
+        void aRaceLoserIsAnsweredAsAlreadyApplied_onlyForTheSameProvider() {
+            UUID id = UUID.randomUUID();
+            UUID booking = UUID.randomUUID();
+            seedProfile(id);
+            when(earningRepository.findFirstByBookingIdAndType(booking, EarningType.JOB_CREDIT))
+                    .thenReturn(Optional.empty())
+                    .thenReturn(Optional.of(ProviderEarning.jobCredit(id, booking, "BK-001",
+                            new BigDecimal("100.00"), new BigDecimal("15.00"))))
+                    .thenReturn(Optional.of(ProviderEarning.jobCredit(UUID.randomUUID(), booking, "BK-001",
+                            new BigDecimal("100.00"), new BigDecimal("15.00"))));
+
+            // No credit for the booking after all: the refused insert was something else.
+            assertThat(service.jobCreditAlreadyApplied(id, booking)).isEmpty();
+            assertThat(service.jobCreditAlreadyApplied(id, booking)).hasValueSatisfying(
+                    p -> assertThat(p.getId()).isEqualTo(id));
+            assertThatThrownBy(() -> service.jobCreditAlreadyApplied(id, booking))
+                    .isInstanceOfSatisfying(ProviderException.class,
+                            e -> assertThat(e.getErrorCode()).isEqualTo("EARNING_BOOKING_CONFLICT"));
         }
 
         @Test
@@ -347,12 +395,12 @@ class ProviderServiceTest {
             addVerifiedAccount(id);
 
             Settlement settlement = service.requestSettlement(id,
-                    new SettlementCommand(new BigDecimal("50.00"), "ACCT-12345"));
+                    new SettlementCommand(new BigDecimal("50.00"), null));
 
             assertThat(settlement.getAmount()).isEqualByComparingTo("50.00");
-            // Bank account ref is encrypted — ciphertext differs from plaintext.
+            // The destination is the verified account on file, encrypted at rest.
             assertThat(settlement.getBankAccountRefEncrypted())
-                    .isNotEqualTo("ACCT-12345")
+                    .isEqualTo(profileRepository.findById(id).orElseThrow().getBankAccountEncrypted())
                     .startsWith("v1:");
             // Wallet debited.
             assertThat(profileRepository.findById(id).orElseThrow().getWalletBalance())
@@ -733,6 +781,27 @@ class ProviderServiceTest {
                     new SettlementCommand(new BigDecimal("40.00"), id.toString()));
 
             assertThat(settlement.getBankAccountRefEncrypted()).isEqualTo(stored);
+        }
+
+        /**
+         * Requirement 14.3: the transfer goes to the verified registered account. Any other
+         * reference used to be encrypted and paid out to, so a provider could send a payout to an
+         * account nobody verified.
+         */
+        @Test
+        void anyOtherDestinationIsRefused_andNothingIsDebitedOrRecorded() {
+            UUID id = fundedProviderWithVerifiedAccount();
+
+            assertThatThrownBy(() -> service.requestSettlement(id,
+                    new SettlementCommand(new BigDecimal("40.00"), "ACCT-99999999")))
+                    .isInstanceOfSatisfying(ProviderException.class, e -> {
+                        assertThat(e.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+                        assertThat(e.getErrorCode()).isEqualTo("BANK_ACCOUNT_NOT_ON_FILE");
+                    });
+
+            assertThat(profileRepository.findById(id).orElseThrow().getWalletBalance())
+                    .isEqualByComparingTo("100.00");
+            verify(settlementRepository, never()).save(any(Settlement.class));
         }
 
         @Test
