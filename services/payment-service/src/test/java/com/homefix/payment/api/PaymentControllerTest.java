@@ -312,6 +312,31 @@ class PaymentControllerTest {
                 .andExpect(jsonPath("$.customerId").value(callerA.toString()));
     }
 
+    /** The provider the payment credits may read it; RBAC admits SERVICE_PROVIDER for this read. */
+    @Test
+    void get_transactionCreditingTheCallingProvider_returnsTransaction() throws Exception {
+        UUID provider = UUID.randomUUID();
+        PaymentTransaction tx = pending(UUID.randomUUID(), UUID.randomUUID(), provider);
+        when(paymentService.getTransaction(tx.getId())).thenReturn(tx);
+        authenticate(provider, "SERVICE_PROVIDER");
+
+        mvc.perform(get("/payments/" + tx.getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.providerId").value(provider.toString()))
+                .andExpect(jsonPath("$.providerNetEarning").value(80.00));
+    }
+
+    @Test
+    void get_anotherProvidersTransaction_isForbidden() throws Exception {
+        PaymentTransaction tx = pending(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
+        when(paymentService.getTransaction(tx.getId())).thenReturn(tx);
+        authenticate(UUID.randomUUID(), "SERVICE_PROVIDER");
+
+        mvc.perform(get("/payments/" + tx.getId()))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode").value("FORBIDDEN"));
+    }
+
     @Test
     void get_anyTransaction_isAllowedForStaff() throws Exception {
         UUID staffId = UUID.randomUUID();

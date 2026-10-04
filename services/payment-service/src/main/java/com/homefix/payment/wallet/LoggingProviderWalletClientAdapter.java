@@ -22,10 +22,10 @@ public class LoggingProviderWalletClientAdapter implements ProviderWalletClientP
     private static final Logger log = LoggerFactory.getLogger(LoggingProviderWalletClientAdapter.class);
 
     @Override
-    public void creditEarning(UUID providerId, UUID bookingId, BigDecimal gross, BigDecimal platformFee,
-                              BigDecimal netAmount) {
-        log.info("WALLET_CREDIT provider={} booking={} gross={} platformFee={} net={}",
-                providerId, bookingId, gross, platformFee, netAmount);
+    public void creditEarning(UUID providerId, UUID bookingId, String bookingReference, BigDecimal gross,
+                              BigDecimal platformFee, BigDecimal netAmount) {
+        log.info("WALLET_CREDIT provider={} booking={} reference={} gross={} platformFee={} net={}",
+                providerId, bookingId, bookingReference, gross, platformFee, netAmount);
     }
 
     @Override

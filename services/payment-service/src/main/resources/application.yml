@@ -62,6 +62,9 @@ homefix:
     default-gateway: ${PAYMENT_DEFAULT_GATEWAY:razorpay}
     # Payment attempts per (customer, booking); a new attempt opens only after the last FAILED.
     max-payment-attempts: 10
+    # A PENDING attempt younger than this may still be captured, so the retries endpoint refuses
+    # to fail it (409 PAYMENT_IN_FLIGHT); 0 disables the guard.
+    pending-charge-timeout: 30m
     # Booking payments are priced from the Booking Service's internal payment-facts endpoint and
     # move the booking to PAYMENT_PENDING through it, presenting the shared service credential.
     booking-service-url: ${BOOKING_SERVICE_URL:http://booking-service:8084}
@@ -74,9 +77,14 @@ homefix:
     internal-api-key: ${INTERNAL_API_KEY:}
     gateways:
       razorpay:
+        # API key pair from Razorpay Dashboard > Account & Settings > API Keys (rzp_test_... for
+        # test mode). Without both, the 'razorpay' gateway refuses new payments with 503.
+        key-id: ${RAZORPAY_KEY_ID:}
+        key-secret: ${RAZORPAY_KEY_SECRET:}
         # Razorpay webhook signing secret (HMAC-SHA256). From AWS Secrets Manager in production.
         # Required: no default, so the service fails fast when RAZORPAY_WEBHOOK_SECRET is not set.
         webhook-secret: ${RAZORPAY_WEBHOOK_SECRET}
+        api-base-url: ${RAZORPAY_API_BASE_URL:https://api.razorpay.com/v1}
       stripe:
         # Stripe webhook signing secret (HMAC-SHA256). From AWS Secrets Manager in production.
         # Required: no default, so the service fails fast when STRIPE_WEBHOOK_SECRET is not set.

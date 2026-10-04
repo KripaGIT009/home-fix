@@ -72,4 +72,16 @@ public interface PaymentTransactionRepository extends JpaRepository<PaymentTrans
     @Modifying
     @Query("update PaymentTransaction t set t.walletCreditPendingSince = null where t.id = :id")
     int clearWalletCreditPending(@Param("id") UUID id);
+
+    /**
+     * Records that the wallet permanently refused this payment's credit: clears the owed marker so
+     * the sweeper stops re-sending it, and keeps the reason. A bulk update for the same reason as
+     * {@link #clearWalletCreditPending(UUID)}. Must run inside a transaction.
+     *
+     * @return the number of rows updated (0 or 1).
+     */
+    @Modifying
+    @Query("update PaymentTransaction t set t.walletCreditPendingSince = null,"
+            + " t.walletCreditFailure = :reason where t.id = :id")
+    int markWalletCreditFailed(@Param("id") UUID id, @Param("reason") String reason);
 }

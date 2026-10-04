@@ -15,6 +15,14 @@ public interface PaymentGatewayPort {
     String gatewayId();
 
     /**
+     * Whether the gateway is configured well enough to take a new payment (its API credentials are
+     * set). A gateway that is not ready can still verify callbacks for payments it already took.
+     */
+    default boolean isReady() {
+        return true;
+    }
+
+    /**
      * Initiates a charge with the gateway.
      *
      * @return a result carrying the gateway's reference for the charge.

@@ -90,7 +90,10 @@ public class PaymentRbacConfig {
     private static final List<String> INITIATE_TIER =
             List.of("CUSTOMER", "ADMIN", "SUPER_ADMIN", "SUPPORT_AGENT");
 
-    /** Roles permitted to read a single transaction; ownership is checked on top of this. */
+    /**
+     * Roles permitted to read a single transaction; ownership is checked on top of this (the
+     * transaction's customer, the provider it credits, or staff).
+     */
     private static final List<String> READ_TIER = List.of(
             "CUSTOMER", "SERVICE_PROVIDER", "ADMIN", "SUPER_ADMIN", "FINANCE_ADMIN",
             "SUPPORT_AGENT");
@@ -114,6 +117,10 @@ public class PaymentRbacConfig {
         rules.put("POST /payments/*/refunds/*/reconcile", FINANCE_TIER);
         rules.put("POST /payments/*/refunds", FINANCE_TIER);
         rules.put("POST /payments/*/retries", RETRY_TIER);
+        // Razorpay Checkout for one's own payment (ownership checked in RazorpayController). Four
+        // segments, so neither can match the public /payments/webhooks/razorpay.
+        rules.put("GET /payments/*/razorpay/checkout", INITIATE_TIER);
+        rules.put("POST /payments/*/razorpay/verify", INITIATE_TIER);
         // Bare pattern: matches exactly /payments, never /payments/callbacks/{id}.
         rules.put("POST /payments", INITIATE_TIER);
         // Single-segment GET: matches /payments/{transactionId} only.
@@ -124,7 +131,8 @@ public class PaymentRbacConfig {
         // lies outside /payments/**, so it cannot touch the public callback path.
         rules.put("GET /admin/payments/**", FINANCE_TIER);
         rules.put("POST /admin/payments/**", FINANCE_TIER);
-        // Intentionally NO rule for POST /payments/callbacks/** (public, HMAC-verified) and none
+        // Intentionally NO rule for POST /payments/callbacks/** or POST /payments/webhooks/razorpay
+        // (public, HMAC-verified) and none
         // for /health/**, /actuator/**, /metrics, /prometheus. See the class Javadoc.
     }
 }

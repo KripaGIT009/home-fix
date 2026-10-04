@@ -38,7 +38,7 @@ class PaymentAdaptersTest {
     @Test
     void loggingWalletAdapter_creditAndReversal_doNotThrow() {
         LoggingProviderWalletClientAdapter wallet = new LoggingProviderWalletClientAdapter();
-        wallet.creditEarning(UUID.randomUUID(), UUID.randomUUID(),
+        wallet.creditEarning(UUID.randomUUID(), UUID.randomUUID(), "HF-1",
                 new BigDecimal("100.00"), new BigDecimal("20.00"), new BigDecimal("80.00"));
         wallet.creditSettlementReversal(UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("50.00"));
     }

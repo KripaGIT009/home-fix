@@ -77,6 +77,14 @@ public class PaymentProperties {
      */
     private int maxPaymentAttempts = 10;
 
+    /**
+     * How long after a payment attempt opened its charge may still be captured at the gateway
+     * (Requirement 12.5, 12.8). Until then {@code POST /payments/{id}/retries} refuses to fail the
+     * PENDING attempt ({@code 409 PAYMENT_IN_FLIGHT}), so a second attempt cannot be opened while
+     * the first charge can still succeed. {@code 0} disables the guard.
+     */
+    private Duration pendingChargeTimeout = Duration.ofMinutes(30);
+
     public int getMaxCustomerRetries() {
         return maxCustomerRetries;
     }
@@ -163,5 +171,13 @@ public class PaymentProperties {
 
     public void setMaxPaymentAttempts(int maxPaymentAttempts) {
         this.maxPaymentAttempts = maxPaymentAttempts;
+    }
+
+    public Duration getPendingChargeTimeout() {
+        return pendingChargeTimeout;
+    }
+
+    public void setPendingChargeTimeout(Duration pendingChargeTimeout) {
+        this.pendingChargeTimeout = pendingChargeTimeout;
     }
 }

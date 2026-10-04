@@ -43,6 +43,7 @@ import com.homefix.payment.invoice.InvoiceTriggerPort;
 import com.homefix.payment.idempotency.IdempotencyStorePort;
 import com.homefix.payment.notification.ProviderNotificationPort;
 import com.homefix.payment.wallet.ProviderWalletClientPort;
+import com.homefix.payment.wallet.WalletCreditException;
 
 /**
  * Core payment-domain business logic (Requirement 12 and 14.3-14.4).
@@ -179,8 +180,8 @@ public class PaymentService {
                 : kms.encrypt(cmd.rawPaymentCredential());
 
         PaymentTransaction tx = PaymentTransaction.initiate(key, cmd.customerId(), cmd.bookingId(),
-                cmd.providerId(), cmd.amount(), platformFee, cmd.method(), gateway.gatewayId(),
-                encryptedCredential);
+                cmd.bookingReference(), cmd.providerId(), cmd.amount(), platformFee, cmd.method(),
+                gateway.gatewayId(), encryptedCredential);
 
         // Reserve the idempotency key before charging so concurrent duplicates short-circuit.
         boolean reserved = idempotencyStore.putIfAbsent(key, tx.getId(), props.getIdempotencyTtl());
@@ -393,6 +394,13 @@ public class PaymentService {
      *   <li>Replay protection: on a transaction already settled, a callback that agrees with the
      *       settled state is an idempotent no-op (no second event, invoice or wallet credit); one
      *       that contradicts it is rejected with {@code 409 CALLBACK_CONFLICT}.</li>
+     *   <li>The one exception: a SUCCEEDED callback for a FAILED attempt is a <em>late capture</em>
+     *       (the gateway took the money after this service gave up on the attempt, or after the
+     *       gateway itself reported a failure). It is accepted (200, so the gateway stops
+     *       re-delivering it), recorded on the attempt ({@link PaymentTransaction#getLateCaptureEventId()}),
+     *       which stays FAILED, and Finance_Admin is alerted once to refund or reconcile it. It is
+     *       never applied as the booking's payment: a later attempt may already have been charged,
+     *       and turning a FAILED attempt into SUCCESS would charge the customer twice.</li>
      * </ol>
      *
      * <p>The state change and the {@code PaymentCompleted} outbox row commit together; invoice
@@ -412,7 +420,30 @@ public class PaymentService {
                     "Invalid callback signature for transaction " + transactionId);
         }
 
-        SignedCallbackPayload signed = SignedCallbackPayload.parse(callback.payload());
+        return settleVerified(transactionId, gateway, SignedCallbackPayload.parse(callback.payload()));
+    }
+
+    /**
+     * Applies a charge outcome that a gateway adapter has already authenticated in its own way, for a
+     * gateway whose confirmations do not arrive in the {@link SignedCallbackPayload} wire format
+     * (Razorpay: the Checkout signature plus a read-back of the payment, or its own webhook). The
+     * caller has verified the gateway's signature and built {@code outcome} only from verified data;
+     * from here on it is handled exactly like a signed callback: bound to the transaction, gateway and
+     * amount, checked for age, applied once.
+     *
+     * @throws PaymentException as for {@link #handleGatewayCallback}, except the signature checks
+     */
+    public PaymentTransaction settleVerifiedOutcome(UUID transactionId, SignedCallbackPayload outcome) {
+        return settleVerified(transactionId, gatewayRegistry.require(outcome.gatewayId()), outcome);
+    }
+
+    /** The transaction a gateway reference (e.g. a Razorpay order id) was recorded on, if any. */
+    public Optional<PaymentTransaction> findByGatewayReference(String gatewayReference) {
+        return transactionRepository.findByGatewayReference(gatewayReference);
+    }
+
+    private PaymentTransaction settleVerified(UUID transactionId, PaymentGatewayPort gateway,
+                                              SignedCallbackPayload signed) {
         if (!transactionId.equals(signed.transactionId())) {
             log.warn("SECURITY signed callback for transaction {} (event {}) was sent for transaction {}",
                     signed.transactionId(), signed.eventId(), transactionId);
@@ -440,6 +471,13 @@ public class PaymentService {
 
         if (applied.newlySucceeded()) {
             onPaymentSuccess(applied.transaction());
+        }
+        if (applied.newLateCapture()) {
+            PaymentTransaction tx = applied.transaction();
+            financeAlert.lateCapture(tx.getId(), tx.getBookingId(), tx.getAmount(),
+                    "gateway reported SUCCEEDED (event " + signed.eventId() + ") for an attempt already FAILED"
+                            + (tx.getFailureReason() == null ? "" : " (" + tx.getFailureReason() + ")")
+                            + "; refund the capture or reconcile it against the booking");
         }
         return applied.transaction();
     }
@@ -477,11 +515,23 @@ public class PaymentService {
                         "Signed amount does not match the transaction amount");
             }
 
+            if (tx.getStatus() == TransactionStatus.FAILED
+                    && signed.outcome() == SignedCallbackPayload.Outcome.SUCCEEDED) {
+                // The gateway captured money on an attempt already FAILED. Rejecting it would leave
+                // the capture with no record at all (and the gateway re-delivering it); applying it
+                // could charge the booking twice, since a later attempt may already be paid. So it
+                // is recorded on the attempt, which stays FAILED, and Finance_Admin is alerted.
+                boolean first = tx.recordLateCapture(signed.eventId());
+                log.error("LATE CAPTURE: SUCCEEDED callback (event {}) for transaction {} booking {} which is "
+                                + "already FAILED; recorded for Finance_Admin to refund or reconcile{}",
+                        signed.eventId(), transactionId, tx.getBookingId(), first ? "" : " (already recorded)");
+                return new CallbackApplication(first ? transactionRepository.save(tx) : tx, false, first);
+            }
             if (tx.getStatus() != TransactionStatus.PENDING) {
                 if (signed.outcome().agreesWith(tx.getStatus())) {
                     log.info("Duplicate {} callback (event {}) for transaction {} already {}; no-op",
                             signed.outcome(), signed.eventId(), transactionId, tx.getStatus());
-                    return new CallbackApplication(tx, false);
+                    return new CallbackApplication(tx, false, false);
                 }
                 log.warn("SECURITY conflicting {} callback (event {}) for transaction {} already {}",
                         signed.outcome(), signed.eventId(), transactionId, tx.getStatus());
@@ -495,16 +545,21 @@ public class PaymentService {
                 PaymentTransaction saved = transactionRepository.save(tx);
                 // Atomic with the SUCCESS state change: the outbox row commits in this transaction.
                 paymentCompletedPublisher.publish(saved);
-                return new CallbackApplication(saved, true);
+                return new CallbackApplication(saved, true, false);
             }
             tx.recordFailureReason(signed.failureReason());
             tx.transitionTo(TransactionStatus.FAILED);
-            return new CallbackApplication(transactionRepository.save(tx), false);
+            return new CallbackApplication(transactionRepository.save(tx), false, false);
         });
     }
 
-    /** Result of applying a callback: the transaction, and whether it moved to SUCCESS just now. */
-    private record CallbackApplication(PaymentTransaction transaction, boolean newlySucceeded) {
+    /**
+     * Result of applying a callback: the transaction, whether it moved to SUCCESS just now, and
+     * whether a late capture on a FAILED attempt was recorded just now (so Finance_Admin is alerted
+     * once, not on every re-delivery).
+     */
+    private record CallbackApplication(PaymentTransaction transaction, boolean newlySucceeded,
+                                       boolean newLateCapture) {
     }
 
     /**
@@ -539,15 +594,43 @@ public class PaymentService {
         }
         String reason = walletResult.lastError() == null ? "unknown"
                 : walletResult.lastError().getMessage();
-        log.error("Wallet credit failed after {} attempts for provider {} booking {} amount {}; "
-                        + "it stays owed and the wallet-credit sweeper will re-send it",
-                walletResult.attempts(), tx.getProviderId(), tx.getBookingId(), net);
+        if (isPermanent(walletResult.lastError())) {
+            log.error("Wallet credit for provider {} booking {} amount {} was refused permanently after "
+                            + "{} attempts; it will not be re-sent: {}",
+                    tx.getProviderId(), tx.getBookingId(), net, walletResult.attempts(), reason);
+            markWalletCreditFailed(tx.getId(), reason);
+        } else {
+            log.error("Wallet credit failed after {} attempts for provider {} booking {} amount {}; "
+                            + "it stays owed and the wallet-credit sweeper will re-send it",
+                    walletResult.attempts(), tx.getProviderId(), tx.getBookingId(), net);
+        }
         financeAlert.walletCreditFailed(tx.getProviderId(), tx.getBookingId(), net, reason);
     }
 
     private void creditWallet(PaymentTransaction tx) {
-        walletClient.creditEarning(tx.getProviderId(), tx.getBookingId(),
+        walletClient.creditEarning(tx.getProviderId(), tx.getBookingId(), tx.getBookingReference(),
                 tx.getAmount(), tx.getPlatformFee(), tx.providerNetEarning());
+    }
+
+    /** Whether the wallet refused a credit for good, so re-sending it can never succeed. */
+    private static boolean isPermanent(Throwable failure) {
+        return failure instanceof WalletCreditException wce && wce.isPermanent();
+    }
+
+    /**
+     * Stops re-sending a credit the wallet refused for good: clears the owed marker and records the
+     * reason on the payment, so Finance_Admin (alerted by the caller) can find and reconcile it. A
+     * failure here is logged, not thrown; the marker then stays and the sweeper meets the same
+     * refusal again later.
+     */
+    private void markWalletCreditFailed(UUID transactionId, String reason) {
+        try {
+            transactions.executeWithoutResult(status -> transactionRepository.markWalletCreditFailed(
+                    transactionId, PaymentTransaction.truncateReason(reason)));
+        } catch (RuntimeException e) {
+            log.warn("Wallet credit for transaction {} was refused permanently but could not be marked "
+                    + "failed; the sweeper will try it again: {}", transactionId, e.getMessage());
+        }
     }
 
     /**
@@ -576,7 +659,11 @@ public class PaymentService {
      *
      * <p>The minimum age keeps the sweep clear of a credit the callback thread is still retrying.
      * Each owed credit gets one attempt per sweep; a failure is logged and left for the next sweep
-     * (Finance_Admin was already alerted when the in-line retries ran out). Credits are at-least-once
+     * (Finance_Admin was already alerted when the in-line retries ran out). A <em>permanent</em>
+     * refusal ({@link WalletCreditException#isPermanent()}, e.g. 404 for an unknown provider) is
+     * different: re-sending it every minute forever changes nothing, so the credit is marked failed
+     * with its reason (no longer owed, still on record) and Finance_Admin is alerted, as for a failed
+     * settlement. Credits are at-least-once
      * &mdash; a crash after the wallet accepted a credit but before the marker was cleared re-sends
      * it &mdash; which is why the wallet port must treat {@code creditEarning} as idempotent per
      * booking.
@@ -591,6 +678,16 @@ public class PaymentService {
             try {
                 creditWallet(tx);
             } catch (RuntimeException e) {
+                if (isPermanent(e)) {
+                    log.error("Owed wallet credit for transaction {} provider {} booking {} amount {} "
+                                    + "was refused permanently; marking it failed and alerting Finance: {}",
+                            tx.getId(), tx.getProviderId(), tx.getBookingId(), tx.providerNetEarning(),
+                            e.getMessage());
+                    markWalletCreditFailed(tx.getId(), e.getMessage());
+                    financeAlert.walletCreditFailed(tx.getProviderId(), tx.getBookingId(),
+                            tx.providerNetEarning(), e.getMessage());
+                    continue;
+                }
                 log.error("Owed wallet credit for transaction {} provider {} booking {} amount {} "
                                 + "failed again; will retry on the next sweep: {}",
                         tx.getId(), tx.getProviderId(), tx.getBookingId(), tx.providerNetEarning(),
@@ -611,7 +708,19 @@ public class PaymentService {
      * Records a customer-driven retry of a failed/pending payment. Once the configured maximum
      * number of attempts is reached, the transaction is marked permanently FAILED (Requirement 12.8).
      *
+     * <p><strong>A charge that may still be in flight is never abandoned.</strong> A PENDING
+     * transaction has a charge the gateway may yet capture: its signed callback has not arrived, or
+     * the charge call itself failed with an unknown outcome. Failing it would open the booking to a
+     * second attempt, and the first charge's late SUCCEEDED callback could then not be applied. So
+     * the retry that would fail the transaction is refused with {@code 409 PAYMENT_IN_FLIGHT}, and
+     * nothing is recorded, until the transaction is older than {@code pending-charge-timeout}. A
+     * capture that still arrives after that is recorded as a late capture and Finance_Admin is
+     * alerted (see {@link #handleGatewayCallback}).
+     *
      * @return the transaction after registering the attempt.
+     * @throws PaymentException 409 {@code NOT_RETRYABLE} for a settled transaction, 409
+     *                          {@code PAYMENT_IN_FLIGHT} when this retry would fail a charge that may
+     *                          still be in flight
      */
     @Transactional
     public PaymentTransaction retryPayment(UUID transactionId, String failureReason) {
@@ -620,6 +729,13 @@ public class PaymentService {
             throw new PaymentException(HttpStatus.CONFLICT, "NOT_RETRYABLE",
                     "Only a PENDING transaction can be retried; current state " + tx.getStatus());
         }
+        if (tx.getAttemptCount() + 1 >= props.getMaxCustomerRetries() && chargeMayBeInFlight(tx)) {
+            log.info("Refusing to fail transaction {}: its charge may still be in flight (created {})",
+                    transactionId, tx.getCreatedAt());
+            throw new PaymentException(HttpStatus.CONFLICT, "PAYMENT_IN_FLIGHT",
+                    "The charge for transaction " + transactionId + " may still complete at the gateway; "
+                            + "wait for its outcome before giving up on it");
+        }
         tx.recordFailureReason(failureReason);
         int attempts = tx.registerRetryAttempt();
         if (attempts >= props.getMaxCustomerRetries()) {
@@ -627,6 +743,18 @@ public class PaymentService {
             log.info("Transaction {} permanently FAILED after {} attempts", transactionId, attempts);
         }
         return transactionRepository.save(tx);
+    }
+
+    /**
+     * Whether a PENDING transaction's charge may still be captured: it was opened less than
+     * {@code pending-charge-timeout} ago. A non-positive timeout disables the guard.
+     */
+    private boolean chargeMayBeInFlight(PaymentTransaction tx) {
+        Duration timeout = props.getPendingChargeTimeout();
+        if (timeout == null || timeout.isZero() || timeout.isNegative()) {
+            return false;
+        }
+        return tx.getCreatedAt().isAfter(Instant.now().minus(timeout));
     }
 
     // ===================== Refund (Requirement 12.7) =====================

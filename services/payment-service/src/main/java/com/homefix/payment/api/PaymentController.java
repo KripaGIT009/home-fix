@@ -75,11 +75,16 @@ public class PaymentController {
         return ResponseEntity.status(HttpStatus.CREATED).body(TransactionResponse.from(tx));
     }
 
-    /** Read a single transaction; restricted to the owning customer or to staff. */
+    /**
+     * Read a single transaction; restricted to its customer, the provider it credits, or staff. The
+     * RBAC rule admits {@code SERVICE_PROVIDER}, and the ownership check used to accept only the
+     * customer, so every provider read was a 403; the provider is now matched against the payment's
+     * own {@code providerId} (the provider's user id).
+     */
     @org.springframework.web.bind.annotation.GetMapping("/{transactionId}")
     public TransactionResponse get(@PathVariable("transactionId") UUID transactionId) {
         PaymentTransaction tx = paymentService.getTransaction(transactionId);
-        callerIdentity.requireSelfOrStaff(tx.getCustomerId());
+        callerIdentity.requirePartyOrStaff(tx.getCustomerId(), tx.getProviderId());
         return TransactionResponse.from(tx);
     }
 

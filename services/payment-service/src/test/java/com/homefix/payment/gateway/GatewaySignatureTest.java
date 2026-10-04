@@ -41,7 +41,7 @@ class GatewaySignatureTest {
 
     @Test
     void razorpayAdapter_verifiesItsOwnSignature() {
-        RazorpayGatewayAdapter adapter = new RazorpayGatewayAdapter(SECRET);
+        RazorpayGatewayAdapter adapter = new RazorpayGatewayAdapter("", "", SECRET, "https://api.razorpay.com/v1");
         String payload = "razorpay-callback-body";
         String sig = HmacSignatures.hmacSha256Hex(SECRET, payload);
         assertThat(adapter.gatewayId()).isEqualTo("razorpay");
@@ -61,7 +61,7 @@ class GatewaySignatureTest {
 
     @Test
     void differentGatewaySecrets_doNotCrossVerify() {
-        RazorpayGatewayAdapter razorpay = new RazorpayGatewayAdapter("razorpay-secret");
+        RazorpayGatewayAdapter razorpay = new RazorpayGatewayAdapter("", "", "razorpay-secret", "https://api.razorpay.com/v1");
         StripeGatewayAdapter stripe = new StripeGatewayAdapter("stripe-secret");
         String payload = "shared-body";
         String razorpaySig = HmacSignatures.hmacSha256Hex("razorpay-secret", payload);
