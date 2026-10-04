@@ -112,6 +112,23 @@ export async function fetchCategorySummaries(): Promise<CategorySummary[]> {
   }));
 }
 
+/** The customer-facing catalog's category shape; only these fields are used here. */
+interface ActiveCatalogCategory {
+  id: string;
+  name: string;
+}
+
+/**
+ * Active categories only, from the customer-facing `GET /catalog/categories`,
+ * which any signed-in account may read. An agency applicant holds no staff
+ * role, so the admin catalog above would answer 403; they may only pick
+ * active categories anyway (email-auth Requirement 5.1).
+ */
+export async function fetchActiveCategorySummaries(): Promise<CategorySummary[]> {
+  const { data } = await apiClient.get<ActiveCatalogCategory[]>('/catalog/categories');
+  return data.map((category) => ({ id: category.id, name: category.name, status: 'ACTIVE' }));
+}
+
 /** Activate or deactivate a category. */
 export async function updateCategoryStatus(
   id: string,

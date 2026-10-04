@@ -28,12 +28,14 @@ import { useVerificationState } from '@features/verification/hooks';
 import { describeVerificationStatus } from '@features/verification/status';
 import { useAuthStore } from '@stores/authStore';
 import { BankAccountCard } from './BankAccountCard';
+import { EmailPasswordCard } from './EmailPasswordCard';
 import { WorkProfileCard } from './WorkProfileCard';
 
 /**
  * Provider profile: identity, the live verification badge, the work profile
  * dispatch matches on (services, service area, availability), the bank account
- * settlements are paid into, and the routes into the other top-level areas.
+ * settlements are paid into, the email and password the account signs in
+ * with, and the routes into the other top-level areas.
  *
  * Verification status is the fact a provider checks most often — it decides
  * whether they can be dispatched at all (Requirement 5) — so it is shown here
@@ -104,6 +106,8 @@ export function ProfileScreen() {
         <WorkProfileCard />
 
         <BankAccountCard />
+
+        <EmailPasswordCard />
 
         <Card>
           <List disablePadding>

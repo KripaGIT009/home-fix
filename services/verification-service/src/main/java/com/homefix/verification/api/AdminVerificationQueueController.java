@@ -12,9 +12,12 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.homefix.verification.api.dto.BackgroundCheckDecisionRequest;
+import com.homefix.verification.api.dto.BackgroundCheckQueueEntryResponse;
 import com.homefix.verification.api.dto.VerificationDecisionRequest;
 import com.homefix.verification.api.dto.VerificationDocumentResponse;
 import com.homefix.verification.api.dto.VerificationQueueEntryResponse;
+import com.homefix.verification.domain.BackgroundCheckQueueRow;
 import com.homefix.verification.domain.VerificationQueueRow;
 import com.homefix.verification.provider.ProviderDirectoryPort;
 import com.homefix.verification.provider.ProviderDirectoryPort.ProviderSummary;
@@ -68,6 +71,38 @@ public class AdminVerificationQueueController {
         return ResponseEntity.ok(rows.stream()
                 .map(row -> VerificationQueueEntryResponse.from(row, summaries.get(row.providerId())))
                 .toList());
+    }
+
+    /**
+     * {@code GET /admin/verification/background-checks} — providers whose documents were accepted and
+     * whose background check awaits a result and decision ({@code BACKGROUND_CHECK_PENDING} or
+     * {@code BACKGROUND_CHECK_COMPLETED}), oldest check first, at most {@value #QUEUE_LIMIT}.
+     */
+    @GetMapping("/background-checks")
+    public ResponseEntity<List<BackgroundCheckQueueEntryResponse>> backgroundChecks() {
+        List<BackgroundCheckQueueRow> rows = verificationService.backgroundCheckQueue(QUEUE_LIMIT);
+        Map<UUID, ProviderSummary> summaries = rows.isEmpty()
+                ? Map.of()
+                : providerDirectory.summariesOf(rows.stream().map(BackgroundCheckQueueRow::providerId).toList());
+        return ResponseEntity.ok(rows.stream()
+                .map(row -> BackgroundCheckQueueEntryResponse.from(row, summaries.get(row.providerId())))
+                .toList());
+    }
+
+    /**
+     * {@code POST /admin/verification/{providerId}/background-check} — record the result of the
+     * background check and decide: {@code PASSED} approves the provider for jobs, {@code FAILED}
+     * rejects them with the reason (required, shown to the provider). 409
+     * {@code INVALID_STATE_TRANSITION} when the provider is not at this step. Answers 204.
+     */
+    @PostMapping("/{providerId}/background-check")
+    public ResponseEntity<Void> decideBackgroundCheck(@PathVariable("providerId") UUID providerId,
+                                                      @Valid @RequestBody BackgroundCheckDecisionRequest request) {
+        UUID admin = callerIdentity.requireCallerId();
+        verificationService.decideBackgroundCheck(providerId, admin,
+                request.outcome() == BackgroundCheckDecisionRequest.Outcome.PASSED, request.result(),
+                request.reason());
+        return ResponseEntity.noContent().build();
     }
 
     /**

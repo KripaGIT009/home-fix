@@ -24,12 +24,14 @@ import { IconTile } from '@components/StateViews';
 import { formatMobileNumber } from '@features/auth/phone';
 import { useAuthStore } from '@stores/authStore';
 import { brand, radius } from '@lib/theme';
+import { EmailPasswordSection } from './EmailPasswordSection';
 
 /**
  * Profile screen: the account home base reached from the main navigation.
  *
- * It shows the signed-in identity and routes to the areas of the app that are
- * about the customer rather than a single booking. Entries whose screens are
+ * It shows the signed-in identity, the email and password the customer can
+ * sign in with (email-auth Requirement 4.3), and routes to the areas of the
+ * app that are about the customer rather than a single booking. Entries whose screens are
  * not part of the Customer app's screen set (Requirement 28.7) are not shown
  * at all, so nothing here leads to a dead end.
  */
@@ -107,6 +109,8 @@ export function ProfileScreen() {
             </Box>
           </Stack>
         </Card>
+
+        <EmailPasswordSection />
 
         <Card>
           <List disablePadding aria-label="Account">

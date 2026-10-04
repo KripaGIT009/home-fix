@@ -1,7 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { SyntheticEvent } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
-import { Alert, Box, Divider, Paper, Stack, Tab, Tabs, Typography } from '@mui/material';
+import { Link as RouterLink, useLocation, useNavigate } from 'react-router-dom';
+import {
+  Alert,
+  Box,
+  Button,
+  Divider,
+  Link,
+  Paper,
+  Stack,
+  Tab,
+  Tabs,
+  Typography,
+} from '@mui/material';
 import ShieldRoundedIcon from '@mui/icons-material/ShieldRounded';
 import InsightsRoundedIcon from '@mui/icons-material/InsightsRounded';
 import VerifiedUserRoundedIcon from '@mui/icons-material/VerifiedUserRounded';
@@ -11,11 +22,13 @@ import { useAuthStore } from '@stores/authStore';
 import { isApiError } from '@api/client';
 import { canAccessPath } from '@config/navFilter';
 import { brand } from '@lib/theme';
-import { OTP_EXPIRY_SECONDS } from './constants';
+import { EMAIL_NOT_VERIFIED_CODE, OTP_EXPIRY_SECONDS } from './constants';
+import { EmailCodeStep } from './EmailCodeStep';
+import { ForgotPasswordFlow } from './ForgotPasswordFlow';
 import { getLockoutInfo } from './lockout';
 import { formatMobileNumber, toE164 } from './phone';
 import { useCountdown } from './useCountdown';
-import { usePasswordLogin, useRequestOtp, useVerifyOtp } from './hooks';
+import { usePasswordLogin, useRequestOtp, useResendEmailCode, useVerifyOtp } from './hooks';
 import { MobileStep } from './MobileStep';
 import { OtpStep } from './OtpStep';
 import { PasswordStep } from './PasswordStep';
@@ -27,6 +40,16 @@ interface RedirectState {
 
 /** The two ways into the console. Password is first because staff use it daily. */
 type Method = 'password' | 'otp';
+
+/**
+ * What the card shows besides the sign-in methods: the emailed code of an
+ * email sign-up that was never verified (email-auth Requirement 2.3), or the
+ * password reset (Requirement 3).
+ */
+type View =
+  | { kind: 'signin' }
+  | { kind: 'verify-email'; email: string; expiresInSeconds: number }
+  | { kind: 'forgot' };
 
 /** What the brand panel promises. Kept short: it is scenery, not documentation. */
 const HIGHLIGHTS = [
@@ -48,7 +71,7 @@ const HIGHLIGHTS = [
 ] as const;
 
 /**
- * Admin sign-in (Requirement 1.1-1.4, 28.3).
+ * Admin sign-in (Requirement 1.1-1.4, 28.3; email-auth Requirements 2.5, 3, 5.1).
  *
  * Two panels on desktop: a brand panel that says what the console is for, and
  * the form. Below the `md` breakpoint the brand panel is dropped rather than
@@ -58,8 +81,13 @@ const HIGHLIGHTS = [
  * Two methods share the screen. Password is the default because it is the one
  * staff use every day; OTP stays available because it is the only way into an
  * account that has no credentials provisioned yet. Both end in the same place:
- * a session whose roles drive RBAC across the portal, asserted as staff before
- * it is stored.
+ * a session whose roles drive RBAC across the portal. A session without a staff
+ * role is an agency applicant's: the route guards take it to its application
+ * status page.
+ *
+ * The password method also carries "Forgot password?", and an email sign-up
+ * whose code was never entered is offered a new code here rather than a dead
+ * end. Agencies that have no account yet start from "Register your agency".
  */
 export function LoginScreen() {
   const navigate = useNavigate();
@@ -71,8 +99,11 @@ export function LoginScreen() {
   const [method, setMethod] = useState<Method>('password');
   const [step, setStep] = useState<'mobile' | 'otp'>('mobile');
   const [mobileNumber, setMobileNumber] = useState('');
+  const [view, setView] = useState<View>({ kind: 'signin' });
+  const [passwordChanged, setPasswordChanged] = useState(false);
 
   const passwordLogin = usePasswordLogin();
+  const resendEmailCode = useResendEmailCode();
   const requestOtp = useRequestOtp();
   const verifyOtp = useVerifyOtp();
   const expiry = useCountdown(0);
@@ -94,10 +125,34 @@ export function LoginScreen() {
 
   const handlePasswordLogin = useCallback(
     (values: CredentialsFormValues) => {
+      setPasswordChanged(false);
+      resendEmailCode.reset();
       passwordLogin.mutate(values);
     },
-    [passwordLogin],
+    [passwordLogin, resendEmailCode],
   );
+
+  /**
+   * The password was right but the sign-up code was never entered: send a new
+   * code to the identifier (an email, since only email sign-ups are unverified)
+   * and open the code screen. Entering it signs the account in.
+   */
+  const handleResendSignupCode = useCallback(() => {
+    const email = passwordLogin.variables?.identifier.trim();
+    if (!email) return;
+    resendEmailCode.mutate(email, {
+      onSuccess: (data) => {
+        passwordLogin.reset();
+        setView({ kind: 'verify-email', email, expiresInSeconds: data.expiresInSeconds });
+      },
+    });
+  }, [passwordLogin, resendEmailCode]);
+
+  const handleBackToSignIn = useCallback(() => {
+    passwordLogin.reset();
+    resendEmailCode.reset();
+    setView({ kind: 'signin' });
+  }, [passwordLogin, resendEmailCode]);
 
   const handleRequestOtp = useCallback(
     ({ mobileNumber: submitted }: MobileFormValues) => {
@@ -143,26 +198,49 @@ export function LoginScreen() {
   const handleMethodChange = useCallback(
     (_event: SyntheticEvent, next: Method) => {
       passwordLogin.reset();
+      resendEmailCode.reset();
       requestOtp.reset();
       verifyOtp.reset();
       expiry.reset(0);
       setStep('mobile');
+      setPasswordChanged(false);
       setMethod(next);
     },
-    [passwordLogin, requestOtp, verifyOtp, expiry],
+    [passwordLogin, resendEmailCode, requestOtp, verifyOtp, expiry],
   );
 
   const lockout = verifyOtp.isError ? getLockoutInfo(verifyOtp.error) : null;
   const requestErrorMessage =
     requestOtp.isError && isApiError(requestOtp.error) ? requestOtp.error.message : null;
+  const emailNotVerified =
+    passwordLogin.isError && passwordLogin.error.code === EMAIL_NOT_VERIFIED_CODE;
+  // A refused resend (e.g. 429, once a minute) replaces the not-verified notice.
   const passwordErrorMessage =
-    passwordLogin.isError && isApiError(passwordLogin.error) ? passwordLogin.error.message : null;
+    resendEmailCode.isError && isApiError(resendEmailCode.error)
+      ? resendEmailCode.error.message
+      : emailNotVerified
+        ? 'Your email address is not verified yet. We can email you a new code to finish signing up.'
+        : passwordLogin.isError && isApiError(passwordLogin.error)
+          ? passwordLogin.error.message
+          : null;
 
   const otpCodeStep = method === 'otp' && step === 'otp';
-  const heading = otpCodeStep ? 'Verify your number' : 'Sign in to the console';
-  const subheading = otpCodeStep
-    ? `We sent a 6-digit code to ${formatMobileNumber(mobileNumber)}.`
-    : 'Use your staff credentials to continue.';
+  const heading =
+    view.kind === 'verify-email'
+      ? 'Verify your email'
+      : view.kind === 'forgot'
+        ? 'Reset your password'
+        : otpCodeStep
+          ? 'Verify your number'
+          : 'Sign in to the console';
+  const subheading =
+    view.kind === 'verify-email'
+      ? `We sent a 6-digit code to ${view.email}.`
+      : view.kind === 'forgot'
+        ? 'Enter the email on your account and we will send you a code.'
+        : otpCodeStep
+          ? `We sent a 6-digit code to ${formatMobileNumber(mobileNumber)}.`
+          : 'Use your staff or agency account to continue.';
 
   return (
     <Box sx={{ minHeight: '100dvh', display: 'flex', bgcolor: 'background.paper' }}>
@@ -301,9 +379,15 @@ export function LoginScreen() {
             </Alert>
           ) : null}
 
+          {passwordChanged && view.kind === 'signin' ? (
+            <Alert severity="success" sx={{ mb: 2 }}>
+              Your password was changed. Sign in with the new one.
+            </Alert>
+          ) : null}
+
           {/* Hidden once a code is in flight: switching method there would throw
               away the code the user is part-way through typing. */}
-          {otpCodeStep ? null : (
+          {otpCodeStep || view.kind !== 'signin' ? null : (
             <Tabs
               value={method}
               onChange={handleMethodChange}
@@ -319,11 +403,43 @@ export function LoginScreen() {
             </Tabs>
           )}
 
-          {method === 'password' ? (
+          {view.kind === 'verify-email' ? (
+            <EmailCodeStep
+              email={view.email}
+              expiresInSeconds={view.expiresInSeconds}
+              onBack={handleBackToSignIn}
+              backLabel="Back to sign in"
+            />
+          ) : view.kind === 'forgot' ? (
+            <ForgotPasswordFlow
+              initialEmail={passwordLogin.variables?.identifier ?? ''}
+              onCancel={handleBackToSignIn}
+              onDone={() => {
+                setPasswordChanged(true);
+                handleBackToSignIn();
+              }}
+            />
+          ) : method === 'password' ? (
             <PasswordStep
               onSubmit={handlePasswordLogin}
-              isSubmitting={passwordLogin.isPending}
+              isSubmitting={passwordLogin.isPending || resendEmailCode.isPending}
               errorMessage={passwordErrorMessage}
+              errorAction={
+                emailNotVerified && !resendEmailCode.isError ? (
+                  <Button
+                    color="inherit"
+                    size="small"
+                    onClick={handleResendSignupCode}
+                    disabled={resendEmailCode.isPending}
+                  >
+                    Resend code
+                  </Button>
+                ) : undefined
+              }
+              onForgotPassword={() => {
+                setPasswordChanged(false);
+                setView({ kind: 'forgot' });
+              }}
             />
           ) : step === 'mobile' ? (
             <MobileStep
@@ -344,6 +460,15 @@ export function LoginScreen() {
 
           <Divider sx={{ mt: 3.5, mb: 2.5 }} />
 
+          {/* Agency sign-up (email-auth Requirement 5.1): a service company with
+              no account yet starts here rather than at the staff form. */}
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Running a service agency?{' '}
+            <Link component={RouterLink} to="/agency/register" fontWeight={600}>
+              Register your agency
+            </Link>
+          </Typography>
+
           <Alert
             severity="info"
             variant="outlined"
@@ -351,8 +476,8 @@ export function LoginScreen() {
             sx={{ border: 'none', bgcolor: brand.accentSoft, px: 1.5, py: 0.75 }}
           >
             <Typography variant="caption" color="text.secondary">
-              Staff access only. Sign-in attempts are recorded, and five consecutive failures lock
-              the account for 30 minutes.
+              For HomeFix staff and partner agencies. Sign-in attempts are recorded, and five
+              consecutive failures lock the account for 30 minutes.
             </Typography>
           </Alert>
         </Paper>

@@ -13,14 +13,25 @@ export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
   readonly correlationId?: string;
+  /** Seconds to wait before retrying, from a 429's `Retry-After` header. */
+  readonly retryAfterSeconds?: number;
 
-  constructor(params: { status: number; code: string; message: string; correlationId?: string }) {
+  constructor(params: {
+    status: number;
+    code: string;
+    message: string;
+    correlationId?: string;
+    retryAfterSeconds?: number;
+  }) {
     super(params.message);
     this.name = 'ApiError';
     this.status = params.status;
     this.code = params.code;
     if (params.correlationId !== undefined) {
       this.correlationId = params.correlationId;
+    }
+    if (params.retryAfterSeconds !== undefined) {
+      this.retryAfterSeconds = params.retryAfterSeconds;
     }
   }
 }
@@ -109,12 +120,25 @@ function toUserMessage(status: number, body: BackendErrorBody | undefined): stri
   return sanitizeServerMessage(body?.message) ?? fallbackMessage(status);
 }
 
+/**
+ * The `Retry-After` header in seconds, when the server sent one as a number of
+ * seconds (the HTTP-date form is not used by HomeFix services). A cross-origin
+ * native build only sees it if the service exposes the header, so callers keep
+ * a fallback for its absence.
+ */
+function readRetryAfter(error: AxiosError): number | undefined {
+  const raw: unknown = error.response?.headers?.['retry-after'];
+  const seconds = typeof raw === 'string' || typeof raw === 'number' ? Number(raw) : NaN;
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds : undefined;
+}
+
 function toApiError(error: AxiosError<BackendErrorBody>): ApiError {
   const status = error.response?.status ?? 0;
   // A proxy in front of a stopped service answers with an HTML page, not JSON.
   const rawBody = error.response?.data;
   const body = rawBody && typeof rawBody === 'object' ? rawBody : undefined;
   const correlationId = error.config?.headers?.[CORRELATION_ID_HEADER] as string | undefined;
+  const retryAfterSeconds = readRetryAfter(error);
 
   return new ApiError({
     status,
@@ -128,6 +152,7 @@ function toApiError(error: AxiosError<BackendErrorBody>): ApiError {
           : 'UNKNOWN_ERROR'),
     message: toUserMessage(status, body),
     ...(correlationId ? { correlationId } : {}),
+    ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
   });
 }
 
@@ -167,8 +192,8 @@ export const apiClient: AxiosInstance = axios.create({
 });
 
 /**
- * Instance for every Auth Service call: the OTP pair, social login, token
- * refresh and logout.
+ * Instance for every public Auth Service call: the OTP pair, email sign-up,
+ * password sign-in and reset, social login, token refresh and logout.
  *
  * It carries its own base URL because the Auth Service does not sit behind the
  * API Gateway — the web builds reach it through the `/api/auth` proxy rule, and
@@ -182,6 +207,21 @@ export const authClient: AxiosInstance = axios.create({
   baseURL: env.authBaseUrl,
 });
 
+/**
+ * Instance for the signed-in Auth Service endpoints (`/auth/me/**`): the
+ * account's own email and password.
+ *
+ * Same base URL as `authClient`, but these calls authenticate by the access
+ * token, so it carries the Authorization header and the 401 refresh-and-replay
+ * exactly as `apiClient` does. It is kept apart from `authClient` because a
+ * stale token sent to the public endpoints (OTP, refresh) would be rejected
+ * there before the request body is ever looked at.
+ */
+export const accountClient: AxiosInstance = axios.create({
+  ...sharedOptions,
+  baseURL: env.authBaseUrl,
+});
+
 /** Tag an outbound request with a correlation id unless it already carries one. */
 function withCorrelationId(config: InternalAxiosRequestConfig): InternalAxiosRequestConfig {
   if (!config.headers.has(CORRELATION_ID_HEADER)) {
@@ -190,22 +230,21 @@ function withCorrelationId(config: InternalAxiosRequestConfig): InternalAxiosReq
   return config;
 }
 
-// Request interceptor: inject JWT Bearer token and a per-request correlation ID.
-apiClient.interceptors.request.use((config: InternalAxiosRequestConfig) => {
+/** Inject the JWT Bearer token and a per-request correlation ID. */
+function withBearerToken(config: InternalAxiosRequestConfig): InternalAxiosRequestConfig {
   const token = readAccessToken();
   if (token) {
     config.headers.set('Authorization', `Bearer ${token}`);
   }
   return withCorrelationId(config);
-});
+}
 
-authClient.interceptors.request.use(withCorrelationId);
-
-// Response interceptor: normalize errors, and on a 401 attempt one silent
-// refresh + replay before giving up on the session.
-apiClient.interceptors.response.use(
-  (response) => response,
-  async (error: AxiosError<BackendErrorBody>) => {
+/**
+ * Response error handler for a token-carrying client: normalize errors, and on
+ * a 401 attempt one silent refresh + replay before giving up on the session.
+ */
+function refreshAndReplayOn401(client: AxiosInstance) {
+  return async (error: AxiosError<BackendErrorBody>) => {
     const apiError = toApiError(error);
     if (apiError.status !== 401) {
       throw apiError;
@@ -220,13 +259,23 @@ apiClient.interceptors.response.use(
       const accessToken = await refreshAccessToken();
       if (accessToken) {
         config.headers.set('Authorization', `Bearer ${accessToken}`);
-        return apiClient.request(config);
+        return client.request(config);
       }
     }
 
     handleUnauthorized();
     throw apiError;
-  },
+  };
+}
+
+apiClient.interceptors.request.use(withBearerToken);
+accountClient.interceptors.request.use(withBearerToken);
+authClient.interceptors.request.use(withCorrelationId);
+
+apiClient.interceptors.response.use((response) => response, refreshAndReplayOn401(apiClient));
+accountClient.interceptors.response.use(
+  (response) => response,
+  refreshAndReplayOn401(accountClient),
 );
 
 authClient.interceptors.response.use(

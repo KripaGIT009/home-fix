@@ -18,7 +18,14 @@ public enum AccountStatus {
 
     SUSPENDED,
 
-    DEACTIVATED;
+    DEACTIVATED,
+
+    /**
+     * An email sign-up whose emailed code has not been entered yet (email-auth Requirement 1.3).
+     * It cannot authenticate on any path; entering the code makes it {@link #ACTIVE}, and one left
+     * unverified for 24 hours is removed by the pending-account sweep.
+     */
+    PENDING_VERIFICATION;
 
     /** Whether an account in this status may sign in, refresh, or present a token. */
     public boolean canAuthenticate() {

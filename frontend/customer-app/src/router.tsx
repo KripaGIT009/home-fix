@@ -3,6 +3,9 @@ import { PlaceholderScreen } from '@components/PlaceholderScreen';
 import { RequireAuth } from '@components/RequireAuth';
 import { RootLayout } from '@components/RootLayout';
 import { LoginScreen } from '@features/auth/LoginScreen';
+import { SignUpScreen } from '@features/auth/SignUpScreen';
+import { VerifyEmailScreen } from '@features/auth/VerifyEmailScreen';
+import { ForgotPasswordScreen } from '@features/auth/ForgotPasswordScreen';
 import { SplashScreen } from '@features/auth/SplashScreen';
 import { HomeScreen } from '@features/catalog/HomeScreen';
 import { SubcategoryScreen } from '@features/catalog/SubcategoryScreen';
@@ -22,6 +25,9 @@ import { HelpScreen } from '@features/help/HelpScreen';
  * Price Estimate, Available Professionals, Live Tracking, Service History.
  *
  * Profile and Help back the remaining two bottom-navigation destinations.
+ *
+ * Email sign-up, its emailed code and password reset (email-auth spec) are
+ * public, like Login.
  */
 export const router = createBrowserRouter([
   {
@@ -34,6 +40,18 @@ export const router = createBrowserRouter([
       {
         path: '/login',
         element: <LoginScreen />,
+      },
+      {
+        path: '/signup',
+        element: <SignUpScreen />,
+      },
+      {
+        path: '/signup/verify',
+        element: <VerifyEmailScreen />,
+      },
+      {
+        path: '/forgot-password',
+        element: <ForgotPasswordScreen />,
       },
       {
         path: '/home',

@@ -157,7 +157,7 @@ class PasswordLoginServiceTest {
 
         assertThatThrownBy(() -> service.authenticate(USERNAME, ""))
                 .isInstanceOf(PasswordLoginException.class)
-                .hasMessageContaining("Incorrect username or password");
+                .hasMessageContaining("Incorrect email, username or password");
         verify(tokenService, never()).issueTokens(anyString(), anyList());
     }
 

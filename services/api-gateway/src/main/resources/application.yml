@@ -105,6 +105,11 @@ spring:
           uri: ${AUTH_SERVICE_URI:http://auth-service:8081}
           predicates:
             - Path=/admin/users/**,/admin/users
+        # Staff invitations live with accounts in auth-service (email-auth Requirement 6).
+        - id: admin-invitations
+          uri: ${AUTH_SERVICE_URI:http://auth-service:8081}
+          predicates:
+            - Path=/admin/invitations/**,/admin/invitations
         - id: admin-providers
           uri: ${PROVIDER_SERVICE_URI:http://provider-service:8083}
           predicates:
@@ -149,6 +154,11 @@ spring:
           uri: ${PROVIDER_SERVICE_URI:http://provider-service:8083}
           predicates:
             - Path=/admin/tenants/**,/admin/tenants
+        # Agency self-registration (email-auth Requirement 5); any signed-in user may apply.
+        - id: tenant-applications
+          uri: ${PROVIDER_SERVICE_URI:http://provider-service:8083}
+          predicates:
+            - Path=/tenant-applications/**,/tenant-applications
         - id: tenant-bookings
           uri: ${BOOKING_SERVICE_URI:http://booking-service:8084}
           predicates:

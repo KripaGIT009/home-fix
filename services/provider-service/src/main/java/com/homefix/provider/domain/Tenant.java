@@ -77,6 +77,14 @@ public class Tenant {
     private UUID updatedBy;
 
     /** Null until first persisted, which is how Spring Data tells a new Tenant from an edit. */
+    /** The account that applied for this agency; null for a Tenant a Platform_Admin created. */
+    @Column(name = "applicant_user_id", updatable = false)
+    private UUID applicantUserId;
+
+    /** Why the application was rejected; shown to the applicant. */
+    @Column(name = "rejection_reason", length = 500)
+    private String rejectionReason;
+
     @Version
     @Column(name = "version", nullable = false)
     private Long version;
@@ -93,6 +101,60 @@ public class Tenant {
         tenant.status = TenantStatus.ACTIVE;
         tenant.update(details, TenantStatus.ACTIVE, actor);
         return tenant;
+    }
+
+    /**
+     * An agency's own application (email-auth Requirement 5.2): {@code PENDING_APPROVAL}, so it covers
+     * nothing and grants nothing until a Platform_Admin approves it.
+     */
+    public static Tenant apply(TenantDetails details, UUID applicantUserId) {
+        Tenant tenant = new Tenant();
+        tenant.id = UUID.randomUUID();
+        tenant.createdAt = Instant.now();
+        tenant.applicantUserId = applicantUserId;
+        tenant.update(details, TenantStatus.PENDING_APPROVAL, null);
+        return tenant;
+    }
+
+    /** A Platform_Admin's approval: the agency becomes {@code ACTIVE}. */
+    public void approve(UUID actor) {
+        requirePending();
+        this.status = TenantStatus.ACTIVE;
+        this.rejectionReason = null;
+        this.updatedBy = actor;
+        this.updatedAt = Instant.now();
+    }
+
+    /** A Platform_Admin's rejection, with the reason the applicant will see. */
+    public void reject(String reason, UUID actor) {
+        requirePending();
+        this.status = TenantStatus.REJECTED;
+        this.rejectionReason = reason;
+        this.updatedBy = actor;
+        this.updatedAt = Instant.now();
+    }
+
+    /** Puts an approval back when its admin could not be recorded, so nothing half-done stays ACTIVE. */
+    public void revertApproval() {
+        this.status = TenantStatus.PENDING_APPROVAL;
+    }
+
+    public boolean isPendingApproval() {
+        return status == TenantStatus.PENDING_APPROVAL;
+    }
+
+    private void requirePending() {
+        if (status != TenantStatus.PENDING_APPROVAL) {
+            throw new IllegalStateException("Tenant " + id + " is " + status + ", not PENDING_APPROVAL");
+        }
+    }
+
+    public UUID getApplicantUserId() {
+        return applicantUserId;
+    }
+
+    public String getRejectionReason() {
+        return rejectionReason;
     }
 
     /**

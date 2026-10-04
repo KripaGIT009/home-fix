@@ -12,6 +12,10 @@ const STATUS_COLORS: Record<string, ChipColor> = {
   RESOLVED: 'success',
   ONLINE: 'success',
   PENDING: 'warning',
+  // An agency application awaiting a platform admin (email-auth Requirement 5.6).
+  PENDING_APPROVAL: 'warning',
+  // An email sign-up whose code was never entered (email-auth Requirement 1.3).
+  PENDING_VERIFICATION: 'warning',
   DOCUMENT_SUBMITTED: 'warning',
   OPEN: 'warning',
   IN_PROGRESS: 'info',
@@ -42,13 +46,18 @@ interface StatusChipProps {
    * no verification record yet); rendered as a plain dash rather than a chip.
    */
   status: string | null | undefined;
+  /**
+   * Overrides the label derived from the status, for a status whose code reads
+   * badly, e.g. PENDING_VERIFICATION shown as "Unverified".
+   */
+  label?: string;
 }
 
 /** A small coloured chip that renders a domain status consistently. */
-export function StatusChip({ status }: StatusChipProps) {
+export function StatusChip({ status, label: labelOverride }: StatusChipProps) {
   if (!status) return <>—</>;
   const color = STATUS_COLORS[status] ?? 'default';
-  const label = status.replace(/_/g, ' ').toLowerCase();
+  const label = labelOverride ?? status.replace(/_/g, ' ').toLowerCase();
   return (
     <Chip
       size="small"

@@ -13,6 +13,7 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 
 import com.homefix.auth.admin.AdminUserException;
 import com.homefix.auth.domain.AccountDisabledException;
+import com.homefix.auth.emailauth.EmailAuthException;
 import com.homefix.auth.password.PasswordLoginException;
 import com.homefix.auth.registration.RegistrationException;
 import com.homefix.auth.social.SocialIdentityException;
@@ -46,6 +47,22 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(PasswordLoginException.class)
     public ResponseEntity<ErrorResponseDto> handlePasswordLogin(PasswordLoginException ex) {
+        ErrorResponseDto body = ErrorResponseDto.builder()
+                .errorCode(ex.getErrorCode())
+                .message(ex.getMessage())
+                .correlationId(MDC.get(CORRELATION_MDC_KEY))
+                .build();
+
+        ResponseEntity.BodyBuilder response = ResponseEntity.status(ex.getStatus());
+        if (ex.getRetryAfterSeconds() != null) {
+            response.header(HttpHeaders.RETRY_AFTER, Long.toString(ex.getRetryAfterSeconds()));
+        }
+        return response.body(body);
+    }
+
+    /** Email sign-up, codes, reset, credentials and invitations (email-auth spec). */
+    @ExceptionHandler(EmailAuthException.class)
+    public ResponseEntity<ErrorResponseDto> handleEmailAuth(EmailAuthException ex) {
         ErrorResponseDto body = ErrorResponseDto.builder()
                 .errorCode(ex.getErrorCode())
                 .message(ex.getMessage())

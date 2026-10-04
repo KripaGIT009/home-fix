@@ -68,6 +68,23 @@ public class InMemoryVerificationRepository implements VerificationRepository {
                 .toList();
     }
 
+    /** Same filter and ordering as the JPQL: oldest background check first. */
+    @Override
+    public List<com.homefix.verification.domain.BackgroundCheckQueueRow> findBackgroundCheckQueue(
+            java.util.Collection<com.homefix.verification.domain.VerificationStatus> statuses, Pageable page) {
+        return store.values().stream()
+                .filter(v -> statuses.contains(v.getStatus()))
+                .map(v -> new com.homefix.verification.domain.BackgroundCheckQueueRow(v.getProviderId(),
+                        v.getStatus(), v.getBackgroundCheckStartedAt(), v.getBackgroundCheckResult(),
+                        (long) v.getDocuments().size()))
+                .sorted(java.util.Comparator.comparing(
+                                com.homefix.verification.domain.BackgroundCheckQueueRow::startedAt,
+                                java.util.Comparator.nullsFirst(java.util.Comparator.naturalOrder()))
+                        .thenComparing(com.homefix.verification.domain.BackgroundCheckQueueRow::providerId))
+                .limit(page.getPageSize())
+                .toList();
+    }
+
     @Override
     public List<com.homefix.verification.domain.VerificationStatusView> findStatusesByProviderIds(
             java.util.Collection<UUID> providerIds) {

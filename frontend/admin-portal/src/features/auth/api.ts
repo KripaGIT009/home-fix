@@ -10,10 +10,19 @@ import type { AuthTokens, UserProfile, UserRole } from '@stores/authStore';
  * Endpoints (see design.md — Auth Service):
  * - POST /auth/register/otp     — send OTP to a mobile number
  * - POST /auth/register/verify  — verify OTP, return account + tokens
- * - POST /auth/login/password   — username + password sign-in
+ * - POST /auth/login/password   — email-or-username + password sign-in
  * - POST /auth/login/social     — social login (Google, Apple)
  * - POST /auth/token/refresh    — rotate the refresh token, mint an access token
  * - POST /auth/logout           — revoke the refresh token
+ *
+ * Email sign-up, password reset and staff invitations (email-auth spec):
+ * - POST /auth/register/email                  — create an unverified account, email a code
+ * - POST /auth/register/email/verify           — enter the code, return a session
+ * - POST /auth/register/email/resend           — email a new code
+ * - POST /auth/password/forgot                 — email a reset code
+ * - POST /auth/password/reset                  — set a new password with the code
+ * - GET  /auth/invitations/{token}             — what a staff invitation offers
+ * - POST /auth/invitations/{token}/acceptance  — accept it, return a session
  *
  * The OTP pair lives under `/auth/register/**` for every client: the Auth
  * Service exposes no `/auth/login/otp` or `/auth/login/verify`, and verifying an
@@ -47,7 +56,8 @@ export interface VerifyOtpPayload {
 }
 
 export interface PasswordLoginPayload {
-  username: string;
+  /** An email address or a console username; the service tells them apart. */
+  identifier: string;
   password: string;
 }
 
@@ -114,16 +124,128 @@ export async function verifyOtp(payload: VerifyOtpPayload): Promise<AuthSessionR
 }
 
 /**
- * POST /auth/login/password — authenticate with a username and password.
+ * POST /auth/login/password — authenticate with an email or username and a
+ * password.
  *
  * Returns the same session body as the OTP and social paths. Unlike OTP
- * verification this never creates an account: the credentials must already have
- * been provisioned, which is why staff can sign in here but nobody can register
- * here. A wrong username and a wrong password are answered identically (401
- * INVALID_CREDENTIALS), so the form must not try to tell the user which it was.
+ * verification this never creates an account. A wrong identifier and a wrong
+ * password are answered identically (401 INVALID_CREDENTIALS), so the form must
+ * not try to tell the user which it was. A right password on an email sign-up
+ * whose code was never entered answers 403 EMAIL_NOT_VERIFIED instead.
  */
 export async function passwordLogin(payload: PasswordLoginPayload): Promise<AuthSessionResponse> {
   const { data } = await authClient.post<AuthSessionResponse>('/auth/login/password', payload);
+  return data;
+}
+
+/** Roles an email sign-up may ask for; the portal's agency applicants use CUSTOMER. */
+export type EmailSignupRole = 'CUSTOMER' | 'SERVICE_PROVIDER';
+
+export interface EmailSignupPayload {
+  displayName: string;
+  email: string;
+  /** E.164. */
+  mobileNumber: string;
+  password: string;
+  role: EmailSignupRole;
+}
+
+/**
+ * The 202 answer to every request that may email a code. It is the same
+ * whether or not the address has an account (no enumeration), so the UI must
+ * never read anything into it beyond "check your inbox".
+ */
+export interface CodeSentResponse {
+  status: string;
+  /** Seconds until the emailed code expires (~600s). */
+  expiresInSeconds: number;
+}
+
+export interface EmailCodePayload {
+  email: string;
+  code: string;
+}
+
+export interface PasswordResetPayload {
+  email: string;
+  code: string;
+  newPassword: string;
+}
+
+/** Staff roles an invitation can carry; SUPER_ADMIN is never one of them. */
+export type InvitationRole = 'ADMIN' | 'FINANCE_ADMIN' | 'DISPATCHER' | 'SUPPORT_AGENT';
+
+/** GET /auth/invitations/{token}: what the invitee is about to accept. */
+export interface InvitationPreview {
+  email: string;
+  role: InvitationRole;
+  invitedByName?: string | null;
+  expiresAt: string;
+  /** True when the email already has an account: only its password is asked for. */
+  existingAccount: boolean;
+}
+
+/**
+ * Body of the acceptance call. A new account sends its name, mobile and a new
+ * password; an existing account sends only its current password.
+ */
+export type InvitationAcceptancePayload =
+  { displayName: string; mobileNumber: string; password: string } | { password: string };
+
+/** POST /auth/register/email — create an unverified account and email a code. */
+export async function registerWithEmail(payload: EmailSignupPayload): Promise<CodeSentResponse> {
+  const { data } = await authClient.post<CodeSentResponse>('/auth/register/email', payload);
+  return data;
+}
+
+/** POST /auth/register/email/verify — enter the emailed code; signs the account in. */
+export async function verifyEmailSignup(payload: EmailCodePayload): Promise<AuthSessionResponse> {
+  const { data } = await authClient.post<AuthSessionResponse>(
+    '/auth/register/email/verify',
+    payload,
+  );
+  return data;
+}
+
+/** POST /auth/register/email/resend — email a new sign-up code (once a minute at most). */
+export async function resendEmailCode(email: string): Promise<CodeSentResponse> {
+  const { data } = await authClient.post<CodeSentResponse>('/auth/register/email/resend', {
+    email,
+  });
+  return data;
+}
+
+/** POST /auth/password/forgot — email a reset code if the address has an account. */
+export async function forgotPassword(email: string): Promise<CodeSentResponse> {
+  const { data } = await authClient.post<CodeSentResponse>('/auth/password/forgot', { email });
+  return data;
+}
+
+/**
+ * POST /auth/password/reset — replace the password. Every session of the
+ * account ends, so the person signs in again afterwards.
+ */
+export async function resetPassword(payload: PasswordResetPayload): Promise<void> {
+  await authClient.post('/auth/password/reset', payload);
+}
+
+/** GET /auth/invitations/{token} — 410 INVITATION_EXPIRED for a used, revoked or old link. */
+export async function fetchInvitation(token: string): Promise<InvitationPreview> {
+  const { data } = await authClient.get<InvitationPreview>(
+    `/auth/invitations/${encodeURIComponent(token)}`,
+  );
+  return data;
+}
+
+/** POST /auth/invitations/{token}/acceptance — signs the invitee in with the staff role. */
+export async function acceptInvitation(
+  token: string,
+  payload: InvitationAcceptancePayload,
+): Promise<AuthSessionResponse> {
+  const { data } = await authClient.post<AuthSessionResponse>(
+    `/auth/invitations/${encodeURIComponent(token)}/acceptance`,
+    payload,
+  );
   return data;
 }
 
@@ -147,9 +269,7 @@ export interface RefreshTokenPayload {
  * interceptor that triggers it. Refresh tokens are single-use and rotate, so
  * the caller must persist `refreshToken` from the response.
  */
-export async function refreshSession(
-  payload: RefreshTokenPayload,
-): Promise<AuthSessionResponse> {
+export async function refreshSession(payload: RefreshTokenPayload): Promise<AuthSessionResponse> {
   const { data } = await authClient.post<AuthSessionResponse>('/auth/token/refresh', payload);
   return data;
 }

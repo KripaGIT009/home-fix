@@ -6,6 +6,9 @@ import { ServiceAreaScreen } from '@features/profile/ServiceAreaScreen';
 import { AvailabilityScreen } from '@features/profile/AvailabilityScreen';
 import { RequireAuth } from '@components/RequireAuth';
 import { LoginScreen } from '@features/auth/LoginScreen';
+import { SignUpScreen } from '@features/auth/SignUpScreen';
+import { EmailCodeScreen } from '@features/auth/EmailCodeScreen';
+import { ForgotPasswordScreen } from '@features/auth/ForgotPasswordScreen';
 import { SplashScreen } from '@features/auth/SplashScreen';
 import { DashboardScreen } from '@features/dashboard/DashboardScreen';
 import { VerificationStatusScreen } from '@features/verification/VerificationStatusScreen';
@@ -25,6 +28,9 @@ import { EarningsScreen } from '@features/earnings/EarningsScreen';
  * Earnings/settlement history and the provider's profile. The work-profile
  * editors under /profile/* (services, service area, availability) are what
  * make a newly signed-up provider matchable by dispatch.
+ *
+ * Email sign-up, its code screen and the forgotten-password flow (email-auth
+ * spec) are public, like /login.
  */
 export const router = createBrowserRouter([
   {
@@ -34,6 +40,18 @@ export const router = createBrowserRouter([
   {
     path: '/login',
     element: <LoginScreen />,
+  },
+  {
+    path: '/signup',
+    element: <SignUpScreen />,
+  },
+  {
+    path: '/signup/verify',
+    element: <EmailCodeScreen />,
+  },
+  {
+    path: '/forgot-password',
+    element: <ForgotPasswordScreen />,
   },
   {
     path: '/dashboard',

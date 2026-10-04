@@ -141,6 +141,19 @@ fakes used by the OTP tests; enumeration-safety tests compare full responses; in
 expiry; agency approval through the auth stub. End to end: extend `docker/verify-outbox-flow.sh` (or a new
 `docker/verify-signup.sh`) reading codes and invitation links from `docker/dev-mail/dev-mail.log`.
 
+## Decisions taken during implementation (2026-10-04)
+
+| # | Decision | Why |
+|---|---|---|
+| D7 | `auth.user_account.mobile_verified_at` records when OTP proved the number (existing rows backfilled). An OTP sign-in over a number that was only *given* at email sign-up never signs in to that account: an unverified sign-up holding it is removed, an active email account gives the number up, and the OTP holder gets their own account | Email sign-up records the mobile unverified (Requirement 1, product decision). Without this, anyone could sign up with someone else's number and later see what that person does after they sign in by OTP |
+| D8 | An email held only by a `PENDING_VERIFICATION` sign-up does not block the person who proves it (profile email change, invitation acceptance); the unverified sign-up is removed | Squatting an address without its code must not lock its owner out |
+| D9 | A password reset lifts the sign-in lockout on the address as well as revoking every refresh family | The emailed code proves control of the account; a locked-out owner who resets expects to sign in at once |
+| D10 | `POST /auth/me/email/verify` answers 200 with the `GET /auth/me` body rather than 204 | The profile screen shows the new state without a second request |
+| D11 | The logging email adapter logs the subject only, never the recipient | Requirement 7.2 and platform Requirement 26.4 (no PII in logs) |
+| D12 | Setting a password needs a verified email or a username first (`EMAIL_REQUIRED`) | A password with nothing to sign in with is unusable |
+| D13 | An application's status changes only by approval or rejection: `PUT /admin/tenants/{id}` and adding admins to an undecided application answer 409 `APPLICATION_NOT_DECIDED`. Approval grants and records the admin first, then activates; if activation fails the admin is removed again | Property EA4: no path grants `TENANT_ADMIN` for, or activates, an undecided application |
+| D14 | `docker/verify-signup.sh` approves an agency at 0°N 0°E with a 1 km radius | The check must not create a real-looking agency that takes local bookings |
+
 ## Open Questions
 
 1. A production email provider (SES, SendGrid…) — only the port and local adapters are built.

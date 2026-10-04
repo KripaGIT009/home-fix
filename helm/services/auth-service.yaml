@@ -27,3 +27,9 @@ secrets:
 config:
   GOOGLE_CLIENT_ID: ""
   APPLE_SERVICES_ID: ""
+  # Email sign-up, reset and invitations (email-auth spec). No production email provider exists
+  # yet, so the default 'logging' adapter records each email by subject and delivers nothing;
+  # never 'file' here, which writes codes and links in plain text.
+  EMAIL_PROVIDER: "logging"
+  # Where staff invitation links point: the deployed Admin Portal.
+  ADMIN_PORTAL_URL: "https://admin.homefix.example"

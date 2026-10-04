@@ -1,10 +1,10 @@
 import { useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Alert, Box, Button, Stack, TextField, Typography } from '@mui/material';
+import { Alert, Box, Button, Stack, Typography } from '@mui/material';
 import LockClockRoundedIcon from '@mui/icons-material/LockClockRounded';
 import { env } from '@config/env';
-import { OTP_LENGTH } from './constants';
+import { CodeField } from './CodeField';
 import { formatDuration, type LockoutInfo } from './lockout';
 import { useCountdown } from './useCountdown';
 import { otpSchema, type OtpFormValues } from './schemas';
@@ -78,28 +78,11 @@ export function OtpStep({
         </Alert>
       ) : null}
 
-      <TextField
-        autoComplete="one-time-code"
-        fullWidth
-        placeholder={'0'.repeat(OTP_LENGTH)}
+      <CodeField
+        {...register('otp')}
         error={Boolean(errors.otp)}
         helperText={errors.otp?.message ?? ' '}
         disabled={inputsDisabled}
-        inputProps={{
-          inputMode: 'numeric',
-          maxLength: OTP_LENGTH,
-          'aria-label': 'Verification code',
-          style: {
-            // Wide tracking reads as a code field without a per-digit input grid,
-            // which keeps paste and password managers working.
-            textAlign: 'center',
-            fontSize: '1.5rem',
-            fontWeight: 700,
-            letterSpacing: '0.5em',
-            textIndent: '0.5em',
-          },
-        }}
-        {...register('otp')}
       />
 
       {env.isProduction ? null : (

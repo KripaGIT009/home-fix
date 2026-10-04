@@ -87,5 +87,20 @@ per-environment values and Secrets. See [`infra/terraform/README.md`](infra/terr
 - [Mobile builds](frontend/MOBILE.md)
 - [Codebase review findings](CODEBASE_REVIEW.md)
 
-Some external integrations (SMS, payment providers, object storage, background checks) are
-currently stubs; the architecture document marks which.
+## Signing in locally
+
+All three apps accept email and password; the customer and provider apps also take mobile OTP
+and Google. The seeded test accounts sign in as `<username>@homefix.local` (for example
+`customer@homefix.local`, `provider@homefix.local`, `admin@homefix.local`) with the password
+from `DEV_SEED_PASSWORD` in `.env`. New customers and providers can sign up with an emailed
+code, staff join by invitation, and agencies register themselves for platform-admin approval.
+Locally, emailed codes and invitation links are written to `docker/dev-mail/dev-mail.log` and
+OTP codes to `docker/dev-sms/dev-sms.log`. See
+[`docs/LOCAL_ACCESS.md`](docs/LOCAL_ACCESS.md).
+
+## What is real and what is stubbed
+
+Google and Apple sign-in and Razorpay payments (test mode locally, with the keys in `.env`) are
+real integrations. SMS, email, document storage and background checks are not: there is no email
+provider yet, and an admin records each provider's background check in the Admin Portal's
+Verification Queue. The architecture document marks each one.

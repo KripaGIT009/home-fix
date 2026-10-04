@@ -13,14 +13,28 @@ export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
   readonly correlationId?: string;
+  /**
+   * The `Retry-After` header of a 429 (seconds), e.g. how long a password
+   * sign-in stays locked or when the next code may be requested.
+   */
+  readonly retryAfterSeconds?: number;
 
-  constructor(params: { status: number; code: string; message: string; correlationId?: string }) {
+  constructor(params: {
+    status: number;
+    code: string;
+    message: string;
+    correlationId?: string;
+    retryAfterSeconds?: number;
+  }) {
     super(params.message);
     this.name = 'ApiError';
     this.status = params.status;
     this.code = params.code;
     if (params.correlationId !== undefined) {
       this.correlationId = params.correlationId;
+    }
+    if (params.retryAfterSeconds !== undefined) {
+      this.retryAfterSeconds = params.retryAfterSeconds;
     }
   }
 }
@@ -33,10 +47,18 @@ interface BackendErrorBody {
   error?: string;
 }
 
+/** The `Retry-After` header in seconds; the services only ever send the delay form. */
+function parseRetryAfter(error: AxiosError): number | undefined {
+  const raw: unknown = error.response?.headers?.['retry-after'];
+  const seconds = typeof raw === 'string' || typeof raw === 'number' ? Number(raw) : NaN;
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds : undefined;
+}
+
 function toApiError(error: AxiosError<BackendErrorBody>): ApiError {
   const status = error.response?.status ?? 0;
   const body = error.response?.data;
   const correlationId = error.config?.headers?.[CORRELATION_ID_HEADER] as string | undefined;
+  const retryAfterSeconds = parseRetryAfter(error);
 
   return new ApiError({
     status,
@@ -46,6 +68,7 @@ function toApiError(error: AxiosError<BackendErrorBody>): ApiError {
       body?.error ??
       (status === 0 ? 'Unable to reach the server. Check your connection.' : error.message),
     ...(correlationId ? { correlationId } : {}),
+    ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
   });
 }
 
@@ -85,6 +108,20 @@ export const authClient: AxiosInstance = axios.create({
   baseURL: env.authBaseUrl,
 });
 
+/**
+ * Instance for the signed-in Auth Service endpoints (`/auth/me/...`: the
+ * account's own email and password).
+ *
+ * Same base URL as `authClient`, since these live on the Auth Service too, but
+ * they authenticate by bearer token, so it carries the `apiClient` behaviour:
+ * the Authorization header, and one silent refresh + replay on a 401. The
+ * refresh itself goes through `authClient`, so it cannot recurse.
+ */
+export const authSessionClient: AxiosInstance = axios.create({
+  ...sharedOptions,
+  baseURL: env.authBaseUrl,
+});
+
 /** Tag an outbound request with a correlation id unless it already carries one. */
 function withCorrelationId(config: InternalAxiosRequestConfig): InternalAxiosRequestConfig {
   if (!config.headers.has(CORRELATION_ID_HEADER)) {
@@ -94,21 +131,23 @@ function withCorrelationId(config: InternalAxiosRequestConfig): InternalAxiosReq
 }
 
 // Request interceptor: inject JWT Bearer token and a per-request correlation ID.
-apiClient.interceptors.request.use((config: InternalAxiosRequestConfig) => {
+function withBearerToken(config: InternalAxiosRequestConfig): InternalAxiosRequestConfig {
   const token = readAccessToken();
   if (token) {
     config.headers.set('Authorization', `Bearer ${token}`);
   }
   return withCorrelationId(config);
-});
+}
+
+apiClient.interceptors.request.use(withBearerToken);
+authSessionClient.interceptors.request.use(withBearerToken);
 
 authClient.interceptors.request.use(withCorrelationId);
 
 // Response interceptor: normalize errors, and on a 401 attempt one silent
 // refresh + replay before giving up on the session.
-apiClient.interceptors.response.use(
-  (response) => response,
-  async (error: AxiosError<BackendErrorBody>) => {
+function refreshOnUnauthorized(instance: AxiosInstance) {
+  return async (error: AxiosError<BackendErrorBody>) => {
     const apiError = toApiError(error);
     if (apiError.status !== 401) {
       throw apiError;
@@ -123,13 +162,19 @@ apiClient.interceptors.response.use(
       const accessToken = await refreshAccessToken();
       if (accessToken) {
         config.headers.set('Authorization', `Bearer ${accessToken}`);
-        return apiClient.request(config);
+        return instance.request(config);
       }
     }
 
     handleUnauthorized();
     throw apiError;
-  },
+  };
+}
+
+apiClient.interceptors.response.use((response) => response, refreshOnUnauthorized(apiClient));
+authSessionClient.interceptors.response.use(
+  (response) => response,
+  refreshOnUnauthorized(authSessionClient),
 );
 
 authClient.interceptors.response.use(

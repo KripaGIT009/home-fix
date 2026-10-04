@@ -84,6 +84,10 @@ public class WebSecurityConfig {
                                 "/auth/register/**",
                                 "/auth/login/social",
                                 "/auth/login/password",
+                                // Email sign-in support: forgotten password and the invitee's
+                                // link. Signed-in /auth/me stays behind a token.
+                                "/auth/password/**",
+                                "/auth/invitations/**",
                                 "/auth/token/refresh",
                                 "/auth/logout",
                                 "/auth/introspect",

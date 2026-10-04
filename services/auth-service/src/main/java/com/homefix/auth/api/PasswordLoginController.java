@@ -30,13 +30,13 @@ public class PasswordLoginController {
     }
 
     /**
-     * {@code POST /auth/login/password} — authenticate with a username and password.
+     * {@code POST /auth/login/password} — authenticate with an email or username and a password.
      *
      * <p>200 rather than 201: no account is created here.
      */
     @PostMapping("/password")
     public ResponseEntity<TokenResponse> login(@Valid @RequestBody PasswordLoginRequest request) {
-        LoginResult result = passwordLoginService.authenticate(request.username(), request.password());
+        LoginResult result = passwordLoginService.authenticate(request.identifier(), request.password());
         return ResponseEntity.ok(
                 TokenResponse.from(result.userId(), result.roles(), result.tokens()));
     }

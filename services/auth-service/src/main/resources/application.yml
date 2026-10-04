@@ -64,6 +64,17 @@ homefix:
       max-attempts: 5
       lockout: 30m
       failure-window: 15m
+    # Email sign-up, emailed codes, password reset and staff invitations (email-auth spec).
+    email-auth:
+      code-ttl: 10m
+      max-code-attempts: 5
+      resend-cooldown: 60s
+      max-codes-per-email-per-hour: 5
+      max-requests-per-ip-per-hour: ${EMAIL_AUTH_MAX_REQUESTS_PER_IP:10}
+      pending-signup-ttl: 24h
+      invitation-ttl: 7d
+      # Where invitation links point: the Admin Portal's /invite/{token} page.
+      admin-portal-url: ${ADMIN_PORTAL_URL:http://localhost:5175}
     # LOCAL DEV ONLY: create the documented test accounts at startup, each with a
     # console username and the supplied password. Off unless explicitly enabled, and
     # the password has no default so an enabled seeder must be given one.
@@ -92,6 +103,12 @@ homefix:
     # Sink for the 'file' provider. Mounted to the host in the local compose file
     # so a developer can read the code without querying container logs.
     file-path: ${SMS_FILE_PATH:/var/log/homefix/dev-sms.log}
+  email:
+    # Selects the email adapter behind EmailSenderPort (email-auth Requirement 7).
+    #   logging - record that an email was accepted, by subject only (default; delivers nothing)
+    #   file    - LOCAL DEV ONLY: append whole emails, codes and links included, to a file
+    provider: ${EMAIL_PROVIDER:logging}
+    file-path: ${EMAIL_FILE_PATH:/var/log/homefix/dev-mail.log}
 
 management:
   endpoints:

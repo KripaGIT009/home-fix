@@ -270,9 +270,9 @@ behaves the same with or without the Kafka distribution's own `.bat` tools on yo
 
 ## 3. Test users
 
-Two ways in. **Username and password** is the everyday path and the one the Admin Portal
-defaults to. **OTP** still works for every account, and remains the only way into an account
-that has no credentials provisioned.
+Three ways in. **Email and password** works in all three apps, and **username and password** in
+the Admin Portal; both go through the same sign-in endpoint. **OTP** still works for every
+account, and remains the only way into an account that has no credentials provisioned.
 
 The accounts are created by the Auth Service itself at startup when `DEV_SEED_ENABLED=true`
 (it is set in `.env.example`, so a copied `.env` has it on). Seeding is idempotent: an existing
@@ -295,6 +295,11 @@ Every account shares the password in `DEV_SEED_PASSWORD`, which defaults to `Hom
 | `support` | `HomeFix@2026` | `+919000000025` | SUPPORT_AGENT | Complaint triage, status changes, refunds |
 | `tenantadmin` | `HomeFix@2026` | `+919000000031` | TENANT_ADMIN | Administers the demo agency "Ara Home Services" in the Admin Portal: assignment queue, team, jobs |
 
+Every seeded account also has the verified email **`<username>@homefix.local`** (for example
+`customer@homefix.local`, `provider@homefix.local`, `superadmin@homefix.local`) with the same
+password, so the Email tab of the customer and provider apps and the Admin Portal's "Email or
+username" field all work out of the box.
+
 None of this is a real credential. The whole stack ships with a throwaway signing secret and a
 file-based SMS gateway, and must never be pointed at production data. The seeder is off unless
 explicitly enabled, and the password has no default inside the service, so an enabled seeder
@@ -310,8 +315,11 @@ In the Admin Portal (http://localhost:5175) the Password tab is selected by defa
 `admin` / `HomeFix@2026`. From the command line:
 
 ```bash
-curl -s -X POST http://localhost:8081/auth/login/password   -H 'Content-Type: application/json'   -d '{"username":"admin","password":"HomeFix@2026"}'
+curl -s -X POST http://localhost:8081/auth/login/password   -H 'Content-Type: application/json'   -d '{"identifier":"admin@homefix.local","password":"HomeFix@2026"}'
 ```
+
+`identifier` is an email or a username (`admin` works too); the old field name `username` is
+still accepted.
 
 The response is the same body every other authentication path returns — user id, roles, a
 15-minute access token and a 30-day refresh token.
@@ -321,6 +329,42 @@ endpoint cannot be used to discover which usernames exist. Five consecutive fail
 username for 30 minutes with a 429 and a `Retry-After`, mirroring the OTP flow's lockout. The
 lock is keyed on the username, so it survives a service restart and is cleared by a successful
 sign-in.
+
+### Email sign-up, password reset and invitations
+
+Email codes, password-reset codes and staff invitation links are not mailed locally: the Auth
+Service appends every email, whole, to **`docker/dev-mail/dev-mail.log`** (`EMAIL_PROVIDER=file`
+in `docker-compose.core.yml`), the counterpart of the dev SMS log.
+
+```bash
+tail -n 20 docker/dev-mail/dev-mail.log                         # the latest emails
+grep -A6 'To: asha@example.com' docker/dev-mail/dev-mail.log | tail -6   # one address's latest
+```
+
+- **Sign up** in the customer or provider app's Email tab (name, email, mobile, password), then
+  enter the 6-digit code from the log. A code lasts 10 minutes and allows 5 wrong tries; one
+  address gets at most one code a minute and five an hour. Signing up with an address that
+  already has an account answers the same and emails that address "you already have an account".
+- **Forgot password?** emails a reset code; resetting ends every session of the account.
+- **Profile → Email & password** adds a verified email and a password to an OTP account.
+- **Staff invitations**: in the Admin Portal, Users → Invitations (signed in as `superadmin`).
+  The link in the log opens `http://localhost:5175/invite/<token>`; it works once, for 7 days.
+- **Register your agency**: from the Admin Portal sign-in screen. The agency is
+  `PENDING_APPROVAL` until a platform admin approves it under Tenants → Pending applications;
+  the applicant then signs in again to reach the Tenant Portal.
+
+A mobile number given at email sign-up is recorded but not verified. If someone later proves
+that number by OTP, they get an account of their own and the number leaves the email account; it
+is never a way into somebody else's account.
+
+**Approving a new provider** takes two admin steps in the Admin Portal's Verification Queue
+(as `admin@homefix.local`): on **Document review**, accept the documents, which starts the
+background check; then on **Background check**, record the check's result and choose **Passed —
+approve** (the provider can take jobs) or **Failed — reject** (with a reason the provider sees). No
+background-check vendor is integrated, so the admin runs the check and records it there.
+
+`bash docker/verify-signup.sh` runs all of these end to end against the running stack (about a
+minute; it creates throwaway accounts and an agency at 0°N 0°E that covers no real booking).
 
 ### Logging in
 
@@ -521,7 +565,7 @@ sections 16 to 18 have the detail and the verification behind it.
 | Chat | The apps call the wrong endpoints and open a raw WebSocket against a STOMP server no route serves | 17.5 |
 | Provider onboarding | No screens for base location, radius, availability, skills or documents, so a provider who signs up in the app can never be matched; only the seeded providers can | 17.5 |
 | Real external providers | Payment gateways (outside the local simulator), SMS/email/push, document storage, background checks and geocoding are logging or in-memory stubs | 16.12 |
-| Notifications | Every channel is a logging adapter; push and email also have no device tokens or email addresses to send to. OTP codes go to `docker/dev-sms/dev-sms.log` | 16.12 |
+| Notifications | Every channel is a logging adapter; push has no device tokens to send to. OTP codes go to `docker/dev-sms/dev-sms.log`; sign-up and reset codes and invitation links go to `docker/dev-mail/dev-mail.log` (no real email provider yet) | 16.12 |
 | Complaint refunds | Recorded once per complaint and shown as succeeded, but the refund adapter only logs (`stub_rf_…` reference): no money is returned through payment-service | 17.3 |
 | Ratings | Reviews never reach provider-service, so a provider's aggregate rating (used in matching) never changes | 17.5 |
 | Location privacy | Any signed-in customer or provider with a booking id can read that booking's provider position | 17.5 |
@@ -548,7 +592,7 @@ docker compose -f docker-compose.core.yml down
 PGPASSWORD=<postgres superuser password> "/c/Program Files/PostgreSQL/18/bin/psql.exe" \
   -h localhost -U postgres -c "DROP DATABASE homefix WITH (FORCE)" -c "CREATE DATABASE homefix OWNER homefix"
 . docker/local-infra.sh && "$PSQL" -f docker/init-db.sql
-rm -f docker/dev-sms/dev-sms.log
+rm -f docker/dev-sms/dev-sms.log docker/dev-mail/dev-mail.log
 ```
 
 `down -v` no longer resets anything: the data lives in the host's Postgres, not a volume.
@@ -564,6 +608,7 @@ The local stack is deliberately insecure and several of these values are committ
 - One shared JWT signing secret, repeated across all services
 - One shared database role for every service, with a local-only password
 - OTP codes written to `docker/dev-sms/dev-sms.log` and echoed into auth-service logs
+- Email codes and staff invitation links written to `docker/dev-mail/dev-mail.log`
 - Test accounts with a shared, documented password (`DEV_SEED_ENABLED`)
 - One shared service credential for every `/internal/**` call (`INTERNAL_API_KEY`)
 - A payment simulator that reports every charge as paid without moving money

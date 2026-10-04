@@ -2,6 +2,7 @@ package com.homefix.verification.domain;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.util.EnumSet;
 import java.util.List;
 import java.util.UUID;
 
@@ -131,6 +132,44 @@ class AdminQueueQueriesJpaTest {
         Statistics statistics = entityManagerFactory.unwrap(SessionFactory.class).getStatistics();
         statistics.clear();
         return statistics;
+    }
+
+    @Test
+    void backgroundCheckQueue_isTheProvidersAtThatStepOldestCheckFirst() throws InterruptedException {
+        persistSubmitted(1);
+        persistApproved();
+        UUID first = persistAtBackgroundCheck(false);
+        Thread.sleep(5);
+        UUID second = persistAtBackgroundCheck(true);
+
+        List<BackgroundCheckQueueRow> queue = repository.findBackgroundCheckQueue(
+                EnumSet.of(VerificationStatus.BACKGROUND_CHECK_PENDING, VerificationStatus.BACKGROUND_CHECK_COMPLETED),
+                PageRequest.of(0, 200));
+
+        assertThat(queue).extracting(BackgroundCheckQueueRow::providerId).containsExactly(first, second);
+        assertThat(queue).extracting(BackgroundCheckQueueRow::status).containsExactly(
+                VerificationStatus.BACKGROUND_CHECK_PENDING, VerificationStatus.BACKGROUND_CHECK_COMPLETED);
+        assertThat(queue).extracting(BackgroundCheckQueueRow::result).containsExactly(null, "clear");
+        assertThat(queue).extracting(BackgroundCheckQueueRow::documentCount).containsExactly(1L, 1L);
+    }
+
+    /** A provider whose check was started, and optionally given a result without a decision. */
+    private UUID persistAtBackgroundCheck(boolean resultRecorded) {
+        UUID providerId = UUID.randomUUID();
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            Verification v = Verification.create(providerId);
+            v.addDocument(DocumentType.GOVERNMENT_ID, "s3://bucket/" + providerId, "image/png", 10);
+            v.transitionTo(VerificationStatus.DOCUMENT_SUBMITTED, providerId, "submitted");
+            v.transitionTo(VerificationStatus.DOCUMENT_VERIFIED, ADMIN, "verified");
+            v.recordBackgroundCheckStarted(java.time.Instant.now());
+            v.transitionTo(VerificationStatus.BACKGROUND_CHECK_PENDING, ADMIN, "check started");
+            if (resultRecorded) {
+                v.recordBackgroundCheckResult("clear");
+                v.transitionTo(VerificationStatus.BACKGROUND_CHECK_COMPLETED, ADMIN, "check completed");
+            }
+            repository.save(v);
+        });
+        return providerId;
     }
 
     private UUID persistSubmitted(int documents) {

@@ -30,6 +30,10 @@ class JwtIntrospectionGatewayFilterPublicPathTest {
             "/health/liveness",
             // Razorpay's signed webhook.
             "/payments/webhooks/razorpay",
+            // Email sign-up (under /auth/register), reset and invitations.
+            "/auth/register/email/verify",
+            "/auth/password/forgot",
+            "/auth/invitations/abc123/acceptance",
             // Encoded spellings of public paths stay public: the same decoded path is served.
             "/auth/login/%73ocial",
             "//auth/login/password"
@@ -51,6 +55,11 @@ class JwtIntrospectionGatewayFilterPublicPathTest {
             "/actuatorfoo",
             // Not on the list: revoking a session through the gateway needs a valid token.
             "/auth/logout",
+            // The signed-in credential endpoints stay behind a token.
+            "/auth/me",
+            "/auth/me/password",
+            "/auth/passwordless",
+            "/admin/invitations",
             // Ordinary protected paths.
             "/bookings/123",
             "/admin/users",

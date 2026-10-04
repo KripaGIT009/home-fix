@@ -43,5 +43,13 @@ class RouteOrderTest {
         int catchAll = routeIds.indexOf("admin-service");
         assertThat(catchAll).isEqualTo(routeIds.size() - 1);
         assertThat(routeIds.indexOf("admin-tenants")).isNotNegative().isLessThan(catchAll);
+        assertThat(routeIds.indexOf("admin-invitations")).isNotNegative().isLessThan(catchAll);
+    }
+
+    @Test
+    void agencyApplicationsHaveTheirOwnRoute() {
+        // "/tenant-applications" is not under "/tenant/", so the tenant route never swallows it; it
+        // must still exist, or the request falls through to no route at all.
+        assertThat(routeIds).contains("tenant-applications");
     }
 }

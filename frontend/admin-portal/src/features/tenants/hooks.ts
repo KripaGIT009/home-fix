@@ -5,27 +5,38 @@ import { fetchCategorySummaries, type CategorySummary } from '@features/categori
 import {
   addTenantAdmin,
   addTenantProvider,
+  approveTenantApplication,
   createTenant,
   fetchTenantMembers,
   fetchTenants,
+  rejectTenantApplication,
   removeTenantAdmin,
   removeTenantProvider,
   updateTenant,
   type TenantPayload,
   type TenantUpdatePayload,
 } from './api';
-import type { Tenant, TenantAdmin, TenantMembers, TeamProvider } from './model';
+import type { Tenant, TenantAdmin, TenantMembers, TenantStatus, TeamProvider } from './model';
 
 export const tenantKeys = {
   all: ['admin', 'tenants'] as const,
-  list: ['admin', 'tenants', 'list'] as const,
+  /** Prefix of every list, filtered or not, for invalidation. */
+  lists: ['admin', 'tenants', 'list'] as const,
+  list: (status: TenantStatus | null) => ['admin', 'tenants', 'list', { status }] as const,
   members: (id: string) => ['admin', 'tenants', 'members', id] as const,
   categories: ['admin', 'catalog', 'category-summaries'] as const,
 };
 
-/** Every Tenant with its counts (Requirement MT-12.1). */
-export function useTenants(): UseQueryResult<Tenant[], ApiError> {
-  return useQuery<Tenant[], ApiError>({ queryKey: tenantKeys.list, queryFn: fetchTenants });
+/**
+ * Every Tenant with its counts (Requirement MT-12.1), or only those in one
+ * status — PENDING_APPROVAL lists the agency applications awaiting a decision
+ * (email-auth Requirement 5.6).
+ */
+export function useTenants(status: TenantStatus | null = null): UseQueryResult<Tenant[], ApiError> {
+  return useQuery<Tenant[], ApiError>({
+    queryKey: tenantKeys.list(status),
+    queryFn: () => fetchTenants(status ?? undefined),
+  });
 }
 
 /**
@@ -51,7 +62,7 @@ export function useSaveTenant(): UseMutationResult<
   return useMutation({
     mutationFn: ({ id, payload }) => (id ? updateTenant(id, payload) : createTenant(payload)),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: tenantKeys.list });
+      void queryClient.invalidateQueries({ queryKey: tenantKeys.lists });
     },
   });
 }
@@ -98,4 +109,27 @@ export function useRemoveTenantProvider(tenantId: string) {
   return useMembershipMutation<string, void>((providerId) =>
     removeTenantProvider(tenantId, providerId),
   );
+}
+
+/** A decision on an agency application: approve, or reject with a reason. */
+export type ApplicationDecision = { approve: true } | { approve: false; reason: string };
+
+/**
+ * Approve or reject an agency application (email-auth Requirements 5.4, 5.6).
+ * Refreshes every list: the Tenant leaves the pending list and changes status
+ * in the full one.
+ */
+export function useDecideApplication(
+  tenantId: string,
+): UseMutationResult<Tenant, ApiError, ApplicationDecision> {
+  const queryClient = useQueryClient();
+  return useMutation<Tenant, ApiError, ApplicationDecision>({
+    mutationFn: (decision) =>
+      decision.approve
+        ? approveTenantApplication(tenantId)
+        : rejectTenantApplication(tenantId, decision.reason),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: tenantKeys.lists });
+    },
+  });
 }

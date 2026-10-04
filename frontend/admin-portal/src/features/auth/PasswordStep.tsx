@@ -1,48 +1,50 @@
-import { useState } from 'react';
+import type { ReactNode } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import {
-  Alert,
-  Box,
-  Button,
-  IconButton,
-  InputAdornment,
-  Stack,
-  TextField,
-  Typography,
-} from '@mui/material';
+import { Alert, Button, InputAdornment, Link, Stack, TextField } from '@mui/material';
 import LoginRoundedIcon from '@mui/icons-material/LoginRounded';
 import PersonOutlineRoundedIcon from '@mui/icons-material/PersonOutlineRounded';
-import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
-import VisibilityOutlinedIcon from '@mui/icons-material/VisibilityOutlined';
-import VisibilityOffOutlinedIcon from '@mui/icons-material/VisibilityOffOutlined';
+import { LabelledField, PasswordInput } from './FormFields';
 import { credentialsSchema, type CredentialsFormValues } from './schemas';
 
 interface PasswordStepProps {
   onSubmit: (values: CredentialsFormValues) => void;
   isSubmitting: boolean;
   errorMessage: string | null;
+  /**
+   * Shown inside the error, e.g. "Resend code" for an email sign-up whose code
+   * was never entered (email-auth Requirement 2.3). Turns the error into a
+   * warning: the password was right, there is one step left.
+   */
+  errorAction?: ReactNode;
+  /** Opens the password reset flow (email-auth Requirement 3). */
+  onForgotPassword: () => void;
 }
 
 /**
- * Username and password sign-in for staff accounts.
+ * Email-or-username and password sign-in (email-auth Requirement 2.5): staff
+ * use their console username or email, agency applicants their email.
  *
  * A single submit, unlike the OTP flow's two steps. The error surface is
- * deliberately flat: the service answers a wrong username and a wrong password
- * with the same code, and this form shows that one message rather than guessing
- * which field was at fault, so the console does not become a way to discover
- * which usernames exist.
+ * deliberately flat: the service answers a wrong identifier and a wrong
+ * password with the same code, and this form shows that one message rather than
+ * guessing which field was at fault, so the console does not become a way to
+ * discover which accounts exist.
  */
-export function PasswordStep({ onSubmit, isSubmitting, errorMessage }: PasswordStepProps) {
-  const [showPassword, setShowPassword] = useState(false);
-
+export function PasswordStep({
+  onSubmit,
+  isSubmitting,
+  errorMessage,
+  errorAction,
+  onForgotPassword,
+}: PasswordStepProps) {
   const {
     register,
     handleSubmit,
     formState: { errors },
   } = useForm<CredentialsFormValues>({
     resolver: zodResolver(credentialsSchema),
-    defaultValues: { username: '', password: '' },
+    defaultValues: { identifier: '', password: '' },
     mode: 'onBlur',
   });
 
@@ -53,18 +55,19 @@ export function PasswordStep({ onSubmit, isSubmitting, errorMessage }: PasswordS
       onSubmit={(event) => void handleSubmit(onSubmit)(event)}
       noValidate
     >
-      {errorMessage ? <Alert severity="error">{errorMessage}</Alert> : null}
+      {errorMessage ? (
+        <Alert severity={errorAction ? 'warning' : 'error'} action={errorAction}>
+          {errorMessage}
+        </Alert>
+      ) : null}
 
-      <Box>
-        <Typography variant="subtitle2" sx={{ mb: 0.75, color: 'text.primary' }}>
-          Username
-        </Typography>
+      <LabelledField label="Email or username">
         <TextField
           autoComplete="username"
           fullWidth
-          placeholder="admin"
-          error={Boolean(errors.username)}
-          helperText={errors.username?.message ?? ' '}
+          placeholder="you@agency.com"
+          error={Boolean(errors.identifier)}
+          helperText={errors.identifier?.message ?? ' '}
           InputProps={{
             startAdornment: (
               <InputAdornment position="start">
@@ -72,49 +75,30 @@ export function PasswordStep({ onSubmit, isSubmitting, errorMessage }: PasswordS
               </InputAdornment>
             ),
           }}
-          inputProps={{ 'aria-label': 'Username', autoCapitalize: 'none', spellCheck: false }}
-          {...register('username')}
-        />
-      </Box>
-
-      <Box>
-        <Typography variant="subtitle2" sx={{ mb: 0.75, color: 'text.primary' }}>
-          Password
-        </Typography>
-        <TextField
-          type={showPassword ? 'text' : 'password'}
-          autoComplete="current-password"
-          fullWidth
-          placeholder="••••••••"
-          error={Boolean(errors.password)}
-          helperText={errors.password?.message ?? ' '}
-          InputProps={{
-            startAdornment: (
-              <InputAdornment position="start">
-                <LockOutlinedIcon fontSize="small" sx={{ color: 'text.secondary' }} />
-              </InputAdornment>
-            ),
-            endAdornment: (
-              <InputAdornment position="end">
-                <IconButton
-                  onClick={() => setShowPassword((visible) => !visible)}
-                  edge="end"
-                  size="small"
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
-                >
-                  {showPassword ? (
-                    <VisibilityOffOutlinedIcon fontSize="small" />
-                  ) : (
-                    <VisibilityOutlinedIcon fontSize="small" />
-                  )}
-                </IconButton>
-              </InputAdornment>
-            ),
+          inputProps={{
+            'aria-label': 'Email or username',
+            autoCapitalize: 'none',
+            spellCheck: false,
           }}
-          inputProps={{ 'aria-label': 'Password' }}
-          {...register('password')}
+          {...register('identifier')}
         />
-      </Box>
+      </LabelledField>
+
+      <LabelledField
+        label="Password"
+        action={
+          <Link component="button" type="button" variant="body2" onClick={onForgotPassword}>
+            Forgot password?
+          </Link>
+        }
+      >
+        <PasswordInput
+          registration={register('password')}
+          ariaLabel="Password"
+          autoComplete="current-password"
+          error={errors.password?.message}
+        />
+      </LabelledField>
 
       <Button
         type="submit"

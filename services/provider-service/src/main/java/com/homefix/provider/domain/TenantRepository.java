@@ -1,6 +1,8 @@
 package com.homefix.provider.domain;
 
+import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -15,6 +17,12 @@ public interface TenantRepository extends JpaRepository<Tenant, UUID> {
     /** Every Tenant for the Platform_Admin list (Requirement MT-1.5), by name. */
     @Query("select t from Tenant t order by lower(t.name) asc, t.id asc")
     List<Tenant> findAllForAdmin();
+
+    /** The applicant's latest agency application, whatever its status (email-auth Requirement 5.5). */
+    Optional<Tenant> findFirstByApplicantUserIdOrderByCreatedAtDesc(UUID applicantUserId);
+
+    /** Whether the user has an application pending or approved (at most one, Requirement 5.2). */
+    boolean existsByApplicantUserIdAndStatusIn(UUID applicantUserId, Collection<TenantStatus> statuses);
 
     /**
      * Coverage pre-filter (Requirement MT-4.1, Property MT2): the Tenants with {@code status} that

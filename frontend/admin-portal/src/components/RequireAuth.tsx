@@ -1,8 +1,12 @@
 import type { ReactNode } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { Box, CircularProgress } from '@mui/material';
+import { isStaff } from '@config/roles';
 import { useAuthStore, type UserRole } from '@stores/authStore';
 import { ForbiddenScreen } from './ForbiddenScreen';
+
+/** Where a signed-in account with no staff role belongs (email-auth Requirement 5.5). */
+export const APPLICATION_STATUS_PATH = '/agency';
 
 interface RequireAuthProps {
   children: ReactNode;
@@ -19,7 +23,9 @@ interface RequireAuthProps {
 /**
  * Route guard. Redirects unauthenticated users to the login screen (preserving
  * the attempted location), and renders a Forbidden screen when the user is
- * authenticated but lacks a required role.
+ * authenticated but lacks a required role. An account with no staff role at
+ * all is not refused: it is an agency applicant, sent to its application
+ * status page (email-auth Requirement 5.5).
  */
 export function RequireAuth({ children, roles }: RequireAuthProps) {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
@@ -48,7 +54,11 @@ export function RequireAuth({ children, roles }: RequireAuthProps) {
     const userRoles = user?.roles ?? [];
     const allowed = roles.some((role) => userRoles.includes(role));
     if (!allowed) {
-      return <ForbiddenScreen />;
+      return isStaff(userRoles) ? (
+        <ForbiddenScreen />
+      ) : (
+        <Navigate to={APPLICATION_STATUS_PATH} replace />
+      );
     }
   }
 

@@ -36,6 +36,7 @@ import com.homefix.provider.config.WebSecurityConfig;
 import com.homefix.provider.domain.Tenant;
 import com.homefix.provider.domain.Tenant.TenantDetails;
 import com.homefix.provider.service.ProviderException;
+import com.homefix.provider.service.TenantApplicationService;
 import com.homefix.provider.service.TenantCommand;
 import com.homefix.provider.service.TenantService;
 import com.homefix.provider.service.TenantTeamService;
@@ -76,6 +77,9 @@ class AdminTenantControllerTest {
 
     @MockBean
     private TenantTeamService teamService;
+
+    @MockBean
+    private TenantApplicationService applications;
 
     static String token(UUID subject, String... roles) {
         return "Bearer " + Jwts.builder()
@@ -118,6 +122,46 @@ class AdminTenantControllerTest {
                 .andExpect(jsonPath("$[0].adminCount").value(1))
                 .andExpect(jsonPath("$[0].createdAt").exists())
                 .andExpect(jsonPath("$[0].updatedAt").exists());
+    }
+
+    @Test
+    void list_canBeFilteredByStatus_forPendingApplications() throws Exception {
+        TenantView active = view();
+        Tenant pendingTenant = Tenant.apply(new TenantDetails("Patna Plumbers", null, null, 25.6, 85.1,
+                new BigDecimal("10.0"), Set.of(category)), UUID.randomUUID());
+        when(tenantService.list()).thenReturn(List.of(active, new TenantView(pendingTenant, 0, 0)));
+
+        mockMvc.perform(get("/admin/tenants").param("status", "pending_approval")
+                        .header(HttpHeaders.AUTHORIZATION, token(admin, "ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].status").value("PENDING_APPROVAL"))
+                .andExpect(jsonPath("$[0].applicantUserId").value(pendingTenant.getApplicantUserId().toString()));
+    }
+
+    @Test
+    void approveAndReject_actAsTheCallingAdmin() throws Exception {
+        UUID tenantId = UUID.randomUUID();
+        when(applications.approve(tenantId, admin)).thenReturn(view());
+        when(applications.reject(tenantId, "Outside our cities", admin)).thenReturn(view());
+
+        mockMvc.perform(post("/admin/tenants/{id}/approval", tenantId)
+                        .header(HttpHeaders.AUTHORIZATION, token(admin, "ADMIN")))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/admin/tenants/{id}/rejection", tenantId)
+                        .header(HttpHeaders.AUTHORIZATION, token(admin, "SUPER_ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"Outside our cities\"}"))
+                .andExpect(status().isOk());
+        verify(applications).approve(tenantId, admin);
+        verify(applications).reject(tenantId, "Outside our cities", admin);
+    }
+
+    @Test
+    void decisions_areRefusedToATenantAdmin() throws Exception {
+        mockMvc.perform(post("/admin/tenants/{id}/approval", UUID.randomUUID())
+                        .header(HttpHeaders.AUTHORIZATION, token(admin, "TENANT_ADMIN")))
+                .andExpect(status().isForbidden());
+        verifyNoInteractions(applications);
     }
 
     @Test

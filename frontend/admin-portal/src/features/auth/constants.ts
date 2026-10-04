@@ -18,3 +18,19 @@ export const MOBILE_NUMBER_REGEX = /^(?:\+91)?[6-9]\d{9}$/;
  * too many incorrect attempts (Requirement 1.3).
  */
 export const OTP_LOCKED_CODE = 'OTP_SESSION_LOCKED';
+
+/** Default validity of an emailed sign-up or reset code (10 minutes). */
+export const EMAIL_CODE_EXPIRY_SECONDS = 10 * 60;
+
+/** The Auth Service accepts one new emailed code a minute per address. */
+export const EMAIL_CODE_RESEND_SECONDS = 60;
+
+/** Password rule for new passwords (email-auth Requirement 1.2), mirrored from the server. */
+export const PASSWORD_MIN_LENGTH = 8;
+export const PASSWORD_MAX_LENGTH = 72;
+
+/** Right password, but the email sign-up's code was never entered (Requirement 2.3). */
+export const EMAIL_NOT_VERIFIED_CODE = 'EMAIL_NOT_VERIFIED';
+
+/** A staff invitation that was used, revoked or is older than 7 days (Requirement 6.5). */
+export const INVITATION_EXPIRED_CODE = 'INVITATION_EXPIRED';

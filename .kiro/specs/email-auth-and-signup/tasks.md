@@ -11,7 +11,7 @@ with the capped-heap command.
 
 ### Phase 1 — Auth Service
 
-- [ ] 1. Email credentials, sign-up and verification
+- [x] 1. Email credentials, sign-up and verification
   - Migration V4 (email, email_verified_at, display_name, PENDING_VERIFICATION status, staff_invitation table) (Requirement 9.1)
   - `POST /auth/register/email`, `/verify`, `/resend`; Redis code store with TTL, attempts and rate limits; pending-account sweep (Requirements 1, 8)
   - `EmailSenderPort` with file and logging adapters; templates for code, "already registered", reset, invitation, agency decision (Requirement 7)
@@ -19,7 +19,7 @@ with the capped-heap command.
   - **Dependencies:** none
   - **Acceptance:** a sign-up's code appears in the dev mail log and verifying it signs the user in
 
-- [ ] 2. Email sign-in, password reset and self-service credentials
+- [x] 2. Email sign-in, password reset and self-service credentials
   - `POST /auth/login/password` accepts `identifier` (email or username), `EMAIL_NOT_VERIFIED` (Requirement 2)
   - `/auth/password/forgot`, `/auth/password/reset` revoking all refresh families (Requirement 3, EA5)
   - `GET /auth/me`, `POST /auth/me/email` + verify, `PUT /auth/me/password` (Requirement 4)
@@ -27,7 +27,7 @@ with the capped-heap command.
   - **Dependencies:** Task 1
   - **Acceptance:** a user can reset a forgotten password and their old sessions stop working
 
-- [ ] 3. Staff invitations and the agency decision email
+- [x] 3. Staff invitations and the agency decision email
   - `/admin/invitations` (list, create, revoke) with role rules (SUPER_ADMIN for ADMIN), hashed tokens, 7-day expiry, re-invite replaces (Requirement 6)
   - `GET /auth/invitations/{token}`, `POST /auth/invitations/{token}/acceptance` for new and existing accounts
   - Internal `POST /internal/emails/agency-decision` (Requirement 7.3)
@@ -37,7 +37,7 @@ with the capped-heap command.
 
 ### Phase 2 — Provider Service and gateway
 
-- [ ] 4. Agency applications
+- [x] 4. Agency applications
   - Tenant statuses `PENDING_APPROVAL` / `REJECTED`, `rejection_reason`, `applicant_user_id` (new migration)
   - `POST /tenant-applications`, `GET /tenant-applications/me`, `/admin/tenants/{id}/approval|rejection`, status filter (Requirement 5)
   - Approval reuses the add-admin grant path; decision emails via the auth internal endpoint
@@ -45,30 +45,30 @@ with the capped-heap command.
   - **Dependencies:** Task 3
   - **Acceptance:** an approved application becomes an ACTIVE Tenant whose applicant can open the Tenant Portal
 
-- [ ] 5. Gateway, Compose and Helm
+- [x] 5. Gateway, Compose and Helm
   - Gateway routes `/admin/invitations/**` → auth-service, `/tenant-applications/**` → provider-service (route-order test)
   - Compose: `EMAIL_PROVIDER=file`, mount `docker/dev-mail` like `docker/dev-sms`; Helm keeps the logging adapter
   - **Dependencies:** Tasks 1, 4
 
 ### Phase 3 — Apps
 
-- [ ] 6. Customer and provider apps: email sign-up, sign-in, reset, profile credentials
+- [x] 6. Customer and provider apps: email sign-up, sign-in, reset, profile credentials
   - Email tab, sign-up, code screen with resend, forgot/reset, `EMAIL_NOT_VERIFIED` handling, Profile "Email & password" (Requirements 1, 2.5, 3, 4.3)
   - Typecheck, lint, build; screenshots
   - **Dependencies:** Tasks 1, 2
 
-- [ ] 7. Admin Portal: email sign-in, agency sign-up, invitations, approvals
+- [x] 7. Admin Portal: email sign-in, agency sign-up, invitations, approvals
   - "Email or username" sign-in; Register your agency; application status page; Accept invitation page; Users → Invitations tab; Tenants → pending applications with approve/reject (Requirements 2.5, 5, 6)
   - Typecheck, lint, build; screenshots
   - **Dependencies:** Tasks 3, 4
 
 ### Phase 4 — Verification and documentation
 
-- [ ] 8. End-to-end check and seeds
+- [x] 8. End-to-end check and seeds
   - `docker/verify-signup.sh`: sign-up → code from dev mail log → verify → email sign-in → reset; agency application → approve → Tenant Portal reachable; invitation → accept → staff sign-in (Requirement 9.3)
   - **Dependencies:** Tasks 5, 6, 7
 
-- [ ] 9. Documentation
+- [x] 9. Documentation
   - `docs/LOCAL_ACCESS.md` (where codes and invitation links appear), `docs/API_CONTRACTS.md`, app READMEs, review entry (Requirement 9.4)
   - **Dependencies:** Task 8
 

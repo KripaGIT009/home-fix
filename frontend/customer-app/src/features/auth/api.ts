@@ -9,6 +9,14 @@ import type { AuthTokens, UserProfile, UserRole } from '@stores/authStore';
  * - POST /auth/register/verify  - verify OTP, create/return account + tokens
  * - POST /auth/login/social     - social login (Google, Apple)
  *
+ * Email sign-up and sign-in (email-auth spec, Requirements 1–3):
+ * - POST /auth/register/email          - sign up; emails a 6-digit code
+ * - POST /auth/register/email/verify   - enter that code; signs in
+ * - POST /auth/register/email/resend   - email a new sign-up code
+ * - POST /auth/login/password          - email (or username) + password
+ * - POST /auth/password/forgot         - email a reset code
+ * - POST /auth/password/reset          - code + new password; ends all sessions
+ *
  * Every call goes through `authClient`, which resolves against the Auth Service
  * base URL (VITE_AUTH_BASE_URL, defaulting to the API base path) and carries the
  * X-Correlation-ID interceptor and the normalized ApiError rejection. No
@@ -109,6 +117,7 @@ export function toE164(mobileNumber: string): string {
   // Fall back to a best-effort +-prefixed value; the server is authoritative.
   return `+${digits}`;
 }
+
 /** POST /auth/register/otp - request an OTP for the given mobile number. */
 export async function requestOtp(payload: RequestOtpPayload): Promise<RequestOtpResponse> {
   const { data } = await authClient.post<RequestOtpResponse>('/auth/register/otp', {
@@ -147,9 +156,7 @@ export interface RefreshTokenPayload {
  * interceptor that triggers it. Refresh tokens are single-use and rotate, so
  * the caller must persist `refreshToken` from the response.
  */
-export async function refreshSession(
-  payload: RefreshTokenPayload,
-): Promise<AuthSessionResponse> {
+export async function refreshSession(payload: RefreshTokenPayload): Promise<AuthSessionResponse> {
   const { data } = await authClient.post<AuthSessionResponse>('/auth/token/refresh', payload);
   return data;
 }
@@ -160,4 +167,97 @@ export async function refreshSession(
  */
 export async function revokeRefreshToken(payload: RefreshTokenPayload): Promise<void> {
   await authClient.post('/auth/logout', payload);
+}
+
+/** The role an email sign-up from this app creates (email-auth Requirement 1.1). */
+export const EMAIL_SIGNUP_ROLE = 'CUSTOMER' satisfies UserRole;
+
+export interface EmailSignUpPayload {
+  displayName: string;
+  email: string;
+  /** E.164, e.g. "+919876543210". Not verified at sign-up. */
+  mobileNumber: string;
+  password: string;
+}
+
+/**
+ * 202 answer to every request that may email a code. Identical whether or not
+ * the address has an account, so it reveals nothing about it.
+ */
+export interface CodeSentResponse {
+  /** Always "CODE_SENT". */
+  status: string;
+  /** Seconds until the emailed code expires (server-authoritative, ~600s). */
+  expiresInSeconds: number;
+}
+
+export interface EmailCodePayload {
+  email: string;
+  code: string;
+}
+
+export interface EmailOnlyPayload {
+  email: string;
+}
+
+export interface PasswordLoginPayload {
+  /** An email address (or a console username; customers use their email). */
+  identifier: string;
+  password: string;
+}
+
+export interface PasswordResetPayload {
+  email: string;
+  code: string;
+  newPassword: string;
+}
+
+/**
+ * POST /auth/register/email - create a pending account and email a code.
+ * An address that already has an account is emailed a notice instead, and the
+ * answer is the same 202 either way.
+ */
+export async function signUpWithEmail(payload: EmailSignUpPayload): Promise<CodeSentResponse> {
+  const { data } = await authClient.post<CodeSentResponse>('/auth/register/email', {
+    ...payload,
+    role: EMAIL_SIGNUP_ROLE,
+  });
+  return data;
+}
+
+/** POST /auth/register/email/verify - enter the sign-up code; returns a session. */
+export async function verifyEmailSignUp(payload: EmailCodePayload): Promise<AuthSessionResponse> {
+  const { data } = await authClient.post<AuthSessionResponse>(
+    '/auth/register/email/verify',
+    payload,
+  );
+  return data;
+}
+
+/** POST /auth/register/email/resend - email a new sign-up code (once a minute). */
+export async function resendSignUpCode(payload: EmailOnlyPayload): Promise<CodeSentResponse> {
+  const { data } = await authClient.post<CodeSentResponse>('/auth/register/email/resend', payload);
+  return data;
+}
+
+/** POST /auth/login/password - sign in with an email and password. */
+export async function loginWithPassword(
+  payload: PasswordLoginPayload,
+): Promise<AuthSessionResponse> {
+  const { data } = await authClient.post<AuthSessionResponse>('/auth/login/password', payload);
+  return data;
+}
+
+/** POST /auth/password/forgot - email a reset code (always 202). */
+export async function requestPasswordReset(payload: EmailOnlyPayload): Promise<CodeSentResponse> {
+  const { data } = await authClient.post<CodeSentResponse>('/auth/password/forgot', payload);
+  return data;
+}
+
+/**
+ * POST /auth/password/reset - set a new password with the emailed code (204).
+ * Every session of the account is ended, so the person signs in afterwards.
+ */
+export async function resetPassword(payload: PasswordResetPayload): Promise<void> {
+  await authClient.post('/auth/password/reset', payload);
 }

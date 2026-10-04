@@ -10,9 +10,8 @@ import com.homefix.auth.domain.UserAccount;
  * without every event carrying PII.
  *
  * <p>Every address is nullable. {@code mobileNumber} is null for a social-login account that never
- * registered a phone; {@code emailAddress} is always null today, because the Auth Service does not
- * yet store an email (the field is part of the contract so storing one later is not a breaking
- * change). Callers must treat a null address as "this channel cannot reach the user", not as an
+ * registered a phone; {@code emailAddress} is the account's email once it has been verified, and
+ * null otherwise (an unverified address may belong to someone else). Callers must treat a null address as "this channel cannot reach the user", not as an
  * error. These values are PII and must never be logged (Requirement 26.4).
  *
  * @param userId       the account id the addresses belong to
@@ -22,6 +21,7 @@ import com.homefix.auth.domain.UserAccount;
 public record UserContactResponse(UUID userId, String mobileNumber, String emailAddress) {
 
     public static UserContactResponse from(UserAccount account) {
-        return new UserContactResponse(account.getId(), account.getMobileNumber(), null);
+        return new UserContactResponse(account.getId(), account.getMobileNumber(),
+                account.isEmailVerified() ? account.getEmail() : null);
     }
 }

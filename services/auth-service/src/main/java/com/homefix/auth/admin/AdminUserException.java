@@ -33,6 +33,15 @@ public class AdminUserException extends RuntimeException {
      * An ADMIN tried to change the status of an ADMIN or SUPER_ADMIN account. Without this an
      * ADMIN could suspend every SUPER_ADMIN and so take over System Configuration.
      */
+    /**
+     * {@code PENDING_VERIFICATION} belongs to an email sign-up whose code was never entered; staff
+     * cannot put an account into it (they suspend or deactivate instead).
+     */
+    public static AdminUserException statusNotSettable() {
+        return new AdminUserException(HttpStatus.BAD_REQUEST, "STATUS_NOT_SETTABLE",
+                "An account can be set ACTIVE, SUSPENDED or DEACTIVATED.");
+    }
+
     public static AdminUserException superAdminRequired() {
         return new AdminUserException(HttpStatus.FORBIDDEN, "SUPER_ADMIN_REQUIRED",
                 "Only a SUPER_ADMIN may change the status of an administrator account.");

@@ -140,6 +140,12 @@ public class TenantService {
         Tenant tenant = requireTenant(tenantId);
         TenantStatus previous = tenant.getStatus();
         TenantStatus status = command.status() == null ? previous : parseStatus(command.status());
+        if (!previous.isEditable() && status != previous) {
+            // An application is decided by approval or rejection, which also handle its administrator
+            // and the applicant's email (email-auth Requirement 5.4); an edit cannot skip that.
+            throw new ProviderException(HttpStatus.CONFLICT, "APPLICATION_NOT_DECIDED",
+                    "Approve or reject this agency application instead of changing its status");
+        }
         tenant.update(details, status, actor);
         Tenant saved;
         try {
@@ -172,11 +178,29 @@ public class TenantService {
      *         {@code ADMIN_OF_OTHER_TENANT} (Requirement MT-2.3), 503 {@code AUTH_UNAVAILABLE}
      */
     public AdminView addAdmin(UUID tenantId, String mobileNumber, UUID actor) {
-        requireTenant(tenantId);
+        if (!requireTenant(tenantId).getStatus().isEditable()) {
+            // A pending or rejected application grants nobody TENANT_ADMIN (email-auth Property EA4);
+            // approval makes the applicant its administrator.
+            throw new ProviderException(HttpStatus.CONFLICT, "APPLICATION_NOT_DECIDED",
+                    "Approve this agency application before adding administrators");
+        }
         String number = normaliseMobile(mobileNumber);
         AuthUser user = auth.findByMobile(number).orElseThrow(() -> new ProviderException(
                 HttpStatus.NOT_FOUND, "USER_NOT_FOUND", "No account is registered with that mobile number"));
-        UUID userId = user.userId();
+        return addAdminUser(tenantId, user.userId(), number, actor);
+    }
+
+    /**
+     * Makes {@code userId} an administrator of the Tenant: grant {@code TENANT_ADMIN}, then record
+     * the membership, compensating the grant if recording fails (see the class comment). Shared by
+     * {@link #addAdmin} and the approval of an agency application.
+     *
+     * @param mobileNumber shown in the answer only; may be null
+     * @throws ProviderException 409 {@code ADMIN_OF_OTHER_TENANT}, 404 {@code USER_NOT_FOUND}, 503
+     *         {@code AUTH_UNAVAILABLE}
+     */
+    AdminView addAdminUser(UUID tenantId, UUID userId, String mobileNumber, UUID actor) {
+        String number = mobileNumber;
         Optional<TenantAdmin> existing = admins.findById(userId);
         if (existing.isPresent() && !existing.get().getTenantId().equals(tenantId)) {
             throw adminOfOtherTenant();
@@ -383,11 +407,16 @@ public class TenantService {
     }
 
     private static TenantStatus parseStatus(String status) {
+        TenantStatus parsed;
         try {
-            return TenantStatus.valueOf(status.strip().toUpperCase(Locale.ROOT));
+            parsed = TenantStatus.valueOf(status.strip().toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException e) {
             throw invalid("INVALID_TENANT_STATUS", "status must be ACTIVE or SUSPENDED");
         }
+        if (!parsed.isEditable()) {
+            throw invalid("INVALID_TENANT_STATUS", "status must be ACTIVE or SUSPENDED");
+        }
+        return parsed;
     }
 
     /**

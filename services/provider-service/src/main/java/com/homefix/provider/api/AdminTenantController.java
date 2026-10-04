@@ -12,14 +12,17 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.homefix.provider.api.dto.MobileNumberRequest;
 import com.homefix.provider.api.dto.TeamProviderResponse;
 import com.homefix.provider.api.dto.TenantAdminResponse;
 import com.homefix.provider.api.dto.TenantMembersResponse;
+import com.homefix.provider.api.dto.TenantRejectionRequest;
 import com.homefix.provider.api.dto.TenantRequest;
 import com.homefix.provider.api.dto.TenantResponse;
+import com.homefix.provider.service.TenantApplicationService;
 import com.homefix.provider.service.TenantService;
 import com.homefix.provider.service.TenantTeamService;
 
@@ -41,19 +44,48 @@ public class AdminTenantController {
 
     private final TenantService tenantService;
     private final TenantTeamService teamService;
+    private final TenantApplicationService applications;
     private final CallerIdentity callerIdentity;
 
     public AdminTenantController(TenantService tenantService, TenantTeamService teamService,
-                                 CallerIdentity callerIdentity) {
+                                 TenantApplicationService applications, CallerIdentity callerIdentity) {
         this.tenantService = tenantService;
         this.teamService = teamService;
+        this.applications = applications;
         this.callerIdentity = callerIdentity;
     }
 
-    /** {@code GET /admin/tenants} — every Tenant with provider and admin counts, by name. */
+    /**
+     * {@code GET /admin/tenants} — every Tenant with provider and admin counts, by name; with
+     * {@code ?status=PENDING_APPROVAL} (or any other status) only those (email-auth Requirement 5.6).
+     */
     @GetMapping
-    public ResponseEntity<List<TenantResponse>> list() {
-        return ResponseEntity.ok(tenantService.list().stream().map(TenantResponse::from).toList());
+    public ResponseEntity<List<TenantResponse>> list(@RequestParam(name = "status", required = false) String status) {
+        return ResponseEntity.ok(tenantService.list().stream()
+                .filter(view -> status == null || status.isBlank()
+                        || view.tenant().getStatus().name().equalsIgnoreCase(status.strip()))
+                .map(TenantResponse::from)
+                .toList());
+    }
+
+    /**
+     * {@code POST /admin/tenants/{id}/approval} — the agency becomes {@code ACTIVE} and its applicant
+     * its administrator; 409 {@code APPLICATION_NOT_PENDING}.
+     */
+    @PostMapping("/{id}/approval")
+    public ResponseEntity<TenantResponse> approve(@PathVariable("id") UUID id) {
+        return ResponseEntity.ok(TenantResponse.from(applications.approve(id, callerIdentity.requireCallerId())));
+    }
+
+    /**
+     * {@code POST /admin/tenants/{id}/rejection} — {@code REJECTED} with the reason the applicant sees;
+     * 400 {@code REASON_REQUIRED}, 409 {@code APPLICATION_NOT_PENDING}.
+     */
+    @PostMapping("/{id}/rejection")
+    public ResponseEntity<TenantResponse> reject(@PathVariable("id") UUID id,
+                                                 @RequestBody TenantRejectionRequest request) {
+        return ResponseEntity.ok(TenantResponse.from(
+                applications.reject(id, request.reason(), callerIdentity.requireCallerId())));
     }
 
     /** {@code POST /admin/tenants} — 201 with the new {@code ACTIVE} Tenant; 400 names the failed rule. */

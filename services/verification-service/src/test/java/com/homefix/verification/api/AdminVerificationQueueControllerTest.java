@@ -36,6 +36,8 @@ import com.homefix.verification.config.WebSecurityConfig;
 import com.homefix.verification.domain.DocumentType;
 import com.homefix.verification.domain.Verification;
 import com.homefix.verification.domain.VerificationQueueRow;
+import com.homefix.verification.domain.VerificationStatus;
+import com.homefix.verification.domain.BackgroundCheckQueueRow;
 import com.homefix.verification.provider.ProviderDirectoryPort;
 import com.homefix.verification.provider.ProviderDirectoryPort.ProviderSummary;
 import com.homefix.verification.service.VerificationException;
@@ -112,6 +114,50 @@ class AdminVerificationQueueControllerTest {
 
         verify(verificationService).reviewQueue(AdminVerificationQueueController.QUEUE_LIMIT);
         verify(providerDirectory).summariesOf(List.of(provider, unnamed));
+    }
+
+    @Test
+    void backgroundChecks_listsTheProvidersAtThatStep() throws Exception {
+        Instant started = Instant.parse("2026-10-04T16:37:52Z");
+        when(verificationService.backgroundCheckQueue(anyInt())).thenReturn(List.of(
+                new BackgroundCheckQueueRow(provider, VerificationStatus.BACKGROUND_CHECK_PENDING, started, null, 3L)));
+        when(providerDirectory.summariesOf(any())).thenReturn(
+                Map.of(provider, new ProviderSummary("Ravi Kumar", "plumbing")));
+
+        mockMvc.perform(get("/admin/verification/background-checks")
+                        .header(HttpHeaders.AUTHORIZATION, token(admin, "ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].providerId").value(provider.toString()))
+                .andExpect(jsonPath("$[0].displayName").value("Ravi Kumar"))
+                .andExpect(jsonPath("$[0].status").value("BACKGROUND_CHECK_PENDING"))
+                .andExpect(jsonPath("$[0].startedAt").value("2026-10-04T16:37:52Z"))
+                .andExpect(jsonPath("$[0].documentCount").value(3));
+    }
+
+    @Test
+    void backgroundCheckDecision_recordsTheResultAsTheCallingAdmin() throws Exception {
+        mockMvc.perform(post("/admin/verification/{id}/background-check", provider)
+                        .header(HttpHeaders.AUTHORIZATION, token(admin, "SUPER_ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"outcome\":\"FAILED\",\"result\":\"Pending case\",\"reason\":\"Not cleared\"}"))
+                .andExpect(status().isNoContent());
+
+        verify(verificationService).decideBackgroundCheck(provider, admin, false, "Pending case", "Not cleared");
+    }
+
+    @Test
+    void backgroundCheckDecision_withoutAResult_is400_andIsAdminOnly() throws Exception {
+        mockMvc.perform(post("/admin/verification/{id}/background-check", provider)
+                        .header(HttpHeaders.AUTHORIZATION, token(admin, "ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"outcome\":\"PASSED\"}"))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(post("/admin/verification/{id}/background-check", provider)
+                        .header(HttpHeaders.AUTHORIZATION, token(admin, "SUPPORT_AGENT"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"outcome\":\"PASSED\",\"result\":\"clear\"}"))
+                .andExpect(status().isForbidden());
+        verifyNoInteractions(verificationService);
     }
 
     @Test

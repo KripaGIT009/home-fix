@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
-import { Alert, Box, Card, CardContent, Container, Link, Stack, Typography } from '@mui/material';
-import { BrandLogo } from '@components/BrandLogo';
+import { Link as RouterLink, useLocation, useNavigate } from 'react-router-dom';
+import { Alert, Link, Stack, Tab, Tabs, Typography } from '@mui/material';
+import PhoneIphoneRoundedIcon from '@mui/icons-material/PhoneIphoneRounded';
+import MailOutlineRoundedIcon from '@mui/icons-material/MailOutlineRounded';
 import { useAuthStore } from '@stores/authStore';
 import { isApiError } from '@api/client';
 import { OTP_EXPIRY_SECONDS } from './constants';
@@ -10,15 +11,19 @@ import { formatMobileNumber, toE164 } from './phone';
 import { GoogleSignInError, requestGoogleIdentityToken } from './googleSignIn';
 import { useCountdown } from './useCountdown';
 import { useRequestOtp, useSocialLogin, useVerifyOtp } from './hooks';
+import { AuthLayout } from './AuthLayout';
+import { EmailSignInStep } from './EmailSignInStep';
 import { MobileStep } from './MobileStep';
 import { OtpStep } from './OtpStep';
 import { SocialLoginButtons } from './SocialLoginButtons';
+import {
+  AUTH_ROUTES,
+  DEFAULT_SIGNED_IN_ROUTE,
+  readLoginState,
+  type SignInMethod,
+} from './navigation';
 import type { SocialProvider } from './api';
 import type { MobileFormValues } from './schemas';
-
-interface RedirectState {
-  from?: { pathname?: string };
-}
 
 /**
  * Login / OTP screen for Providers (Requirement 1.1–1.5, 28.8).
@@ -27,12 +32,19 @@ interface RedirectState {
  * 6-digit code within the expiry window. On successful verification the auth
  * store holds the session and we navigate to the originally requested route
  * (or the Dashboard). Social login (Google, Apple) is offered on the first step.
+ *
+ * The first step has an Email tab beside the mobile one (email-auth
+ * Requirement 2.5): email + password sign-in, with the links to reset a
+ * forgotten password and to create an account. It lands in the same place.
  */
 export function LoginScreen() {
   const navigate = useNavigate();
   const location = useLocation();
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
 
+  const loginState = useMemo(() => readLoginState(location.state), [location.state]);
+
+  const [method, setMethod] = useState<SignInMethod>(loginState.signInMethod ?? 'mobile');
   const [step, setStep] = useState<'mobile' | 'otp'>('mobile');
   // Errors raised before the mutation runs (SDK load, dismissed prompt).
   const [socialError, setSocialError] = useState<string | null>(null);
@@ -44,12 +56,9 @@ export function LoginScreen() {
   const socialLogin = useSocialLogin();
   const expiry = useCountdown(0);
 
-  const redirectTo = useMemo(() => {
-    const state = location.state as RedirectState | null;
-    return state?.from?.pathname ?? '/dashboard';
-  }, [location.state]);
+  const redirectTo = loginState.from?.pathname ?? DEFAULT_SIGNED_IN_ROUTE;
 
-  // Once a session exists (via OTP verify or social login), leave the screen.
+  // Once a session exists (via OTP verify, email or social login), leave the screen.
   useEffect(() => {
     if (isAuthenticated) {
       navigate(redirectTo, { replace: true });
@@ -120,81 +129,92 @@ export function LoginScreen() {
     socialError ??
     (socialLogin.isError && isApiError(socialLogin.error) ? socialLogin.error.message : null);
 
+  const subtitle =
+    step === 'otp'
+      ? `We sent a 6-digit code to ${formatMobileNumber(mobileNumber)}.`
+      : method === 'email'
+        ? 'Sign in with your email and password.'
+        : 'Sign in with your registered mobile number to start earning.';
+
   return (
-    <Box
-      sx={{
-        minHeight: '100dvh',
-        display: 'flex',
-        flexDirection: 'column',
-        // Branded band behind the header that the login card overlaps.
-        background: 'linear-gradient(180deg, #14B8A6 0%, #0F766E 42%, #F5F7FB 42%)',
-      }}
+    <AuthLayout
+      title={step === 'mobile' ? 'HomeFix for Providers' : 'Verify your number'}
+      subtitle={subtitle}
+      below={
+        step === 'mobile' ? (
+          <Typography variant="body2" color="text.secondary" align="center">
+            New to HomeFix?{' '}
+            <Link component={RouterLink} to={AUTH_ROUTES.signUp} underline="hover" fontWeight={700}>
+              Create account
+            </Link>
+          </Typography>
+        ) : null
+      }
     >
-      <Container
-        maxWidth="sm"
-        sx={{ py: 4, display: 'flex', flexDirection: 'column', flexGrow: 1 }}
-      >
-        <Stack spacing={1.5} sx={{ color: 'common.white', mb: 3 }}>
-          <BrandLogo size={44} inverted showRole />
-          <Box>
-            <Typography variant="h4" component="h1">
-              {step === 'mobile' ? 'HomeFix for Providers' : 'Verify your number'}
-            </Typography>
-            <Typography variant="body2" sx={{ opacity: 0.85, mt: 0.5 }}>
-              {step === 'mobile'
-                ? 'Sign in with your registered mobile number to start earning.'
-                : `We sent a 6-digit code to ${formatMobileNumber(mobileNumber)}.`}
-            </Typography>
-          </Box>
+      {socialErrorMessage ? (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {socialErrorMessage}
+        </Alert>
+      ) : null}
+
+      {step === 'mobile' ? (
+        <Stack spacing={3}>
+          <Tabs
+            value={method}
+            onChange={(_event, value: SignInMethod) => setMethod(value)}
+            variant="fullWidth"
+            aria-label="Sign-in method"
+            sx={{ borderBottom: 1, borderColor: 'divider', mt: -1 }}
+          >
+            <Tab
+              value="mobile"
+              label="Mobile"
+              icon={<PhoneIphoneRoundedIcon fontSize="small" />}
+              iconPosition="start"
+              sx={{ minHeight: 48 }}
+            />
+            <Tab
+              value="email"
+              label="Email"
+              icon={<MailOutlineRoundedIcon fontSize="small" />}
+              iconPosition="start"
+              sx={{ minHeight: 48 }}
+            />
+          </Tabs>
+
+          {loginState.notice ? (
+            <Alert severity="success" role="status">
+              {loginState.notice}
+            </Alert>
+          ) : null}
+
+          {method === 'mobile' ? (
+            <MobileStep
+              onSubmit={handleRequestOtp}
+              isSubmitting={requestOtp.isPending}
+              errorMessage={requestErrorMessage}
+            />
+          ) : (
+            <EmailSignInStep
+              {...(loginState.email ? { defaultEmail: loginState.email } : {})}
+              {...(loginState.from ? { from: loginState.from } : {})}
+            />
+          )}
+          <SocialLoginButtons
+            onSelect={(provider) => void handleSocial(provider)}
+            disabled={socialLogin.isPending || requestOtp.isPending}
+          />
         </Stack>
-
-        <Card>
-          <CardContent sx={{ p: { xs: 2.5, sm: 3 } }}>
-            {socialErrorMessage ? (
-              <Alert severity="error" sx={{ mb: 2 }}>
-                {socialErrorMessage}
-              </Alert>
-            ) : null}
-
-            {step === 'mobile' ? (
-              <Stack spacing={3}>
-                <MobileStep
-                  onSubmit={handleRequestOtp}
-                  isSubmitting={requestOtp.isPending}
-                  errorMessage={requestErrorMessage}
-                />
-                <SocialLoginButtons
-                  onSelect={(provider) => void handleSocial(provider)}
-                  disabled={socialLogin.isPending || requestOtp.isPending}
-                />
-              </Stack>
-            ) : (
-              <OtpStep
-                onVerify={handleVerifyOtp}
-                onResend={handleResend}
-                onChangeNumber={handleChangeNumber}
-                isVerifying={verifyOtp.isPending}
-                secondsLeft={expiry.secondsLeft}
-                lockout={lockout}
-              />
-            )}
-          </CardContent>
-        </Card>
-
-        <Box sx={{ flexGrow: 1 }} />
-
-        <Typography variant="caption" color="text.secondary" align="center" sx={{ mt: 3 }}>
-          By continuing, you agree to our{' '}
-          <Link href="#" underline="hover" fontWeight={600}>
-            Terms
-          </Link>{' '}
-          &amp;{' '}
-          <Link href="#" underline="hover" fontWeight={600}>
-            Privacy Policy
-          </Link>
-          .
-        </Typography>
-      </Container>
-    </Box>
+      ) : (
+        <OtpStep
+          onVerify={handleVerifyOtp}
+          onResend={handleResend}
+          onChangeNumber={handleChangeNumber}
+          isVerifying={verifyOtp.isPending}
+          secondsLeft={expiry.secondsLeft}
+          lockout={lockout}
+        />
+      )}
+    </AuthLayout>
   );
 }

@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 
 import com.homefix.auth.config.OtpProperties;
 import com.homefix.auth.domain.AccountDisabledException;
+import com.homefix.auth.domain.AccountStatus;
 import com.homefix.auth.domain.Role;
 import com.homefix.auth.domain.UserAccount;
 import com.homefix.auth.domain.UserAccountRepository;
@@ -158,6 +159,7 @@ public class RegistrationService {
      */
     private VerificationResult completeRegistration(String mobileNumber, Role role) {
         UserAccount account = userRepository.findByMobileNumber(mobileNumber)
+                .flatMap(this::claimedByProvenNumber)
                 .map(existing -> {
                     AccountDisabledException.requireActive(existing);
                     existing.addRole(role);
@@ -168,6 +170,32 @@ public class RegistrationService {
         List<String> roles = account.getRoles().stream().map(Enum::name).sorted().toList();
         TokenPair tokens = tokenService.issueTokens(account.getId().toString(), roles);
         return new VerificationResult(account.getId().toString(), roles, tokens);
+    }
+
+    /**
+     * The account a just-verified OTP signs in to, if any.
+     *
+     * <p>A number given at email sign-up is recorded on that account without being verified, so it
+     * proves nothing about who owns the account: signing the OTP holder in to it would let anyone
+     * who signed up with someone else's number later read what that person does there. The OTP has
+     * now proven the number, so it moves to the person holding the phone: an email sign-up never
+     * verified is removed outright, and an active email account gives up the number and keeps
+     * signing in by email. Either way the OTP holder gets an account of their own.
+     */
+    private Optional<UserAccount> claimedByProvenNumber(UserAccount existing) {
+        if (existing.isMobileVerified()) {
+            return Optional.of(existing);
+        }
+        if (existing.getStatus() == AccountStatus.PENDING_VERIFICATION) {
+            userRepository.delete(existing);
+            log.info("OTP proved a number held by unverified sign-up {}; the sign-up was removed", existing.getId());
+        } else {
+            existing.releaseUnverifiedMobile();
+            userRepository.save(existing);
+            log.info("OTP proved a number account {} had never verified; the number was released", existing.getId());
+        }
+        userRepository.flush();
+        return Optional.empty();
     }
 
     /**

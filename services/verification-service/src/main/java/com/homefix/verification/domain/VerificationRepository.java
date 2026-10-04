@@ -57,6 +57,19 @@ public interface VerificationRepository extends JpaRepository<Verification, UUID
     List<VerificationQueueRow> findQueue(@Param("status") VerificationStatus status, Pageable page);
 
     /**
+     * Providers in one of {@code statuses} for the background-check queue (Requirement 5.5, 5.6),
+     * oldest check first, with their document count. Bounded by {@code page}.
+     */
+    @Query("select new com.homefix.verification.domain.BackgroundCheckQueueRow("
+            + "v.providerId, v.status, v.backgroundCheckStartedAt, v.backgroundCheckResult, count(d)) "
+            + "from Verification v left join v.documents d "
+            + "where v.status in :statuses "
+            + "group by v.providerId, v.status, v.backgroundCheckStartedAt, v.backgroundCheckResult "
+            + "order by v.backgroundCheckStartedAt asc, v.providerId asc")
+    List<BackgroundCheckQueueRow> findBackgroundCheckQueue(@Param("statuses") Collection<VerificationStatus> statuses,
+                                                           Pageable page);
+
+    /**
      * The current status of each of {@code providerIds} that has a verification record, as a
      * projection of the root rows in one statement. Ids with no record are absent. Backs the
      * Provider Service's Admin provider list (Requirement 19.2). {@code providerIds} must be

@@ -25,13 +25,15 @@ public record TenantResponse(
         long providerCount,
         long adminCount,
         Instant createdAt,
-        Instant updatedAt) {
+        Instant updatedAt,
+        UUID applicantUserId,
+        String rejectionReason) {
 
     public static TenantResponse from(TenantView view) {
         Tenant t = view.tenant();
         return new TenantResponse(t.getId(), t.getName(), t.getStatus().name(), t.getContactPhone(),
                 t.getContactEmail(), t.getBaseLatitude(), t.getBaseLongitude(), t.getServiceRadiusKm(),
                 t.getCategoryIds().stream().sorted().toList(), view.providerCount(), view.adminCount(),
-                t.getCreatedAt(), t.getUpdatedAt());
+                t.getCreatedAt(), t.getUpdatedAt(), t.getApplicantUserId(), t.getRejectionReason());
     }
 }

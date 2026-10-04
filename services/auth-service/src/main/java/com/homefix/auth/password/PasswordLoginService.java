@@ -7,24 +7,28 @@ import java.util.Optional;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.homefix.auth.config.PasswordLoginProperties;
 import com.homefix.auth.domain.AccountDisabledException;
+import com.homefix.auth.domain.AccountStatus;
 import com.homefix.auth.domain.UserAccount;
 import com.homefix.auth.domain.UserAccountRepository;
+import com.homefix.auth.emailauth.EmailAddresses;
+import com.homefix.auth.emailauth.EmailAuthException;
 import com.homefix.auth.token.TokenPair;
 import com.homefix.auth.token.TokenService;
 
 /**
- * Username and password sign-in for accounts that carry console credentials.
+ * Password sign-in with an email address or a console username (email-auth Requirement 2).
  *
- * <p>This is the staff path. OTP registration remains the only way to <em>create</em> an
- * account, and no role is ever named by the caller here: the roles returned are whatever the
- * stored account already holds. A password can therefore never be used to escalate, only to
- * authenticate an account someone else provisioned.
+ * <p>No account is created here and no role is ever named by the caller: the roles returned are
+ * whatever the stored account already holds, so a password can never be used to escalate. An
+ * identifier containing {@code @} is looked up as an email, anything else as a username; both are
+ * case-insensitive.
  *
  * <p>Three defences apply on every call:
  * <ul>
@@ -70,22 +74,26 @@ public class PasswordLoginService {
     }
 
     /**
-     * Authenticates a username and password, returning the account's id, its current roles
-     * and a fresh token pair.
+     * Authenticates an email or username and a password, returning the account's id, its current
+     * roles and a fresh token pair.
      *
      * @throws PasswordLoginException 401 on any credential failure, 429 while locked
+     * @throws EmailAuthException 403 {@code EMAIL_NOT_VERIFIED} if the password is right but the
+     *                            account is an email sign-up whose code was never entered
      * @throws AccountDisabledException 403 if the credentials are correct but an administrator
      *                                  has suspended or deactivated the account
      */
     @Transactional(readOnly = true)
-    public LoginResult authenticate(String rawUsername, String rawPassword) {
-        String username = normalise(rawUsername);
+    public LoginResult authenticate(String rawIdentifier, String rawPassword) {
+        String username = normalise(rawIdentifier);
 
         if (attemptStore.isLocked(username)) {
             throw PasswordLoginException.locked(attemptStore.lockRemaining(username).getSeconds());
         }
 
-        Optional<UserAccount> maybeAccount = userRepository.findByUsername(username)
+        Optional<UserAccount> maybeAccount = (EmailAddresses.looksLikeEmail(username)
+                ? userRepository.findByEmail(username)
+                : userRepository.findByUsername(username))
                 .filter(UserAccount::hasPasswordCredentials);
 
         // Always spend the bcrypt cost, present account or not, so timing reveals nothing.
@@ -101,8 +109,12 @@ public class PasswordLoginService {
         UserAccount account = maybeAccount.get();
         attemptStore.clearFailures(username);
 
-        // Checked only once the password has matched: a wrong password on a suspended account
-        // is the same 401 as on any other, so the status is never an enumeration oracle.
+        // Checked only once the password has matched: a wrong password on a suspended or unverified
+        // account is the same 401 as on any other, so the status is never an enumeration oracle.
+        if (account.getStatus() == AccountStatus.PENDING_VERIFICATION) {
+            throw new EmailAuthException(HttpStatus.FORBIDDEN, "EMAIL_NOT_VERIFIED",
+                    "Verify your email first: enter the code we sent you, or ask for a new one.");
+        }
         AccountDisabledException.requireActive(account);
 
         List<String> roles = account.getRoles().stream().map(Enum::name).sorted().toList();
@@ -124,7 +136,10 @@ public class PasswordLoginService {
         }
     }
 
-    /** Usernames are case-insensitive and stored lower case; trim so a stray space is not a failure. */
+    /**
+     * Usernames and emails are case-insensitive and stored lower case; trim so a stray space is not
+     * a failure. Lockout is per normalised identifier (Requirement 2.2).
+     */
     private String normalise(String username) {
         return username == null ? "" : username.trim().toLowerCase(Locale.ROOT);
     }

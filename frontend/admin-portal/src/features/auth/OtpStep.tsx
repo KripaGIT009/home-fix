@@ -17,12 +17,21 @@ interface OtpStepProps {
   secondsLeft: number;
   /** Lockout details when the session is locked (Requirement 1.3). */
   lockout: LockoutInfo | null;
+  /** Label of the way back, e.g. "Change email address". */
+  changeLabel?: string;
+  /**
+   * Seconds until a new code may be requested. Emailed codes allow a resend a
+   * minute after the last one, long before the code itself expires; without
+   * this prop the code must expire first, as SMS OTPs do.
+   */
+  resendInSeconds?: number;
 }
 
 /**
  * Step 2 of the login flow: enter the 6-digit OTP within the expiry window,
  * with a live countdown, resend once expired, and a lockout notice with the
- * remaining lockout time (Requirement 1.2–1.4).
+ * remaining lockout time (Requirement 1.2–1.4). Also the code screen for the
+ * emailed sign-up code (email-auth Requirement 1.6).
  */
 export function OtpStep({
   onVerify,
@@ -31,6 +40,8 @@ export function OtpStep({
   isVerifying,
   secondsLeft,
   lockout,
+  changeLabel = 'Change mobile number',
+  resendInSeconds,
 }: OtpStepProps) {
   const {
     register,
@@ -54,6 +65,7 @@ export function OtpStep({
   const isExpired = secondsLeft <= 0;
   const isLocked = lockout?.isLocked ?? false;
   const inputsDisabled = isVerifying || isLocked;
+  const canResend = resendInSeconds === undefined ? isExpired : resendInSeconds <= 0;
 
   const lockoutMessage =
     isLocked && lockoutTimer.isRunning
@@ -110,8 +122,10 @@ export function OtpStep({
         >
           {isExpired ? 'Code expired' : `Expires in ${formatDuration(secondsLeft)}`}
         </Typography>
-        <Button type="button" size="small" onClick={onResend} disabled={!isExpired || isVerifying}>
-          Resend code
+        <Button type="button" size="small" onClick={onResend} disabled={!canResend || isVerifying}>
+          {canResend || resendInSeconds === undefined
+            ? 'Resend code'
+            : `Resend in ${formatDuration(resendInSeconds)}`}
         </Button>
       </Box>
 
@@ -132,7 +146,7 @@ export function OtpStep({
         onClick={onChangeNumber}
         disabled={isVerifying}
       >
-        Change mobile number
+        {changeLabel}
       </Button>
     </Stack>
   );

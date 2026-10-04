@@ -7,9 +7,9 @@ import { useAuthStore } from '@stores/authStore';
 /**
  * 403-style screen shown when an authenticated user lacks the role required for
  * a module. Mirrors the backend contract in Requirement 19.7 (ADMIN attempting
- * System Configuration receives a 403 Forbidden) at the UI layer. Every module
- * is role-gated, so this also catches a non-staff session that reached the
- * portal — hence the generic copy.
+ * System Configuration receives a 403 Forbidden) at the UI layer. Only staff
+ * see it: a session with no staff role is an agency applicant's and is sent to
+ * its application status page instead (email-auth Requirement 5.5).
  *
  * The way out goes to the user's own landing module, not the Dashboard: for
  * staff who cannot see the Dashboard that would only lead back here.

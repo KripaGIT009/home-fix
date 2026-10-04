@@ -76,11 +76,19 @@ services:
       # so without this nothing can open the Admin Portal. Never enable outside dev.
       DEV_SEED_ENABLED: "${DEV_SEED_ENABLED:-false}"
       DEV_SEED_PASSWORD: "${DEV_SEED_PASSWORD:-}"
+      # Dev-only email gateway (email-auth spec): sign-up codes, reset codes and staff invitation
+      # links are appended to docker/dev-mail/dev-mail.log instead of being mailed. Never outside dev.
+      EMAIL_PROVIDER: file
+      EMAIL_FILE_PATH: /var/log/homefix-mail/dev-mail.log
+      # Invitation links point at the local Admin Portal.
+      ADMIN_PORTAL_URL: "${ADMIN_PORTAL_URL:-http://localhost:5175}"
     ports:
       - "8081:8081"
     volumes:
       # Host-readable sink for the dev SMS gateway (see SMS_PROVIDER above).
       - ./docker/dev-sms:/var/log/homefix
+      # Host-readable Dev_Mail_Log (see EMAIL_PROVIDER above).
+      - ./docker/dev-mail:/var/log/homefix-mail
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8081/health/readiness || exit 1"]
       interval: 10s

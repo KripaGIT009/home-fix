@@ -3,8 +3,10 @@ package com.homefix.auth;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 import com.homefix.auth.config.AuthTokenProperties;
+import com.homefix.auth.config.EmailAuthProperties;
 import com.homefix.auth.config.OtpProperties;
 import com.homefix.auth.config.PasswordLoginProperties;
 import com.homefix.auth.config.SocialLoginProperties;
@@ -19,7 +21,8 @@ import com.homefix.auth.seed.DevSeedProperties;
  */
 @SpringBootApplication
 @EnableConfigurationProperties({OtpProperties.class, AuthTokenProperties.class, SocialLoginProperties.class,
-        PasswordLoginProperties.class, DevSeedProperties.class})
+        PasswordLoginProperties.class, DevSeedProperties.class, EmailAuthProperties.class})
+@EnableScheduling
 public class AuthServiceApplication {
 
     public static void main(String[] args) {
