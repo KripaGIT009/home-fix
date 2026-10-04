@@ -61,6 +61,25 @@ public class CallerIdentity {
         }
     }
 
+    /**
+     * Asserts the caller is one of the payment's two parties, {@code customer} or {@code provider},
+     * or holds a staff role. Used for reading a transaction: the provider who did the job may see the
+     * payment that credits them (its amount, fee and net earning), as the RBAC rule for
+     * {@code GET /payments/*} already admits {@code SERVICE_PROVIDER}.
+     *
+     * @throws PaymentException 403 when the caller is neither party and not staff
+     */
+    public void requirePartyOrStaff(UUID customer, UUID provider) {
+        if (isStaff()) {
+            return;
+        }
+        UUID caller = requireCallerId();
+        if (!caller.equals(customer) && !caller.equals(provider)) {
+            throw new PaymentException(HttpStatus.FORBIDDEN, "FORBIDDEN",
+                    "caller may only read payments they are a party to");
+        }
+    }
+
     private Authentication requireAuthentication() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication == null || !authentication.isAuthenticated()) {

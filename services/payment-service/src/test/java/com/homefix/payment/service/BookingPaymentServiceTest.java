@@ -24,6 +24,7 @@ import com.homefix.payment.crypto.LocalAesKmsAdapter;
 import com.homefix.payment.domain.PaymentMethod;
 import com.homefix.payment.domain.PaymentTransaction;
 import com.homefix.payment.domain.TransactionStatus;
+import com.homefix.payment.gateway.AbstractHmacGatewayAdapter;
 import com.homefix.payment.gateway.GatewayChargeRequest;
 import com.homefix.payment.gateway.GatewayChargeResult;
 import com.homefix.payment.gateway.HmacSignatures;
@@ -116,6 +117,8 @@ class BookingPaymentServiceTest {
         assertThat(bookings.pendingCustomers).containsExactly(customerId);
         assertThat(bookings.facts.status()).isEqualTo("PAYMENT_PENDING");
         assertThat(bookings.chargedWhilePending).containsExactly(true);
+        // Recorded so the provider's wallet credit can name the job.
+        assertThat(tx.getBookingReference()).isEqualTo("HF-1001");
     }
 
     @Test
@@ -320,13 +323,18 @@ class BookingPaymentServiceTest {
         }
     }
 
-    /** Real Razorpay adapter that counts charges, can decline, and checks the booking moved first. */
-    private final class CountingRazorpay extends RazorpayGatewayAdapter {
+    /** An HMAC gateway under the razorpay id that counts charges, can decline, and checks the booking moved first. */
+    private final class CountingRazorpay extends AbstractHmacGatewayAdapter {
         int charges;
         boolean accept = true;
 
         CountingRazorpay() {
             super(RAZORPAY_SECRET);
+        }
+
+        @Override
+        public String gatewayId() {
+            return RazorpayGatewayAdapter.GATEWAY_ID;
         }
 
         @Override

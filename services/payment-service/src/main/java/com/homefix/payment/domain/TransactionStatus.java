@@ -11,10 +11,17 @@ import java.util.Set;
  * (Requirement 12.4, Property 12).
  *
  * <pre>
- *   PENDING -&gt; SUCCESS | FAILED
- *   SUCCESS -&gt; REFUNDED | PARTIALLY_REFUNDED
- *   FAILED  -&gt; (terminal)
+ *   PENDING            -&gt; SUCCESS | FAILED
+ *   SUCCESS            -&gt; REFUNDED | PARTIALLY_REFUNDED
+ *   PARTIALLY_REFUNDED -&gt; PARTIALLY_REFUNDED | REFUNDED
+ *   FAILED, REFUNDED   -&gt; (terminal)
  * </pre>
+ *
+ * <p>PARTIALLY_REFUNDED is not terminal: a payment refunded in part can be refunded again, in part
+ * (it stays PARTIALLY_REFUNDED) or for the remainder (it becomes REFUNDED), until the refunded total
+ * reaches the captured amount. {@code PaymentTransaction#checkRefundable} enforces that ceiling; the
+ * refund flow already accepted PARTIALLY_REFUNDED, but the state machine used to refuse every exit
+ * from it, so a second refund was impossible.
  *
  * <p>A transition is permitted <em>if and only if</em> the target state appears in the permitted
  * set for the current state; every other transition is rejected.
@@ -34,7 +41,7 @@ public enum TransactionStatus {
         m.put(SUCCESS, EnumSet.of(REFUNDED, PARTIALLY_REFUNDED));
         m.put(FAILED, EnumSet.noneOf(TransactionStatus.class));
         m.put(REFUNDED, EnumSet.noneOf(TransactionStatus.class));
-        m.put(PARTIALLY_REFUNDED, EnumSet.noneOf(TransactionStatus.class));
+        m.put(PARTIALLY_REFUNDED, EnumSet.of(PARTIALLY_REFUNDED, REFUNDED));
         PERMITTED = Collections.unmodifiableMap(m);
     }
 

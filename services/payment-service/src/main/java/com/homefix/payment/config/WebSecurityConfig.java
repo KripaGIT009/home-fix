@@ -50,7 +50,8 @@ public class WebSecurityConfig {
                                 "/metrics",
                                 "/prometheus",
                                 // Gateway callbacks authenticate by signature, not by JWT.
-                                "/payments/callbacks/**")
+                                "/payments/callbacks/**",
+                                "/payments/webhooks/razorpay")
                         .permitAll()
                         // Everything else requires an authenticated principal; fine-grained
                         // role checks are performed by the shared RbacEnforcementFilter.

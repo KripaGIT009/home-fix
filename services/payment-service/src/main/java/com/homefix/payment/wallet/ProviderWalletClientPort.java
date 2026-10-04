@@ -20,11 +20,15 @@ public interface ProviderWalletClientPort {
      * failed marker clear), so an adapter must apply a repeated credit for the same booking only
      * once.
      *
+     * @param bookingReference the booking's human-readable reference for the earnings line; may be
+     *                         {@code null}
      * @throws WalletCreditException if the credit could not be applied; the caller retries and,
-     *                               on exhaustion, alerts Finance_Admin (Requirement 12.11).
+     *                               on exhaustion, alerts Finance_Admin (Requirement 12.11). One
+     *                               marked {@linkplain WalletCreditException#isPermanent() permanent}
+     *                               will fail the same way however often it is re-sent.
      */
-    void creditEarning(UUID providerId, UUID bookingId, BigDecimal gross, BigDecimal platformFee,
-                       BigDecimal netAmount);
+    void creditEarning(UUID providerId, UUID bookingId, String bookingReference, BigDecimal gross,
+                       BigDecimal platformFee, BigDecimal netAmount);
 
     /**
      * Credits a failed settlement amount back to the provider's wallet (Requirement 14.4).

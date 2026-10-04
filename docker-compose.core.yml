@@ -465,6 +465,10 @@ services:
       # Gateway webhook signing secrets (HMAC-SHA256); no defaults any more.
       RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET:?set RAZORPAY_WEBHOOK_SECRET, see .env.example}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:?set STRIPE_WEBHOOK_SECRET, see .env.example}
+      # Razorpay test-mode keys; optional. Set them and PAYMENT_DEFAULT_GATEWAY=razorpay in .env
+      # to pay through real Razorpay Checkout instead of the simulator.
+      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-}
+      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:-}
       # Payments are priced from the booking, not the client: the Booking Service's internal
       # payment-facts and payment-pending endpoints, called with the shared service credential.
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?set INTERNAL_API_KEY, see .env.example}
@@ -474,7 +478,8 @@ services:
       PROVIDER_SERVICE_URL: http://provider-service:8083
       # Local only: no real gateway can send the signed webhook that settles a payment, so a
       # simulator settles it through the same signed-callback path. Never enabled in Helm.
-      PAYMENT_DEFAULT_GATEWAY: simulator
+      # 'razorpay' works locally too, because Checkout's confirmation settles the payment.
+      PAYMENT_DEFAULT_GATEWAY: ${PAYMENT_DEFAULT_GATEWAY:-simulator}
       PAYMENT_SIMULATOR_ENABLED: "true"
       PAYMENT_SIMULATOR_SECRET: ${PAYMENT_SIMULATOR_SECRET:-local-payment-simulator-secret}
     ports:

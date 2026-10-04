@@ -12,6 +12,7 @@ import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
 
 /**
  * Production {@link ProviderWalletClientPort}: credits a paid booking's earning through the
@@ -22,7 +23,9 @@ import org.springframework.web.client.RestClientException;
  * <p>The Provider Service applies a booking's credit once however often it is sent, which is what
  * the port's at-least-once contract needs. No resilience wrapper here: {@code PaymentService}
  * already retries a failed credit in line and the {@code WalletCreditSweeper} re-sends any credit
- * still owed, so every failure is simply reported as a {@link WalletCreditException}.
+ * still owed, so every failure is simply reported as a {@link WalletCreditException}, marked
+ * permanent when the Provider Service refused the credit for good (see {@link #isPermanentRefusal})
+ * so it is not re-sent forever. The booking's reference travels with the credit for the earnings line.
  *
  * <p>Settlement reversals are not wired: the Provider Service has no credit-back endpoint yet. They
  * are logged, as before, and Finance_Admin is alerted for every failed settlement regardless, so
@@ -58,20 +61,35 @@ public class HttpProviderWalletClientAdapter implements ProviderWalletClientPort
     }
 
     @Override
-    public void creditEarning(UUID providerId, UUID bookingId, BigDecimal gross, BigDecimal platformFee,
-                              BigDecimal netAmount) {
+    public void creditEarning(UUID providerId, UUID bookingId, String bookingReference, BigDecimal gross,
+                              BigDecimal platformFee, BigDecimal netAmount) {
         try {
             restClient.post()
                     .uri("/internal/providers/{providerId}/earnings", providerId)
-                    .body(new CreditRequest(bookingId, null, gross, platformFee))
+                    .body(new CreditRequest(bookingId, bookingReference, gross, platformFee))
                     .retrieve()
                     .toBodilessEntity();
-            log.info("WALLET_CREDIT provider={} booking={} gross={} platformFee={} net={}",
-                    providerId, bookingId, gross, platformFee, netAmount);
+            log.info("WALLET_CREDIT provider={} booking={} reference={} gross={} platformFee={} net={}",
+                    providerId, bookingId, bookingReference, gross, platformFee, netAmount);
+        } catch (RestClientResponseException e) {
+            int status = e.getStatusCode().value();
+            throw new WalletCreditException("Provider Service refused the wallet credit for booking "
+                    + bookingId + " (HTTP " + status + "): " + e.getMessage(), e, isPermanentRefusal(status));
         } catch (RestClientException e) {
             throw new WalletCreditException("Provider Service refused or failed the wallet credit for booking "
                     + bookingId + ": " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Whether the Provider Service's answer is a refusal no re-send can change: 400 (an invalid
+     * credit), 404 (no such provider), 409 (the booking was already credited to another provider) and
+     * 422. Other 4xx are not: 401/403 mean this service's credential is wrong, which an operator
+     * fixes, after which the owed credits must still go through; 408 and 429 are explicitly
+     * retryable.
+     */
+    static boolean isPermanentRefusal(int status) {
+        return status == 400 || status == 404 || status == 409 || status == 422;
     }
 
     @Override

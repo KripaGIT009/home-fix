@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { Alert, Button, Chip, CircularProgress, Stack, Typography } from '@mui/material';
 import PaymentsRoundedIcon from '@mui/icons-material/PaymentsRounded';
 import TaskAltRoundedIcon from '@mui/icons-material/TaskAltRounded';
-import { friendlyErrorMessage } from '@api/client';
+import { friendlyErrorMessage, isApiError } from '@api/client';
 import { formatCurrency } from '@lib/format';
 import type { BookingDetail } from '@features/history/api';
 import { StatePanel } from '@features/tracking/StatePanel';
@@ -177,7 +177,23 @@ function PaymentNotices({ flow }: { flow: PaymentFlow }) {
           Your payment didn&apos;t go through. Please try again, or choose another method.
         </Alert>
       ) : null}
-      {flow.error ? <Alert severity="error">{friendlyErrorMessage(flow.error)}</Alert> : null}
+      {flow.cancelled ? (
+        flow.cancelled.failure ? (
+          <Alert severity="error">
+            Your payment didn&apos;t go through: {flow.cancelled.failure}. You haven&apos;t been
+            charged. Please try again, or choose another method.
+          </Alert>
+        ) : (
+          <Alert severity="info">Payment cancelled. You haven&apos;t been charged.</Alert>
+        )
+      ) : null}
+      {flow.error ? (
+        <Alert severity="error">
+          {isApiError(flow.error)
+            ? friendlyErrorMessage(flow.error)
+            : flow.error.message || friendlyErrorMessage(flow.error)}
+        </Alert>
+      ) : null}
     </>
   );
 }

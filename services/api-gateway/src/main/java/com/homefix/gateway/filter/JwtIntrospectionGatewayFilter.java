@@ -11,8 +11,10 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.server.ServerWebExchange;
+import org.springframework.web.util.UriUtils;
 import reactor.core.publisher.Mono;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 /**
@@ -25,7 +27,12 @@ import java.util.List;
  *
  * <p>A small allow-list of unauthenticated edge endpoints (registration, login, token refresh,
  * health probes) bypasses introspection — these are the entry points that necessarily precede a
- * token existing. Everything else requires a valid token.
+ * token existing. Everything else requires a valid token. A prefix matches whole path segments only
+ * ({@code /auth/login} covers {@code /auth/login/password} but not {@code /auth/loginX}), and it is
+ * matched against the decoded, dot-segment-resolved path, so an encoded or {@code ..}-laden spelling
+ * cannot make a protected path look public. {@code /auth/logout} is deliberately not on the list:
+ * the web and native clients reach the Auth Service directly for it, and through the gateway it
+ * stays behind a valid token.
  *
  * <p>On success the {@link IntrospectionResult} is stored as an exchange attribute so the
  * downstream rate-limit filter can key on the subject and roles without a second introspection.
@@ -38,12 +45,19 @@ public class JwtIntrospectionGatewayFilter implements GlobalFilter, Ordered {
 
     public static final String INTROSPECTION_ATTR = "homefix.introspection";
 
-    /** Path prefixes that are reachable without a JWT (auth entry points + health probes). */
+    /**
+     * Path prefixes that are reachable without a JWT (auth entry points + health probes). Each is
+     * matched as a whole path segment sequence; see {@link #isPublic(String)}. {@code /actuator} and
+     * {@code /health} are listed for completeness: no route forwards them to a backend, and the
+     * gateway's own actuator endpoints are served before routing, so this filter never sees them.
+     */
     private static final List<String> PUBLIC_PREFIXES = List.of(
             "/auth/register",
             "/auth/login",
             "/auth/token/refresh",
             "/auth/introspect",
+            // Razorpay's webhook carries no JWT; the Payment Service verifies its HMAC signature.
+            "/payments/webhooks/razorpay",
             "/actuator",
             "/health");
 
@@ -82,13 +96,40 @@ public class JwtIntrospectionGatewayFilter implements GlobalFilter, Ordered {
                 "UNAUTHORIZED", "Authentication is required to access this resource.");
     }
 
-    static boolean isPublic(String path) {
+    /**
+     * Whether {@code rawPath} may be routed without a token.
+     *
+     * <p>The raw path is decoded, repeated slashes are collapsed and {@code .}/{@code ..} segments
+     * are resolved first, so the decision is made on the path a backend will actually serve. A
+     * prefix then matches only on a segment boundary: the path equals it or continues with
+     * {@code /}. A bare {@code startsWith} would make {@code /auth/loginX} or {@code /healthz}
+     * public. A path that cannot be decoded is never public.
+     */
+    static boolean isPublic(String rawPath) {
+        String path = normalise(rawPath);
+        if (path == null) {
+            return false;
+        }
         for (String prefix : PUBLIC_PREFIXES) {
-            if (path.startsWith(prefix)) {
+            if (path.equals(prefix) || path.startsWith(prefix + "/")) {
                 return true;
             }
         }
         return false;
+    }
+
+    /** Decoded, slash-collapsed, dot-segment-resolved form of {@code rawPath}; null if malformed. */
+    private static String normalise(String rawPath) {
+        if (rawPath == null) {
+            return null;
+        }
+        String decoded;
+        try {
+            decoded = UriUtils.decode(rawPath, StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException malformedEscape) {
+            return null;
+        }
+        return StringUtils.cleanPath(decoded.replaceAll("/{2,}", "/"));
     }
 
     private static String bearerToken(ServerWebExchange exchange) {

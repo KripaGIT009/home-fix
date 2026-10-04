@@ -43,6 +43,9 @@ public class PaymentTransaction {
     /** Column width of {@code failure_reason}; longer reasons are truncated rather than failing the write. */
     public static final int FAILURE_REASON_MAX_LENGTH = 512;
 
+    /** Column width of {@code booking_reference}; a longer reference is not stored. */
+    public static final int BOOKING_REFERENCE_MAX_LENGTH = 64;
+
     @Id
     @Column(name = "id", nullable = false, updatable = false)
     private UUID id;
@@ -56,6 +59,14 @@ public class PaymentTransaction {
 
     @Column(name = "booking_id", nullable = false, updatable = false)
     private UUID bookingId;
+
+    /**
+     * The booking's human-readable reference, as the Booking Service reported it when the payment
+     * was opened. Sent with the provider's wallet credit so the earnings line names the job; may be
+     * {@code null} (payments opened before it was recorded, or a booking without one).
+     */
+    @Column(name = "booking_reference", length = BOOKING_REFERENCE_MAX_LENGTH, updatable = false)
+    private String bookingReference;
 
     @Column(name = "provider_id", nullable = false, updatable = false)
     private UUID providerId;
@@ -118,6 +129,32 @@ public class PaymentTransaction {
     @Column(name = "wallet_credit_pending_since")
     private Instant walletCreditPendingSince;
 
+    /**
+     * Why the Provider Service permanently refused this payment's wallet credit (a 4xx such as an
+     * unknown provider, or a booking already credited to another provider), or {@code null}. Written
+     * together with clearing {@link #walletCreditPendingSince}: a credit that can never succeed is no
+     * longer re-sent forever, but it is not forgotten either; Finance_Admin is alerted and
+     * reconciles it by hand.
+     */
+    @Column(name = "wallet_credit_failure", length = FAILURE_REASON_MAX_LENGTH)
+    private String walletCreditFailure;
+
+    /**
+     * Gateway event id of a signed SUCCEEDED callback that arrived after this attempt was already
+     * FAILED, or {@code null}. Such a callback means the gateway captured money on an attempt this
+     * service had given up on (a charge still in flight when the attempt was failed, or a gateway
+     * that reported a failure before the capture). It cannot be applied as a success, because a later
+     * attempt may already have charged the customer for the booking, so it is recorded here and
+     * Finance_Admin is alerted to refund or reconcile it; see
+     * {@code PaymentService#handleGatewayCallback}.
+     */
+    @Column(name = "late_capture_event_id", length = 128)
+    private String lateCaptureEventId;
+
+    /** When {@link #lateCaptureEventId} was recorded. */
+    @Column(name = "late_captured_at")
+    private Instant lateCapturedAt;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -132,13 +169,16 @@ public class PaymentTransaction {
         // JPA
     }
 
-    private PaymentTransaction(String idempotencyKey, UUID customerId, UUID bookingId, UUID providerId,
-                               BigDecimal amount, BigDecimal platformFee, PaymentMethod method,
-                               String gateway, String paymentCredentialEncrypted) {
+    private PaymentTransaction(String idempotencyKey, UUID customerId, UUID bookingId,
+                               String bookingReference, UUID providerId, BigDecimal amount,
+                               BigDecimal platformFee, PaymentMethod method, String gateway,
+                               String paymentCredentialEncrypted) {
         this.id = UUID.randomUUID();
         this.idempotencyKey = idempotencyKey;
         this.customerId = customerId;
         this.bookingId = bookingId;
+        this.bookingReference = bookingReference != null
+                && bookingReference.length() <= BOOKING_REFERENCE_MAX_LENGTH ? bookingReference : null;
         this.providerId = providerId;
         this.amount = amount;
         this.platformFee = platformFee;
@@ -156,8 +196,17 @@ public class PaymentTransaction {
                                               UUID providerId, BigDecimal amount, BigDecimal platformFee,
                                               PaymentMethod method, String gateway,
                                               String paymentCredentialEncrypted) {
-        return new PaymentTransaction(idempotencyKey, customerId, bookingId, providerId, amount,
-                platformFee, method, gateway, paymentCredentialEncrypted);
+        return initiate(idempotencyKey, customerId, bookingId, null, providerId, amount, platformFee,
+                method, gateway, paymentCredentialEncrypted);
+    }
+
+    /** As the overload without it, also recording the booking's human-readable reference. */
+    public static PaymentTransaction initiate(String idempotencyKey, UUID customerId, UUID bookingId,
+                                              String bookingReference, UUID providerId, BigDecimal amount,
+                                              BigDecimal platformFee, PaymentMethod method, String gateway,
+                                              String paymentCredentialEncrypted) {
+        return new PaymentTransaction(idempotencyKey, customerId, bookingId, bookingReference, providerId,
+                amount, platformFee, method, gateway, paymentCredentialEncrypted);
     }
 
     /**
@@ -184,10 +233,31 @@ public class PaymentTransaction {
      * than the column are truncated so a verbose gateway message cannot fail the whole write.
      */
     public void recordFailureReason(String reason) {
-        this.failureReason = reason != null && reason.length() > FAILURE_REASON_MAX_LENGTH
+        this.failureReason = truncateReason(reason);
+        this.updatedAt = Instant.now();
+    }
+
+    /** Truncates a reason to the width of the reason columns. */
+    public static String truncateReason(String reason) {
+        return reason != null && reason.length() > FAILURE_REASON_MAX_LENGTH
                 ? reason.substring(0, FAILURE_REASON_MAX_LENGTH)
                 : reason;
-        this.updatedAt = Instant.now();
+    }
+
+    /**
+     * Records a signed SUCCEEDED callback that arrived after this attempt was FAILED (see
+     * {@link #lateCaptureEventId}). The status stays FAILED; only the first such event is kept.
+     *
+     * @return {@code true} if this is the first late capture recorded, {@code false} if one already was
+     */
+    public boolean recordLateCapture(String eventId) {
+        if (lateCaptureEventId != null) {
+            return false;
+        }
+        this.lateCaptureEventId = eventId;
+        this.lateCapturedAt = Instant.now();
+        this.updatedAt = this.lateCapturedAt;
+        return true;
     }
 
     /** Records the gateway event id of the signed callback being applied (Requirement 12.5). */
@@ -290,6 +360,10 @@ public class PaymentTransaction {
         return bookingId;
     }
 
+    public String getBookingReference() {
+        return bookingReference;
+    }
+
     public UUID getProviderId() {
         return providerId;
     }
@@ -340,6 +414,28 @@ public class PaymentTransaction {
 
     public Instant getWalletCreditPendingSince() {
         return walletCreditPendingSince;
+    }
+
+    public String getWalletCreditFailure() {
+        return walletCreditFailure;
+    }
+
+    /**
+     * Marks the wallet credit as permanently refused: no longer owed, with the reason kept. The
+     * service writes this through {@link PaymentTransactionRepository#markWalletCreditFailed} so the
+     * write does not bump {@code version}; this is the in-memory equivalent of that update.
+     */
+    public void markWalletCreditFailed(String reason) {
+        this.walletCreditPendingSince = null;
+        this.walletCreditFailure = truncateReason(reason);
+    }
+
+    public String getLateCaptureEventId() {
+        return lateCaptureEventId;
+    }
+
+    public Instant getLateCapturedAt() {
+        return lateCapturedAt;
     }
 
     public Instant getCreatedAt() {

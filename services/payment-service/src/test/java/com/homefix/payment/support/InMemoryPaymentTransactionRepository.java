@@ -112,6 +112,16 @@ public class InMemoryPaymentTransactionRepository implements PaymentTransactionR
     }
 
     @Override
+    public int markWalletCreditFailed(UUID id, String reason) {
+        PaymentTransaction tx = store.get(id);
+        if (tx == null) {
+            return 0;
+        }
+        tx.markWalletCreditFailed(reason);
+        return 1;
+    }
+
+    @Override
     public <S extends PaymentTransaction> S save(S entity) {
         store.put(entity.getId(), entity);
         return entity;

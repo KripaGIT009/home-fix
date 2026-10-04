@@ -18,6 +18,8 @@ secrets:
   env:
     JWT_SECRET: jwt_secret
     KMS_DATA_KEY: kms_data_key
+    RAZORPAY_KEY_ID: razorpay_key_id
+    RAZORPAY_KEY_SECRET: razorpay_key_secret
     RAZORPAY_WEBHOOK_SECRET: razorpay_webhook_secret
     STRIPE_WEBHOOK_SECRET: stripe_webhook_secret
     # Presented to the Booking Service's internal payment endpoints.

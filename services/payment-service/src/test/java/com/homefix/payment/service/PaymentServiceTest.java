@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
@@ -40,6 +41,7 @@ import com.homefix.payment.domain.RefundStatus;
 import com.homefix.payment.domain.Settlement;
 import com.homefix.payment.domain.SettlementStatus;
 import com.homefix.payment.domain.TransactionStatus;
+import com.homefix.payment.gateway.AbstractHmacGatewayAdapter;
 import com.homefix.payment.gateway.GatewayChargeRequest;
 import com.homefix.payment.gateway.GatewayChargeResult;
 import com.homefix.payment.gateway.GatewayRefundRequest;
@@ -393,7 +395,7 @@ class PaymentServiceTest {
             // State remains PENDING; no event published; no wallet credit.
             assertThat(stored(tx).getStatus()).isEqualTo(TransactionStatus.PENDING);
             assertThat(publisher.published()).isEmpty();
-            verify(walletClient, never()).creditEarning(any(), any(), any(), any(), any());
+            verify(walletClient, never()).creditEarning(any(), any(), any(), any(), any(), any());
         }
 
         @Test
@@ -568,7 +570,7 @@ class PaymentServiceTest {
             // Side effects happened exactly once.
             assertThat(publisher.published()).hasSize(1);
             verify(invoiceTrigger, times(1)).triggerInvoiceGeneration(any(), any());
-            verify(walletClient, times(1)).creditEarning(any(), any(), any(), any(), any());
+            verify(walletClient, times(1)).creditEarning(any(), any(), any(), any(), any(), any());
         }
 
         @Test
@@ -592,15 +594,45 @@ class PaymentServiceTest {
             assertThat(stored(tx).getStatus()).isEqualTo(TransactionStatus.SUCCESS);
         }
 
+        /**
+         * A capture reported after the attempt FAILED used to be refused with 409, leaving money
+         * taken with no record. It is now accepted and recorded, the attempt stays FAILED (a later
+         * attempt may already be paid), nothing downstream runs, and Finance_Admin is alerted once.
+         */
         @Test
-        void successCallbackAfterFailure_isRejectedAsConflict() {
+        void successCallbackAfterFailure_isRecordedAsLateCapture_andAlertsFinanceOnce() {
             PaymentTransaction tx = initiate("100.00", "20.00");
             service.handleGatewayCallback(tx.getId(), razorpayCallback(failurePayload(tx, "declined")));
 
-            assertThatThrownBy(() -> succeed(tx))
-                    .satisfies(ex -> assertPaymentError(ex, HttpStatus.CONFLICT, "CALLBACK_CONFLICT"));
-            assertThat(stored(tx).getStatus()).isEqualTo(TransactionStatus.FAILED);
+            PaymentTransaction result = succeed(tx);
+
+            assertThat(result.getStatus()).isEqualTo(TransactionStatus.FAILED);
+            assertThat(stored(tx).getLateCaptureEventId()).startsWith("evt_");
+            assertThat(stored(tx).getLateCapturedAt()).isNotNull();
             assertThat(publisher.published()).isEmpty();
+            verify(walletClient, never()).creditEarning(any(), any(), any(), any(), any(), any());
+            verify(financeAlert).lateCapture(eq(tx.getId()), eq(tx.getBookingId()),
+                    eq(new BigDecimal("100.00")), any());
+
+            // A re-delivery (or another SUCCEEDED event) is a no-op: the first capture stays recorded.
+            String first = stored(tx).getLateCaptureEventId();
+            succeed(tx);
+            assertThat(stored(tx).getLateCaptureEventId()).isEqualTo(first);
+            verify(financeAlert, times(1)).lateCapture(any(), any(), any(), any());
+        }
+
+        /** The incident: an attempt failed through the retries endpoint whose charge then succeeded. */
+        @Test
+        void successCallbackForAnAttemptFailedByRetries_isRecordedAsLateCapture() {
+            props.setMaxCustomerRetries(2);
+            props.setPendingChargeTimeout(Duration.ZERO);
+            PaymentTransaction tx = initiate("100.00", "20.00");
+            assertThat(service.retryPayment(tx.getId(), "customer gave up").getStatus())
+                    .isEqualTo(TransactionStatus.FAILED);
+
+            assertThat(succeed(tx).getStatus()).isEqualTo(TransactionStatus.FAILED);
+            assertThat(stored(tx).getLateCaptureEventId()).isNotNull();
+            verify(financeAlert).lateCapture(eq(tx.getId()), eq(tx.getBookingId()), any(), any());
         }
 
         @Test
@@ -637,7 +669,7 @@ class PaymentServiceTest {
 
             assertThat(result.getStatus()).isEqualTo(TransactionStatus.SUCCESS);
             // The winning delivery owns the side effects; the loser must not repeat them.
-            verify(walletClient, never()).creditEarning(any(), any(), any(), any(), any());
+            verify(walletClient, never()).creditEarning(any(), any(), any(), any(), any(), any());
         }
     }
 
@@ -653,7 +685,7 @@ class PaymentServiceTest {
             doAnswer(inv -> invoiceInTx.add(MarkingTransactionOperations.inTransaction()))
                     .when(invoiceTrigger).triggerInvoiceGeneration(any(), any());
             doAnswer(inv -> walletInTx.add(MarkingTransactionOperations.inTransaction()))
-                    .when(walletClient).creditEarning(any(), any(), any(), any(), any());
+                    .when(walletClient).creditEarning(any(), any(), any(), any(), any(), any());
             PaymentTransaction tx = initiate("100.00", "20.00");
 
             succeed(tx);
@@ -706,7 +738,7 @@ class PaymentServiceTest {
 
             // Net = 100 - 15 = 85; credited exactly once.
             verify(walletClient, times(1)).creditEarning(
-                    eq(providerId), eq(tx.getBookingId()),
+                    eq(providerId), eq(tx.getBookingId()), isNull(),
                     eq(new BigDecimal("100.00")), eq(new BigDecimal("15.00")),
                     eq(new BigDecimal("85.00")));
         }
@@ -722,7 +754,7 @@ class PaymentServiceTest {
 
             succeed(tx);
 
-            verify(walletClient).creditEarning(eq(providerId), eq(tx.getBookingId()),
+            verify(walletClient).creditEarning(eq(providerId), eq(tx.getBookingId()), isNull(),
                     eq(new BigDecimal("200.00")), eq(new BigDecimal("40.00")),
                     eq(new BigDecimal("160.00")));
         }
@@ -745,12 +777,12 @@ class PaymentServiceTest {
                     UUID.randomUUID(), UUID.randomUUID(), providerId, "100.00", "10.00"));
 
             doThrow(new WalletCreditException("wallet down"))
-                    .when(walletClient).creditEarning(any(), any(), any(), any(), any());
+                    .when(walletClient).creditEarning(any(), any(), any(), any(), any(), any());
 
             succeed(tx);
 
             // 3 attempts made, then Finance_Admin alerted.
-            verify(walletClient, times(3)).creditEarning(any(), any(), any(), any(), any());
+            verify(walletClient, times(3)).creditEarning(any(), any(), any(), any(), any(), any());
             verify(financeAlert).walletCreditFailed(eq(providerId), eq(tx.getBookingId()),
                     eq(new BigDecimal("90.00")), any());
         }
@@ -765,7 +797,7 @@ class PaymentServiceTest {
             PaymentTransaction tx = initiate("100.00", "10.00");
             assertThat(stored(tx).isWalletCreditPending()).isFalse();
             doAnswer(inv -> owedWhenCredited.add(stored(tx).isWalletCreditPending()))
-                    .when(walletClient).creditEarning(any(), any(), any(), any(), any());
+                    .when(walletClient).creditEarning(any(), any(), any(), any(), any(), any());
 
             succeed(tx);
 
@@ -781,15 +813,15 @@ class PaymentServiceTest {
             PaymentTransaction tx = service.initiatePayment(paymentCmd(
                     UUID.randomUUID(), UUID.randomUUID(), providerId, "100.00", "10.00"));
             doThrow(new WalletCreditException("wallet down"))
-                    .when(walletClient).creditEarning(any(), any(), any(), any(), any());
+                    .when(walletClient).creditEarning(any(), any(), any(), any(), any(), any());
             succeed(tx);
             assertThat(stored(tx).isWalletCreditPending()).isTrue();
 
-            doNothing().when(walletClient).creditEarning(any(), any(), any(), any(), any());
+            doNothing().when(walletClient).creditEarning(any(), any(), any(), any(), any(), any());
             assertThat(service.retryPendingWalletCredits()).isEqualTo(1);
 
             assertThat(stored(tx).isWalletCreditPending()).isFalse();
-            verify(walletClient, times(4)).creditEarning(eq(providerId), eq(tx.getBookingId()),
+            verify(walletClient, times(4)).creditEarning(eq(providerId), eq(tx.getBookingId()), isNull(),
                     eq(new BigDecimal("100.00")), eq(new BigDecimal("10.00")), eq(new BigDecimal("90.00")));
             // Nothing left to sweep.
             assertThat(service.retryPendingWalletCredits()).isZero();
@@ -799,13 +831,74 @@ class PaymentServiceTest {
         void sweep_leavesCreditsYoungerThanTheMinimumAgeToTheInlineRetries() {
             props.setWalletCreditSweepMinAge(Duration.ofMinutes(5));
             doThrow(new WalletCreditException("wallet down"))
-                    .when(walletClient).creditEarning(any(), any(), any(), any(), any());
+                    .when(walletClient).creditEarning(any(), any(), any(), any(), any(), any());
             PaymentTransaction tx = succeed(initiate("100.00", "10.00"));
 
             assertThat(service.retryPendingWalletCredits()).isZero();
             verify(walletClient, times(props.getMaxWalletCreditRetries()))
-                    .creditEarning(any(), any(), any(), any(), any());
+                    .creditEarning(any(), any(), any(), any(), any(), any());
             assertThat(stored(tx).isWalletCreditPending()).isTrue();
+        }
+
+        /**
+         * Review finding: a credit the Provider Service refuses for good (here a 404 for an unknown
+         * provider) was re-sent every sweep forever. It is now marked failed with its reason, stops
+         * being owed, and Finance_Admin is alerted.
+         */
+        @Test
+        void sweep_marksAPermanentlyRefusedCreditFailed_andStopsResendingIt() {
+            props.setWalletCreditSweepMinAge(Duration.ZERO);
+            UUID providerId = UUID.randomUUID();
+            PaymentTransaction tx = service.initiatePayment(paymentCmd(
+                    UUID.randomUUID(), UUID.randomUUID(), providerId, "100.00", "10.00"));
+            doThrow(new WalletCreditException("wallet down"))
+                    .when(walletClient).creditEarning(any(), any(), any(), any(), any(), any());
+            succeed(tx);
+            assertThat(stored(tx).isWalletCreditPending()).isTrue();
+
+            doThrow(new WalletCreditException("HTTP 404 PROVIDER_NOT_FOUND", null, true))
+                    .when(walletClient).creditEarning(any(), any(), any(), any(), any(), any());
+            assertThat(service.retryPendingWalletCredits()).isZero();
+
+            assertThat(stored(tx).isWalletCreditPending()).isFalse();
+            assertThat(stored(tx).getWalletCreditFailure()).contains("PROVIDER_NOT_FOUND");
+            verify(financeAlert).walletCreditFailed(eq(providerId), eq(tx.getBookingId()),
+                    eq(new BigDecimal("90.00")), eq("HTTP 404 PROVIDER_NOT_FOUND"));
+            // Nothing is owed any more, so the next sweep sends nothing.
+            int callsSoFar = props.getMaxWalletCreditRetries() + 1;
+            assertThat(service.retryPendingWalletCredits()).isZero();
+            verify(walletClient, times(callsSoFar)).creditEarning(any(), any(), any(), any(), any(), any());
+        }
+
+        @Test
+        void inlinePermanentRefusal_marksTheCreditFailedInsteadOfLeavingItToTheSweep() {
+            UUID providerId = UUID.randomUUID();
+            PaymentTransaction tx = service.initiatePayment(paymentCmd(
+                    UUID.randomUUID(), UUID.randomUUID(), providerId, "100.00", "10.00"));
+            doThrow(new WalletCreditException("HTTP 409 EARNING_BOOKING_CONFLICT", null, true))
+                    .when(walletClient).creditEarning(any(), any(), any(), any(), any(), any());
+
+            succeed(tx);
+
+            assertThat(stored(tx).getStatus()).isEqualTo(TransactionStatus.SUCCESS);
+            assertThat(stored(tx).isWalletCreditPending()).isFalse();
+            assertThat(stored(tx).getWalletCreditFailure()).contains("EARNING_BOOKING_CONFLICT");
+            verify(financeAlert).walletCreditFailed(eq(providerId), eq(tx.getBookingId()), any(), any());
+        }
+
+        /** The credit carries the booking reference recorded when the payment was opened. */
+        @Test
+        void credit_carriesTheBookingReference() {
+            UUID providerId = UUID.randomUUID();
+            PaymentTransaction tx = service.initiatePayment(new InitiatePaymentCommand(
+                    UUID.randomUUID(), UUID.randomUUID(), providerId, new BigDecimal("100.00"),
+                    new BigDecimal("10.00"), PaymentMethod.UPI, RAZORPAY, null, "HF-20261003-0042"));
+            assertThat(tx.getBookingReference()).isEqualTo("HF-20261003-0042");
+
+            succeed(tx);
+
+            verify(walletClient).creditEarning(eq(providerId), eq(tx.getBookingId()), eq("HF-20261003-0042"),
+                    eq(new BigDecimal("100.00")), eq(new BigDecimal("10.00")), eq(new BigDecimal("90.00")));
         }
 
         @Test
@@ -816,13 +909,13 @@ class PaymentServiceTest {
                     UUID.randomUUID(), UUID.randomUUID(), unluckyProvider, "100.00", "10.00"));
             PaymentTransaction lucky = initiate("50.00", "5.00");
             doThrow(new WalletCreditException("wallet down"))
-                    .when(walletClient).creditEarning(any(), any(), any(), any(), any());
+                    .when(walletClient).creditEarning(any(), any(), any(), any(), any(), any());
             succeed(unlucky);
             succeed(lucky);
 
-            doNothing().when(walletClient).creditEarning(any(), any(), any(), any(), any());
+            doNothing().when(walletClient).creditEarning(any(), any(), any(), any(), any(), any());
             doThrow(new WalletCreditException("provider wallet locked"))
-                    .when(walletClient).creditEarning(eq(unluckyProvider), any(), any(), any(), any());
+                    .when(walletClient).creditEarning(eq(unluckyProvider), any(), any(), any(), any(), any());
 
             assertThat(service.retryPendingWalletCredits()).isEqualTo(1);
             assertThat(stored(unlucky).isWalletCreditPending()).isTrue();
@@ -844,7 +937,7 @@ class PaymentServiceTest {
             PaymentTransaction result = svc.handleGatewayCallback(tx.getId(), razorpayCallback(successPayload(tx)));
 
             assertThat(result.getStatus()).isEqualTo(TransactionStatus.SUCCESS);
-            verify(walletClient).creditEarning(any(), any(), any(), any(), any());
+            verify(walletClient).creditEarning(any(), any(), any(), any(), any(), any());
             // Still marked owed: the sweep re-sends it, and the wallet de-duplicates per booking.
             assertThat(result.isWalletCreditPending()).isTrue();
         }
@@ -911,6 +1004,9 @@ class PaymentServiceTest {
             assertThat(TransactionStatus.SUCCESS.permittedTargets())
                     .containsExactlyInAnyOrder(TransactionStatus.REFUNDED,
                             TransactionStatus.PARTIALLY_REFUNDED);
+            assertThat(TransactionStatus.PARTIALLY_REFUNDED.permittedTargets())
+                    .containsExactlyInAnyOrder(TransactionStatus.PARTIALLY_REFUNDED,
+                            TransactionStatus.REFUNDED);
             assertThat(TransactionStatus.FAILED.isTerminal()).isTrue();
             assertThat(TransactionStatus.REFUNDED.isTerminal()).isTrue();
         }
@@ -924,6 +1020,7 @@ class PaymentServiceTest {
         @Test
         void reachingMaxAttempts_marksPermanentlyFailed() {
             props.setMaxCustomerRetries(3);
+            props.setPendingChargeTimeout(Duration.ZERO); // the charge is no longer in flight
             PaymentTransaction tx = initiate("100.00", "10.00"); // attemptCount starts at 1
 
             service.retryPayment(tx.getId(), "declined"); // attempt 2
@@ -939,6 +1036,27 @@ class PaymentServiceTest {
             PaymentTransaction tx = initiate("100.00", "10.00"); // attempt 1
             PaymentTransaction afterSecond = service.retryPayment(tx.getId(), "declined"); // attempt 2
             assertThat(afterSecond.getStatus()).isEqualTo(TransactionStatus.PENDING);
+        }
+
+        /**
+         * The retry that would fail a charge still in flight is refused and records nothing, so no
+         * second attempt can open while the first can still be captured, and its SUCCEEDED callback
+         * is still applied normally.
+         */
+        @Test
+        void retryThatWouldFailAChargeStillInFlight_isRefused_andTheLateSuccessStillApplies() {
+            props.setMaxCustomerRetries(3);
+            props.setPendingChargeTimeout(Duration.ofMinutes(30));
+            PaymentTransaction tx = initiate("100.00", "10.00"); // attempt 1
+            service.retryPayment(tx.getId(), "declined"); // attempt 2: not yet the last one
+
+            assertThatThrownBy(() -> service.retryPayment(tx.getId(), "declined"))
+                    .satisfies(ex -> assertPaymentError(ex, HttpStatus.CONFLICT, "PAYMENT_IN_FLIGHT"));
+            assertThat(stored(tx).getStatus()).isEqualTo(TransactionStatus.PENDING);
+            assertThat(stored(tx).getAttemptCount()).isEqualTo(2);
+
+            assertThat(succeed(tx).getStatus()).isEqualTo(TransactionStatus.SUCCESS);
+            assertThat(publisher.published()).hasSize(1);
         }
     }
 
@@ -997,19 +1115,48 @@ class PaymentServiceTest {
         }
 
         /**
-         * PARTIALLY_REFUNDED is terminal in the state machine, so a second refund cannot be
-         * recorded. Previously the gateway still refunded before that was discovered.
+         * A partially refunded payment can be refunded again, in part and then for the remainder.
+         * PARTIALLY_REFUNDED used to be terminal, so every second refund answered 409.
          */
         @Test
-        void refundOfPartiallyRefundedTransaction_isRejectedBeforeTheGatewayIsCalled() {
+        void partiallyRefundedTransaction_canBeRefundedAgainUpToTheCapturedAmount() {
             PaymentTransaction tx = succeeded("100.00", "10.00");
             service.refund(tx.getId(), new BigDecimal("40.00"), "rf-1");
 
-            assertThatThrownBy(() -> service.refund(tx.getId(), new BigDecimal("10.00"), "rf-2"))
-                    .satisfies(ex -> assertPaymentError(ex, HttpStatus.CONFLICT, "INVALID_STATE_TRANSITION"));
+            PaymentTransaction second = service.refund(tx.getId(), new BigDecimal("10.00"), "rf-2");
+            assertThat(second.getStatus()).isEqualTo(TransactionStatus.PARTIALLY_REFUNDED);
+            assertThat(second.getRefundedAmount()).isEqualByComparingTo("50.00");
+
+            PaymentTransaction last = service.refund(tx.getId(), new BigDecimal("50.00"), "rf-3");
+            assertThat(last.getStatus()).isEqualTo(TransactionStatus.REFUNDED);
+            assertThat(last.getRefundedAmount()).isEqualByComparingTo("100.00");
+            assertThat(razorpay.refunds).hasSize(3);
+        }
+
+        /** A further refund past the captured amount is refused before the gateway moves money. */
+        @Test
+        void furtherRefundBeyondTheCapturedAmount_isRejectedBeforeTheGatewayIsCalled() {
+            PaymentTransaction tx = succeeded("100.00", "10.00");
+            service.refund(tx.getId(), new BigDecimal("40.00"), "rf-1");
+
+            assertThatThrownBy(() -> service.refund(tx.getId(), new BigDecimal("60.01"), "rf-2"))
+                    .satisfies(ex -> assertPaymentError(ex, HttpStatus.BAD_REQUEST, "VALIDATION_ERROR"));
 
             assertThat(razorpay.refunds).hasSize(1);
             assertThat(stored(tx).getRefundedAmount()).isEqualByComparingTo("40.00");
+            assertThat(stored(tx).getStatus()).isEqualTo(TransactionStatus.PARTIALLY_REFUNDED);
+        }
+
+        /** A fully refunded payment is terminal: nothing more can be refunded. */
+        @Test
+        void refundOfFullyRefundedTransaction_isRejectedBeforeTheGatewayIsCalled() {
+            PaymentTransaction tx = succeeded("100.00", "10.00");
+            service.refund(tx.getId(), new BigDecimal("100.00"), "rf-1");
+
+            assertThatThrownBy(() -> service.refund(tx.getId(), new BigDecimal("1.00"), "rf-2"))
+                    .isInstanceOf(PaymentException.class);
+
+            assertThat(razorpay.refunds).hasSize(1);
         }
 
         @Test
@@ -1463,7 +1610,7 @@ class PaymentServiceTest {
             assertThat(publisher.published()).singleElement()
                     .satisfies(published -> assertThat(published.getId()).isEqualTo(tx.getId()));
             verify(invoiceTrigger).triggerInvoiceGeneration(tx.getId(), tx.getBookingId());
-            verify(walletClient).creditEarning(tx.getProviderId(), tx.getBookingId(),
+            verify(walletClient).creditEarning(tx.getProviderId(), tx.getBookingId(), null,
                     new BigDecimal("250.00"), new BigDecimal("50.00"), new BigDecimal("200.00"));
             assertThat(stored(tx).isWalletCreditPending()).isFalse();
         }
@@ -1541,7 +1688,7 @@ class PaymentServiceTest {
      * Real Razorpay adapter (real HMAC verification) that records every gateway request, whether a
      * transaction was open when it arrived, and can be told to decline, fail or throw.
      */
-    private static final class SpyGateway extends RazorpayGatewayAdapter {
+    private static final class SpyGateway extends AbstractHmacGatewayAdapter {
         final List<GatewayChargeRequest> charges = new ArrayList<>();
         final List<GatewayRefundRequest> refunds = new ArrayList<>();
         final List<Boolean> chargeInTransaction = new ArrayList<>();
@@ -1557,6 +1704,11 @@ class PaymentServiceTest {
 
         SpyGateway() {
             super(RAZORPAY_SECRET);
+        }
+
+        @Override
+        public String gatewayId() {
+            return RazorpayGatewayAdapter.GATEWAY_ID;
         }
 
         @Override

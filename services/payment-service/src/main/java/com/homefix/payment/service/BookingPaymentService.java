@@ -103,8 +103,8 @@ public class BookingPaymentService {
         String gatewayId = cmd.gatewayId() == null || cmd.gatewayId().isBlank()
                 ? props.getDefaultGateway()
                 : cmd.gatewayId();
-        // Fail an unknown gateway before the booking is moved on.
-        gatewayRegistry.require(gatewayId);
+        // Fail an unknown or unconfigured gateway before the booking is moved on.
+        gatewayRegistry.requireReady(gatewayId);
 
         BookingPaymentFacts pending = bookingClient.markPaymentPending(bookingId, customerId);
         // The facts as of the move are the ones charged; they cannot name another customer.
@@ -116,7 +116,8 @@ public class BookingPaymentService {
         return paymentService.initiatePayment(new InitiatePaymentCommand(
                 customerId, bookingId, pending.providerId(), pending.amount(),
                 null, // platform fee from the default-percentage rule (Requirement 12.10)
-                cmd.method(), gatewayId, cmd.rawPaymentCredential()));
+                cmd.method(), gatewayId, cmd.rawPaymentCredential(),
+                pending.reference() != null ? pending.reference() : facts.reference()));
     }
 
     /** A booking without a provider or a positive amount cannot be charged. */

@@ -68,3 +68,52 @@ export async function payForBooking(
   const { data } = await apiClient.post<PaymentTransaction>('/payments', { bookingId, method });
   return data;
 }
+
+/**
+ * Whether the payment is waiting for the customer to pay in Razorpay
+ * Checkout: the Payment Service opened it on Razorpay and nothing has been
+ * paid yet.
+ */
+export function awaitsRazorpayCheckout(tx: PaymentTransaction): boolean {
+  return tx.gateway === 'razorpay' && tx.status === 'PENDING';
+}
+
+/** What Razorpay Checkout is opened with, for a payment awaiting it. */
+export interface RazorpayCheckout {
+  keyId: string;
+  orderId: string;
+  /** In paise. */
+  amount: number;
+  currency: string;
+  /** The booking reference. */
+  description: string | null;
+}
+
+/** GET /payments/{id}/razorpay/checkout — 409 once the payment no longer awaits Checkout. */
+export async function fetchRazorpayCheckout(transactionId: string): Promise<RazorpayCheckout> {
+  const { data } = await apiClient.get<RazorpayCheckout>(
+    `/payments/${transactionId}/razorpay/checkout`,
+  );
+  return data;
+}
+
+/**
+ * POST /payments/{id}/razorpay/verify — hands the Payment Service what
+ * Checkout returned. It checks the signature and reads the payment back from
+ * Razorpay, then answers with the transaction (SUCCESS, or still PENDING if
+ * Razorpay has not captured it yet).
+ */
+export async function confirmRazorpayPayment(
+  transactionId: string,
+  result: { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string },
+): Promise<PaymentTransaction> {
+  const { data } = await apiClient.post<PaymentTransaction>(
+    `/payments/${transactionId}/razorpay/verify`,
+    {
+      razorpayOrderId: result.razorpay_order_id,
+      razorpayPaymentId: result.razorpay_payment_id,
+      razorpaySignature: result.razorpay_signature,
+    },
+  );
+  return data;
+}

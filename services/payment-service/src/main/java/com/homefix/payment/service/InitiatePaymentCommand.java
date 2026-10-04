@@ -18,6 +18,8 @@ import com.homefix.payment.domain.PaymentMethod;
  * @param gatewayId                target gateway id (e.g. "razorpay", "stripe")
  * @param rawPaymentCredential     optional gateway credential token to store encrypted; must never
  *                                 be a raw card number (Requirement 12.9)
+ * @param bookingReference         the booking's human-readable reference, sent with the provider's
+ *                                 wallet credit so the earnings line names the job; optional
  */
 public record InitiatePaymentCommand(
         UUID customerId,
@@ -27,5 +29,14 @@ public record InitiatePaymentCommand(
         BigDecimal platformFee,
         PaymentMethod method,
         String gatewayId,
-        String rawPaymentCredential) {
+        String rawPaymentCredential,
+        String bookingReference) {
+
+    /** A command without a booking reference. */
+    public InitiatePaymentCommand(UUID customerId, UUID bookingId, UUID providerId, BigDecimal amount,
+                                  BigDecimal platformFee, PaymentMethod method, String gatewayId,
+                                  String rawPaymentCredential) {
+        this(customerId, bookingId, providerId, amount, platformFee, method, gatewayId,
+                rawPaymentCredential, null);
+    }
 }

@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
 import com.homefix.payment.service.PaymentException;
@@ -34,6 +35,22 @@ public class PaymentGatewayRegistry {
         if (gateway == null) {
             throw PaymentException.validation(
                     "Unknown payment gateway '" + gatewayId + "'; registered: " + byId.keySet());
+        }
+        return gateway;
+    }
+
+    /**
+     * Like {@link #require}, for opening a new payment: the gateway must also be
+     * {@linkplain PaymentGatewayPort#isReady() ready}.
+     *
+     * @throws PaymentException 400 if no such gateway is registered, 503
+     *                          {@code PAYMENT_GATEWAY_NOT_CONFIGURED} if it is not ready.
+     */
+    public PaymentGatewayPort requireReady(String gatewayId) {
+        PaymentGatewayPort gateway = require(gatewayId);
+        if (!gateway.isReady()) {
+            throw new PaymentException(HttpStatus.SERVICE_UNAVAILABLE, "PAYMENT_GATEWAY_NOT_CONFIGURED",
+                    "Payments through '" + gatewayId + "' are not available right now");
         }
         return gateway;
     }

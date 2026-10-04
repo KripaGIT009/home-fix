@@ -18,4 +18,11 @@ public interface FinanceAlertPort {
 
     /** A settlement bank transfer failed and needs manual review (Requirement 14.4). */
     void settlementFailed(UUID providerId, UUID settlementId, BigDecimal amount, String reason);
+
+    /**
+     * The gateway reported a successful capture on a payment attempt that was already FAILED: the
+     * customer's money was taken but the attempt cannot be recorded as paid. Finance_Admin must
+     * refund it (or reconcile it against the booking) by hand (Requirement 12.5, 12.7).
+     */
+    void lateCapture(UUID paymentId, UUID bookingId, BigDecimal amount, String reason);
 }

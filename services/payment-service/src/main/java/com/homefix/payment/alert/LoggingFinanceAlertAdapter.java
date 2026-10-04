@@ -33,4 +33,10 @@ public class LoggingFinanceAlertAdapter implements FinanceAlertPort {
         log.error("FINANCE_ALERT settlement_failed provider={} settlement={} amount={} reason={}",
                 providerId, settlementId, amount, reason);
     }
+
+    @Override
+    public void lateCapture(UUID paymentId, UUID bookingId, BigDecimal amount, String reason) {
+        log.error("FINANCE_ALERT late_capture payment={} booking={} amount={} reason={}",
+                paymentId, bookingId, amount, reason);
+    }
 }
