@@ -23,12 +23,29 @@ export function ActiveJobCard({ job, onOpen }: ActiveJobCardProps) {
     <Card variant="outlined">
       <CardActionArea onClick={() => onOpen(job.bookingId)}>
         <CardContent>
-          <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
+          <Stack
+            direction="row"
+            spacing={1}
+            sx={{
+              justifyContent: 'space-between',
+              alignItems: 'flex-start',
+            }}
+          >
             <Stack spacing={0.25}>
-              <Typography variant="subtitle1" fontWeight={700}>
+              <Typography
+                variant="subtitle1"
+                sx={{
+                  fontWeight: 700,
+                }}
+              >
                 {job.serviceName}
               </Typography>
-              <Typography variant="caption" color="text.secondary">
+              <Typography
+                variant="caption"
+                sx={{
+                  color: 'text.secondary',
+                }}
+              >
                 {job.reference}
               </Typography>
             </Stack>
@@ -36,17 +53,38 @@ export function ActiveJobCard({ job, onOpen }: ActiveJobCardProps) {
           </Stack>
 
           <Stack spacing={0.75} sx={{ mt: 1.5 }}>
-            <Stack direction="row" spacing={1} alignItems="center" color="text.secondary">
+            <Stack
+              direction="row"
+              spacing={1}
+              sx={{
+                alignItems: 'center',
+                color: 'text.secondary',
+              }}
+            >
               <ScheduleRoundedIcon fontSize="small" aria-hidden />
               <Typography variant="body2">{formatDateTime(job.scheduledAt)}</Typography>
             </Stack>
-            <Stack direction="row" spacing={1} alignItems="center" color="text.secondary">
+            <Stack
+              direction="row"
+              spacing={1}
+              sx={{
+                alignItems: 'center',
+                color: 'text.secondary',
+              }}
+            >
               <PlaceRoundedIcon fontSize="small" aria-hidden />
               <Typography variant="body2">{job.customerArea}</Typography>
             </Stack>
           </Stack>
 
-          <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1.5 }}>
+          <Stack
+            direction="row"
+            spacing={1}
+            sx={{
+              alignItems: 'center',
+              mt: 1.5,
+            }}
+          >
             {job.isEmergency ? (
               <Chip
                 size="small"
@@ -57,7 +95,13 @@ export function ActiveJobCard({ job, onOpen }: ActiveJobCardProps) {
               />
             ) : null}
             {job.estimatedEarning !== null ? (
-              <Typography variant="body2" fontWeight={700} sx={{ ml: 'auto' }}>
+              <Typography
+                variant="body2"
+                sx={{
+                  fontWeight: 700,
+                  ml: 'auto',
+                }}
+              >
                 {formatCurrency(job.estimatedEarning)}
               </Typography>
             ) : null}

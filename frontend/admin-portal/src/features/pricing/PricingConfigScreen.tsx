@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import {
   Alert,
   Button,
@@ -139,7 +139,12 @@ function PricingDialog({ config, onClose, onSaved }: PricingDialogProps) {
   const update = useUpdatePricingConfig();
   const [draft, setDraft] = useState<PricingConfigUpdate>(() => editableFields(config));
 
-  useEffect(() => setDraft(editableFields(config)), [config]);
+  // New server values: start the draft again from them (reset during render, not in an effect).
+  const [syncedFrom, setSyncedFrom] = useState(config);
+  if (syncedFrom !== config) {
+    setSyncedFrom(config);
+    setDraft(editableFields(config));
+  }
 
   const handleChange = (key: keyof PricingConfigUpdate, raw: string) => {
     setDraft((prev) => ({ ...prev, [key]: raw === '' ? 0 : Number(raw) }));
@@ -158,14 +163,16 @@ function PricingDialog({ config, onClose, onSaved }: PricingDialogProps) {
       <DialogContent dividers>
         <Grid container spacing={2} sx={{ mt: 0 }}>
           {NUMERIC_FIELDS.map((field) => (
-            <Grid item xs={12} sm={6} key={field.key}>
+            <Grid key={field.key} size={{ xs: 12, sm: 6 }}>
               <TextField
                 label={field.label}
                 type="number"
                 fullWidth
                 value={draft[field.key] ?? ''}
                 onChange={(event) => handleChange(field.key, event.target.value)}
-                inputProps={{ min: 0, step: 0.01 }}
+                slotProps={{
+                  htmlInput: { min: 0, step: 0.01 },
+                }}
               />
             </Grid>
           ))}

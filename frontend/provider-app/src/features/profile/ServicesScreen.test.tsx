@@ -4,7 +4,12 @@ import userEvent from '@testing-library/user-event';
 import { ApiError } from '@api/client';
 import { renderWithProviders } from '@/test/render';
 import type * as ApiModule from './api';
-import { fetchServiceCatalog, saveProfile, type CatalogCategory, type ProviderProfile } from './api';
+import {
+  fetchServiceCatalog,
+  saveProfile,
+  type CatalogCategory,
+  type ProviderProfile,
+} from './api';
 import { ServicesForm } from './ServicesScreen';
 
 vi.mock('./api', async (importOriginal) => {

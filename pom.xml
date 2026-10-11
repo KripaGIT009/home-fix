@@ -1,0 +1,253 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.homefix</groupId>
+    <artifactId>homefix-parent</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
+    <name>HomeFix</name>
+    <description>
+        Parent and reactor for every HomeFix backend module: the shared libraries, the service
+        modules, and the deployable applications that host them. Java, Spring Boot and every
+        third-party version are set here once.
+    </description>
+
+    <modules>
+        <module>shared/homefix-shared-observability</module>
+        <module>shared/homefix-shared-security</module>
+        <module>shared/homefix-shared-resilience</module>
+        <module>shared/homefix-shared-outbox</module>
+        <module>shared/homefix-shared-config</module>
+        <module>services/api-gateway</module>
+        <module>services/auth-service</module>
+        <module>services/customer-service</module>
+        <module>services/provider-service</module>
+        <module>services/verification-service</module>
+        <module>services/booking-service</module>
+        <module>services/dispatch-engine</module>
+        <module>services/location-service</module>
+        <module>services/chat-service</module>
+        <module>services/catalog-service</module>
+        <module>services/pricing-engine</module>
+        <module>services/promotion-service</module>
+        <module>services/payment-service</module>
+        <module>services/invoice-service</module>
+        <module>services/notification-service</module>
+        <module>services/complaint-service</module>
+        <module>services/rating-review-service</module>
+        <module>services/admin-service</module>
+        <module>services/reporting-service</module>
+        <module>services/outbox-processor</module>
+        <!-- Deployables: each runs several services in one JVM (homefix-service-host). -->
+        <module>shared/homefix-service-host</module>
+        <module>apps/identity-app</module>
+        <module>apps/jobs-app</module>
+        <module>apps/money-app</module>
+        <module>apps/engagement-app</module>
+    </modules>
+
+    <properties>
+        <java.version>25</java.version>
+        <maven.compiler.release>${java.version}</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+        <!-- Platform. The API gateway overrides spring-boot.version: Spring Cloud's GA train
+             (2025.1) supports Boot 4.0 only, until the 2026.0 train for Boot 4.1 is released. -->
+        <spring-boot.version>4.1.1</spring-boot.version>
+        <spring-cloud.version>2025.1.3</spring-cloud.version>
+        <homefix.version>1.0.0-SNAPSHOT</homefix.version>
+
+        <!-- Libraries not managed by the Spring Boot BOM -->
+        <jjwt.version>0.13.0</jjwt.version>
+        <resilience4j.version>2.4.0</resilience4j.version>
+        <openpdf.version>3.0.5</openpdf.version>
+        <logstash-encoder.version>9.0</logstash-encoder.version>
+        <jqwik.version>1.10.2</jqwik.version>
+        <pact.version>4.7.5</pact.version>
+
+        <!-- Build plugins (Spring Boot pins the Apache Maven ones it uses) -->
+        <maven-compiler-plugin.version>3.15.0</maven-compiler-plugin.version>
+        <maven-surefire-plugin.version>3.5.6</maven-surefire-plugin.version>
+        <jacoco.version>0.8.15</jacoco.version>
+        <!-- Filled in by jacoco:prepare-agent; empty when coverage is skipped. -->
+        <argLine></argLine>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-dependencies</artifactId>
+                <version>${spring-boot.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>io.github.resilience4j</groupId>
+                <artifactId>resilience4j-bom</artifactId>
+                <version>${resilience4j.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <!-- HomeFix shared libraries -->
+            <dependency>
+                <groupId>com.homefix.shared</groupId>
+                <artifactId>homefix-shared-observability</artifactId>
+                <version>${homefix.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.homefix.shared</groupId>
+                <artifactId>homefix-shared-security</artifactId>
+                <version>${homefix.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.homefix.shared</groupId>
+                <artifactId>homefix-shared-resilience</artifactId>
+                <version>${homefix.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.homefix.shared</groupId>
+                <artifactId>homefix-shared-outbox</artifactId>
+                <version>${homefix.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.homefix.shared</groupId>
+                <artifactId>homefix-shared-config</artifactId>
+                <version>${homefix.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>io.jsonwebtoken</groupId>
+                <artifactId>jjwt-api</artifactId>
+                <version>${jjwt.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.jsonwebtoken</groupId>
+                <artifactId>jjwt-impl</artifactId>
+                <version>${jjwt.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.jsonwebtoken</groupId>
+                <artifactId>jjwt-jackson</artifactId>
+                <version>${jjwt.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.github.librepdf</groupId>
+                <artifactId>openpdf</artifactId>
+                <version>${openpdf.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>net.logstash.logback</groupId>
+                <artifactId>logstash-logback-encoder</artifactId>
+                <version>${logstash-encoder.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>net.jqwik</groupId>
+                <artifactId>jqwik</artifactId>
+                <version>${jqwik.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>au.com.dius.pact.consumer</groupId>
+                <artifactId>junit5</artifactId>
+                <version>${pact.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>au.com.dius.pact.provider</groupId>
+                <artifactId>junit5</artifactId>
+                <version>${pact.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>au.com.dius.pact.provider</groupId>
+                <artifactId>junit5spring</artifactId>
+                <version>${pact.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>au.com.dius.pact.provider</groupId>
+                <artifactId>spring7</artifactId>
+                <version>${pact.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>${maven-compiler-plugin.version}</version>
+                    <configuration>
+                        <release>${java.version}</release>
+                        <!-- Keep parameter names in the bytecode: Spring resolves an unnamed
+                             @PathVariable/@RequestParam by reflecting on the parameter name. -->
+                        <parameters>true</parameters>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>${maven-surefire-plugin.version}</version>
+                    <configuration>
+                        <!-- Mockito attaches its inline mock maker as an agent; say so explicitly
+                             instead of relying on dynamic agent loading, which the JDK warns
+                             about and will disallow. -->
+                        <argLine>@{argLine} -XX:+EnableDynamicAgentLoading</argLine>
+                        <systemPropertyVariables>
+                            <!-- A hosted service's configuration is <artifactId>.yml (unique on a
+                                 deployable's shared classpath); tests also read application.* and
+                                 config/application.* overrides as before. -->
+                            <spring.config.name>${project.artifactId},application</spring.config.name>
+                        </systemPropertyVariables>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-maven-plugin</artifactId>
+                    <version>${spring-boot.version}</version>
+                    <executions>
+                        <execution>
+                            <goals>
+                                <goal>repackage</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                </plugin>
+                <plugin>
+                    <groupId>org.jacoco</groupId>
+                    <artifactId>jacoco-maven-plugin</artifactId>
+                    <version>${jacoco.version}</version>
+                    <executions>
+                        <execution>
+                            <id>prepare-agent</id>
+                            <goals><goal>prepare-agent</goal></goals>
+                        </execution>
+                        <execution>
+                            <id>report</id>
+                            <phase>verify</phase>
+                            <goals><goal>report</goal></goals>
+                        </execution>
+                    </executions>
+                </plugin>
+                <plugin>
+                    <groupId>au.com.dius.pact.provider</groupId>
+                    <artifactId>maven</artifactId>
+                    <version>${pact.version}</version>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+        <plugins>
+            <!-- Every module measures coverage; an empty argLine keeps surefire's @{argLine}
+                 valid when jacoco is skipped. -->
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

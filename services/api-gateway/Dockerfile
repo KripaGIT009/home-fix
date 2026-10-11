@@ -1,9 +1,15 @@
-# Runtime-only image for api-gateway (Spring Cloud Gateway, reactive).
-# Fat jar is built on the host and copied in.
-FROM eclipse-temurin:21-jre-jammy
-WORKDIR /app
-RUN groupadd -r app && useradd -r -g app app
+# Runtime image for api-gateway. The fat jar is built on the host and copied in; Spring Boot's
+# tools jar mode splits it into a thin launcher jar plus lib/ so the dependency layer caches.
+FROM eclipse-temurin:25-jre-alpine AS extract
+WORKDIR /build
 COPY target/api-gateway-1.0.0-SNAPSHOT.jar app.jar
+RUN java -Djarmode=tools -jar app.jar extract --destination extracted
+
+FROM eclipse-temurin:25-jre-alpine
+RUN addgroup -S app && adduser -S -G app app
+WORKDIR /app
+COPY --from=extract /build/extracted/lib/ lib/
+COPY --from=extract /build/extracted/app.jar app.jar
 USER app
 EXPOSE 8080
-ENTRYPOINT ["java","-XX:MaxRAMPercentage=75.0","-jar","/app/app.jar"]
+ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75", "-jar", "/app/app.jar"]

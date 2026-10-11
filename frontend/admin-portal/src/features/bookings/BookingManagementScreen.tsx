@@ -62,7 +62,13 @@ export function BookingManagementScreen() {
       key: 'reference',
       header: 'Reference',
       render: (row) => (
-        <Stack direction="row" spacing={0.5} alignItems="center">
+        <Stack
+          direction="row"
+          spacing={0.5}
+          sx={{
+            alignItems: 'center',
+          }}
+        >
           <span>{row.reference}</span>
           {row.isEmergency ? <Chip size="small" color="error" label="Emergency" /> : null}
         </Stack>

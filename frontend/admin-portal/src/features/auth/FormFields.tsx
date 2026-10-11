@@ -68,31 +68,34 @@ export function PasswordInput({
       disabled={disabled}
       error={Boolean(error)}
       helperText={error ?? helperText}
-      InputProps={{
-        startAdornment: (
-          <InputAdornment position="start">
-            <LockOutlinedIcon fontSize="small" sx={{ color: 'text.secondary' }} />
-          </InputAdornment>
-        ),
-        endAdornment: (
-          <InputAdornment position="end">
-            <IconButton
-              onClick={() => setVisible((shown) => !shown)}
-              edge="end"
-              size="small"
-              aria-label={visible ? 'Hide password' : 'Show password'}
-            >
-              {visible ? (
-                <VisibilityOffOutlinedIcon fontSize="small" />
-              ) : (
-                <VisibilityOutlinedIcon fontSize="small" />
-              )}
-            </IconButton>
-          </InputAdornment>
-        ),
-      }}
-      inputProps={{ 'aria-label': ariaLabel }}
       {...registration}
+      slotProps={{
+        input: {
+          startAdornment: (
+            <InputAdornment position="start">
+              <LockOutlinedIcon fontSize="small" sx={{ color: 'text.secondary' }} />
+            </InputAdornment>
+          ),
+          endAdornment: (
+            <InputAdornment position="end">
+              <IconButton
+                onClick={() => setVisible((shown) => !shown)}
+                edge="end"
+                size="small"
+                aria-label={visible ? 'Hide password' : 'Show password'}
+              >
+                {visible ? (
+                  <VisibilityOffOutlinedIcon fontSize="small" />
+                ) : (
+                  <VisibilityOutlinedIcon fontSize="small" />
+                )}
+              </IconButton>
+            </InputAdornment>
+          ),
+        },
+
+        htmlInput: { 'aria-label': ariaLabel },
+      }}
     />
   );
 }

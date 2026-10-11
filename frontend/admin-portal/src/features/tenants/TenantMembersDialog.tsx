@@ -67,7 +67,12 @@ export function TenantMembersDialog({ tenant, onClose }: TenantMembersDialogProp
       key: 'user',
       header: 'Account',
       render: (row) => (
-        <Typography variant="caption" color="text.secondary">
+        <Typography
+          variant="caption"
+          sx={{
+            color: 'text.secondary',
+          }}
+        >
           {shortId(row.userId)}
         </Typography>
       ),
@@ -108,7 +113,12 @@ export function TenantMembersDialog({ tenant, onClose }: TenantMembersDialogProp
     <Dialog open onClose={onClose} maxWidth="md" fullWidth fullScreen={phone}>
       <DialogTitle>
         {tenant.name}
-        <Typography variant="body2" color="text.secondary">
+        <Typography
+          variant="body2"
+          sx={{
+            color: 'text.secondary',
+          }}
+        >
           Administrators run the agency&apos;s portal; providers are the team it assigns to jobs.
         </Typography>
       </DialogTitle>

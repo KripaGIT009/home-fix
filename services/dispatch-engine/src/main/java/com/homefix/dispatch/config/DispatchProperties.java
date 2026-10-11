@@ -6,7 +6,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * Externalised dispatch tuning parameters (Requirements 8.2, 8.5, 8.8), so operations can adjust
  * behaviour without a code change. Defaults match the design and requirements.
  *
- * <p>The radius, cycle and offer-timeout values are also changed at runtime by the Admin Portal
+ * <p>The radius, cycle, offer-timeout, wave-size and agency-fallback values are also changed at runtime by the Admin Portal
  * ({@code DispatchSettingsService}) and read by {@code DispatchService} on dispatch threads, so
  * those fields are {@code volatile}: an Admin save on a request thread must be visible to the next
  * dispatch without further synchronisation. The poll interval is read once at startup and is not
@@ -26,6 +26,21 @@ public class DispatchProperties {
 
     /** Job-offer acceptance timeout in seconds; also the Redis lock TTL (Requirements 8.5, 8.11). */
     private volatile long offerTimeoutSeconds = 60L;
+
+    /**
+     * How many providers are offered the job at the same time, best-ranked first (default 3). The
+     * first to accept takes it and the other offers in the wave are withdrawn; when nobody in a
+     * wave accepts, the next wave goes to the next-best providers.
+     */
+    private volatile int offerBatchSize = 3;
+
+    /**
+     * How long, in minutes, providers are offered a booking before dispatch stops searching and
+     * hands it to the Booking Service, which routes it to the partner agencies covering it
+     * (AWAITING_ASSIGNMENT) or fails it when none does (default 5). Searching also stops earlier
+     * when every radius cycle is exhausted.
+     */
+    private volatile long agencyFallbackMinutes = 5L;
 
     /**
      * How often a waiting offer re-reads the provider's decision from Redis, in milliseconds. It
@@ -64,6 +79,22 @@ public class DispatchProperties {
 
     public void setOfferTimeoutSeconds(long offerTimeoutSeconds) {
         this.offerTimeoutSeconds = offerTimeoutSeconds;
+    }
+
+    public int getOfferBatchSize() {
+        return offerBatchSize;
+    }
+
+    public void setOfferBatchSize(int offerBatchSize) {
+        this.offerBatchSize = offerBatchSize;
+    }
+
+    public long getAgencyFallbackMinutes() {
+        return agencyFallbackMinutes;
+    }
+
+    public void setAgencyFallbackMinutes(long agencyFallbackMinutes) {
+        this.agencyFallbackMinutes = agencyFallbackMinutes;
     }
 
     public long getOfferPollIntervalMillis() {

@@ -32,14 +32,14 @@ docker exec "${RUNNER}" sh -c "
 set -u
 TOKEN=\$(wget -q -O - --post-data='{\"username\":\"${ADMIN_USER}\",\"password\":\"${ADMIN_PASSWORD}\"}' \
   --header='Content-Type: application/json' \
-  http://auth-service:8081/auth/login/password \
+  http://identity-app:8081/auth/login/password \
   | sed 's/.*\"accessToken\":\"\([^\"]*\)\".*/\1/')
 case \"\$TOKEN\" in
   eyJ*) ;;
   *) echo 'Admin sign-in failed. Is DEV_SEED_ENABLED=true and DEV_SEED_PASSWORD correct?' >&2; exit 1 ;;
 esac
 
-wget -q -O - http://catalog-service:8085/catalog/categories \
+wget -q -O - http://jobs-app:8085/catalog/categories \
   | tr '{' '\n' | grep '\"basePrice\"' \
   | sed 's/.*\"id\":\"\([^\"]*\)\".*\"basePrice\":\([0-9.]*\).*/\1 \2/' > /tmp/subs.txt
 
@@ -50,7 +50,7 @@ while read id base; do
   if wget -q -O /dev/null --method=PUT \
     --body-data=\"{\\\"subcategoryId\\\":\\\"\$id\\\",\\\"basePrice\\\":\$base,\\\"perKmRate\\\":8.00,\\\"maxTravelCharge\\\":150.00,\\\"nightSurcharge\\\":100.00,\\\"weekendSurcharge\\\":75.00,\\\"platformFeeRate\\\":0.10,\\\"taxRate\\\":0.18,\\\"emergencyMultiplier\\\":2.0,\\\"surgeMultiplier\\\":1.0,\\\"overrideFloor\\\":1.00,\\\"overrideCeiling\\\":99999.00}\" \
     --header=\"Authorization: Bearer \$TOKEN\" --header='Content-Type: application/json' \
-    http://pricing-engine:8086/admin/pricing/parameters; then
+    http://jobs-app:8086/admin/pricing/parameters; then
     ok=\$((ok + 1))
     echo \"    \$id  base=\$base\"
   else

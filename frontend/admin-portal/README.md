@@ -2,7 +2,7 @@
 
 Desktop-first administrative web application for the HomeFix platform, and the
 home of the **Tenant Portal** used by service agencies. Built with the same
-stack as the Customer and Provider apps (React + TypeScript + Vite, React
+stack as the Customer and Provider apps (React 19 + TypeScript 6 + Vite 8, React
 Router, TanStack Query, Zustand, Material UI, React Hook Form + Zod), but laid
 out for large screens with a persistent sidebar rather than a mobile-first
 bottom nav (Requirement 28.3). It is a web app only; it has no Android or iOS
@@ -174,7 +174,7 @@ docker compose -f docker-compose.core.yml up -d --build --wait
 
 The `admin-portal` image (`Dockerfile`) builds the bundle with the default
 `/api` base and serves it from nginx on <http://localhost:5175>. `nginx.conf`
-proxies `/api/auth/*` to `auth-service:8081` and everything else under `/api/`
+proxies `/api/auth/*` to `identity-app:8081` (auth-service) and everything else under `/api/`
 to `api-gateway:8080`.
 
 ## Layout conventions

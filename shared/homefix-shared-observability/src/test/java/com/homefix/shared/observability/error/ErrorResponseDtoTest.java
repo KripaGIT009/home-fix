@@ -1,7 +1,7 @@
 package com.homefix.shared.observability.error;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -16,7 +16,7 @@ class ErrorResponseDtoTest {
 
     @BeforeEach
     void setUp() {
-        mapper = new ObjectMapper().registerModule(new JavaTimeModule());
+        mapper = new JsonMapper();
     }
 
     @Test

@@ -25,12 +25,29 @@ export function AssignedJobCard({ job, onOpen }: AssignedJobCardProps) {
     <Card variant="outlined" sx={{ borderColor: 'warning.main' }}>
       <CardActionArea onClick={() => onOpen(job.bookingId)}>
         <CardContent>
-          <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
+          <Stack
+            direction="row"
+            spacing={1}
+            sx={{
+              justifyContent: 'space-between',
+              alignItems: 'flex-start',
+            }}
+          >
             <Stack spacing={0.25}>
-              <Typography variant="subtitle1" fontWeight={700}>
+              <Typography
+                variant="subtitle1"
+                sx={{
+                  fontWeight: 700,
+                }}
+              >
                 {job.serviceName}
               </Typography>
-              <Typography variant="caption" color="text.secondary">
+              <Typography
+                variant="caption"
+                sx={{
+                  color: 'text.secondary',
+                }}
+              >
                 {job.reference}
               </Typography>
             </Stack>
@@ -38,19 +55,44 @@ export function AssignedJobCard({ job, onOpen }: AssignedJobCardProps) {
           </Stack>
 
           <Stack spacing={0.75} sx={{ mt: 1.5 }}>
-            <Stack direction="row" spacing={1} alignItems="center">
+            <Stack
+              direction="row"
+              spacing={1}
+              sx={{
+                alignItems: 'center',
+              }}
+            >
               <ApartmentRoundedIcon fontSize="small" color="warning" aria-hidden />
-              <Typography variant="body2" fontWeight={600}>
+              <Typography
+                variant="body2"
+                sx={{
+                  fontWeight: 600,
+                }}
+              >
                 Assigned by {agency}
               </Typography>
             </Stack>
-            <Stack direction="row" spacing={1} alignItems="center" color="text.secondary">
+            <Stack
+              direction="row"
+              spacing={1}
+              sx={{
+                alignItems: 'center',
+                color: 'text.secondary',
+              }}
+            >
               <ScheduleRoundedIcon fontSize="small" aria-hidden />
               <Typography variant="body2">{formatDateTime(job.scheduledAt)}</Typography>
             </Stack>
           </Stack>
 
-          <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1.5 }}>
+          <Stack
+            direction="row"
+            spacing={1}
+            sx={{
+              alignItems: 'center',
+              mt: 1.5,
+            }}
+          >
             {job.isEmergency ? (
               <Chip
                 size="small"
@@ -61,7 +103,13 @@ export function AssignedJobCard({ job, onOpen }: AssignedJobCardProps) {
               />
             ) : null}
             {job.estimatedEarning !== null ? (
-              <Typography variant="body2" fontWeight={700} sx={{ ml: 'auto' }}>
+              <Typography
+                variant="body2"
+                sx={{
+                  fontWeight: 700,
+                  ml: 'auto',
+                }}
+              >
                 {formatCurrency(job.estimatedEarning)}
               </Typography>
             ) : null}

@@ -27,11 +27,25 @@ export function EarningsSummaryCard({ summary }: EarningsSummaryCardProps) {
       }}
     >
       <CardContent>
-        <Stack direction="row" spacing={1} alignItems="center" sx={{ opacity: 0.9 }}>
+        <Stack
+          direction="row"
+          spacing={1}
+          sx={{
+            alignItems: 'center',
+            opacity: 0.9,
+          }}
+        >
           <AccountBalanceWalletRoundedIcon fontSize="small" aria-hidden />
           <Typography variant="overline">Wallet balance</Typography>
         </Stack>
-        <Typography variant="h3" component="p" fontWeight={800} sx={{ mt: 0.5 }}>
+        <Typography
+          variant="h3"
+          component="p"
+          sx={{
+            fontWeight: 800,
+            mt: 0.5,
+          }}
+        >
           {formatCurrency(walletBalance, currency)}
         </Typography>
 
@@ -68,11 +82,25 @@ export function EarningsSummaryCard({ summary }: EarningsSummaryCardProps) {
 function Stat({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return (
     <Box sx={{ flex: 1, minWidth: 0 }}>
-      <Stack direction="row" spacing={0.5} alignItems="center" sx={{ opacity: 0.85 }}>
+      <Stack
+        direction="row"
+        spacing={0.5}
+        sx={{
+          alignItems: 'center',
+          opacity: 0.85,
+        }}
+      >
         {icon}
         <Typography variant="caption">{label}</Typography>
       </Stack>
-      <Typography variant="h6" component="p" fontWeight={800} sx={{ mt: 0.25 }}>
+      <Typography
+        variant="h6"
+        component="p"
+        sx={{
+          fontWeight: 800,
+          mt: 0.25,
+        }}
+      >
         {value}
       </Typography>
     </Box>

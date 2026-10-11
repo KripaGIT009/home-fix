@@ -50,6 +50,11 @@ spec:
             - name: http
               containerPort: {{ $port }}
               protocol: TCP
+            {{- range .Values.extraPorts }}
+            - name: {{ .name }}
+              containerPort: {{ .port }}
+              protocol: TCP
+            {{- end }}
           envFrom:
             - configMapRef:
                 name: {{ include "homefix-service.fullname" . }}-config

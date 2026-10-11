@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link as RouterLink, useLocation, useNavigate } from 'react-router-dom';
+import { Link as RouterLink, useLocation, useNavigate } from 'react-router';
 import { Alert, Link, Stack, Tab, Tabs, Typography } from '@mui/material';
 import PhoneIphoneRoundedIcon from '@mui/icons-material/PhoneIphoneRounded';
 import MailOutlineRoundedIcon from '@mui/icons-material/MailOutlineRounded';
@@ -61,7 +61,7 @@ export function LoginScreen() {
   // Once a session exists (via OTP verify, email or social login), leave the screen.
   useEffect(() => {
     if (isAuthenticated) {
-      navigate(redirectTo, { replace: true });
+      void navigate(redirectTo, { replace: true });
     }
   }, [isAuthenticated, navigate, redirectTo]);
 
@@ -142,9 +142,22 @@ export function LoginScreen() {
       subtitle={subtitle}
       below={
         step === 'mobile' ? (
-          <Typography variant="body2" color="text.secondary" align="center">
+          <Typography
+            variant="body2"
+            align="center"
+            sx={{
+              color: 'text.secondary',
+            }}
+          >
             New to HomeFix?{' '}
-            <Link component={RouterLink} to={AUTH_ROUTES.signUp} underline="hover" fontWeight={700}>
+            <Link
+              component={RouterLink}
+              to={AUTH_ROUTES.signUp}
+              underline="hover"
+              sx={{
+                fontWeight: 700,
+              }}
+            >
               Create account
             </Link>
           </Typography>

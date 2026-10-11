@@ -6,10 +6,12 @@ Everything here targets the local stack defined in [`docker-compose.core.yml`](.
 
 ## 1. Start the stack
 
-Locally the 20 services and 3 web apps run in Docker Compose, but **Postgres, Kafka and Redis
-are the ones installed on this machine**, not containers. The containers reach them through
-`host.docker.internal`. On AWS none of this applies: Helm points each service at RDS, MSK and
-ElastiCache through per-environment values and Secrets (`helm/services/*.yaml`).
+Locally the 20 services run in five Java containers (the API gateway and the deployables
+`identity-app`, `jobs-app`, `money-app`, `engagement-app`, each hosting several services on
+their usual ports) and the 3 web apps in three more, all in Docker Compose. **Postgres, Kafka
+and Redis are the ones installed on this machine**, not containers. The containers reach them
+through `host.docker.internal`. On AWS none of this applies: Helm points each deployable at RDS,
+MSK and ElastiCache through per-environment values and Secrets (`helm/services/*.yaml`).
 
 ### 1.1 One-time setup of the local infrastructure
 
@@ -94,36 +96,31 @@ No local Postgres, Kafka or Redis at all? Use the containerised ones in
 
 ### 1.2 Build, then start
 
-The service images are runtime-only: each Dockerfile copies the fat jar already built under
-`services/<name>/target/`. `--build` does **not** compile anything, so build the jars first, and
-rebuild a service's jar after every change to it. Otherwise `--build` quietly packages the old
-jar (this once left the API gateway without the admin routes added hours earlier).
+The images are runtime-only: each Dockerfile copies the jar already built under
+`apps/<deployable>/target/` (or `services/api-gateway/target/`). `--build` does **not** compile
+anything, so build first, and rebuild after every change. Otherwise `--build` quietly packages
+the old jar (this once left the API gateway without the admin routes added hours earlier).
+The build needs JDK 25 (`JAVA_HOME`); the web apps need Node 24.
 
 ```bash
 cp .env.example .env            # first time only; Compose refuses to start without it
 
-# Shared libraries must be installed before any service will resolve.
-for m in observability security resilience outbox; do
-  (cd shared/homefix-shared-$m && mvn -q -DskipTests -Djacoco.skip=true install)
-done
-
-# Every service, one at a time (see Memory below), or just the one you changed.
-for s in services/*/; do
-  (cd "$s" && mvn -q -DskipTests -Djacoco.skip=true package) || break
-done
+# One reactor build from the repository root: shared libraries, services, deployables.
+mvn -q -DskipTests -Djacoco.skip=true package
 
 # Start Kafka (1.1) first, then everything else. --wait gates on each container's own health
 # check and exits non-zero if anything fails to come up.
 docker compose -f docker-compose.core.yml up -d --build --wait
 
-# After changing one service: rebuild its jar, then its image and container.
-(cd services/auth-service && mvn -q -DskipTests -Djacoco.skip=true package)
-docker compose -f docker-compose.core.yml up -d --build --wait auth-service
+# After changing one service: rebuild the deployable that hosts it (-am builds what it depends
+# on), then that deployable's image and container. auth-service is hosted by identity-app.
+mvn -q -DskipTests -Djacoco.skip=true package -pl apps/identity-app -am
+docker compose -f docker-compose.core.yml up -d --build --wait identity-app
 ```
 
-A cold start takes 4-6 minutes on a 6-core machine: twenty JVMs boot at once and are CPU-bound.
-The health checks allow a 300 s start period, so `--wait` does not give up on a service that is
-merely slow.
+A cold start is CPU-bound: each deployable starts its services one after another, so the
+largest (`jobs-app`, seven services) is the last to report healthy. The health checks allow a
+180 s start period (300 s for the gateway), so `--wait` does not give up on a slow one.
 
 ### 1.3 Seed a new database (once)
 
@@ -161,16 +158,15 @@ failing the booking.
 
 ### Memory
 
-Twenty JVMs do not fit in Docker Desktop's default WSL allocation (about half of host RAM).
-Left unbounded the stack thrashes: containers stop answering, image builds die with
-`Unavailable: EOF`, and the engine has fallen over outright, exiting every container at once.
+Twenty separate JVMs did not fit in Docker Desktop's default WSL allocation (about half of
+host RAM): the stack thrashed, image builds died with `Unavailable: EOF`, and the engine fell
+over outright. The services now share five JVMs, which removes most of the per-JVM overhead
+(heap headroom, metaspace, JIT and GC threads), and:
 
-Two things make it fit:
-
-- Every Java service declares `mem_limit: 448m` and a `JAVA_TOOL_OPTIONS` heap percentage.
-  Without a container limit each JVM sizes its max heap at 25% of the *whole VM* — about
-  1.9 GB each — so twenty idle services feel no pressure to collect and between them exhaust
-  the host. Measured steady state with the limits in place is ~300 MB per service.
+- Every Java container declares a `mem_limit` sized for what it hosts (identity-app 896m,
+  jobs-app 1280m, money-app 640m, engagement-app 1152m, api-gateway 448m; about 4.4 GB in all,
+  against 20 × 448m ≈ 8.8 GB before) and a `JAVA_TOOL_OPTIONS` heap percentage. Without a
+  container limit a JVM sizes its max heap at 25% of the *whole VM*.
 - Raise the WSL ceiling above the default. Put this in `%UserProfile%\.wslconfig`, then
   `wsl --shutdown` and restart Docker Desktop:
 
@@ -183,16 +179,16 @@ swap=2GB
 
 Kafka (heap capped at 768 MB above) and Postgres now run on the host, outside that VM.
 
-**Run Maven builds one at a time.** Each build is a JVM of its own on top of the running stack;
+**Run one Maven build at a time.** Each build is a JVM of its own on top of the running stack;
 six in parallel once exhausted host memory and froze the Docker engine until Docker Desktop was
-restarted. The sequential loop in 1.2 is deliberate.
+restarted. The reactor build in 1.2 builds the modules one after another in a single JVM.
 
 A readiness probe from the host is not evidence a service is down: under load Docker's port
 forwarding drops connections while the service itself is fine. Probe from inside the network:
 
 ```bash
 docker exec homefix-core-api-gateway-1 \
-  wget -qO- http://rating-review-service:8097/health/readiness
+  wget -qO- http://engagement-app:8097/health/readiness
 ```
 
 ---
@@ -482,8 +478,9 @@ psql_q "SELECT gross, platform_fee, net FROM provider.provider_earning WHERE boo
 ```
 
 What happens behind each step, briefly: confirmation publishes `BookingCreated`; dispatch
-resolves the address and skill tags, finds Provider One eligible and offers the job (an offer
-lives 60 s in Redis); acceptance moves the booking to `PROVIDER_ACCEPTED`. Each milestone
+resolves the address and skill tags, finds Provider One eligible and offers the job (offers go
+to up to three providers at once and live 60 s in Redis; the first accept wins, and after 5 minutes
+without one the booking goes to the demo agency); acceptance moves the booking to `PROVIDER_ACCEPTED`. Each milestone
 command is refused (404) for anyone but the assigned provider. Payment moves the booking to
 `PAYMENT_PENDING`, the local **payment simulator** settles the charge through the real
 signed-callback path, `PaymentCompleted` moves the booking to `PAYMENT_COMPLETED` and triggers

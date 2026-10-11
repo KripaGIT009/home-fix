@@ -42,9 +42,20 @@ export function ProviderManagementScreen() {
         row.rating == null ? (
           '—'
         ) : (
-          <Stack direction="row" spacing={0.5} alignItems="center">
+          <Stack
+            direction="row"
+            spacing={0.5}
+            sx={{
+              alignItems: 'center',
+            }}
+          >
             <Rating value={row.rating} precision={0.1} size="small" readOnly />
-            <Typography variant="caption" color="text.secondary">
+            <Typography
+              variant="caption"
+              sx={{
+                color: 'text.secondary',
+              }}
+            >
               {row.rating.toFixed(1)}
             </Typography>
           </Stack>
@@ -68,7 +79,12 @@ export function ProviderManagementScreen() {
       header: 'Bank account',
       render: (row) =>
         row.bankAccount ? (
-          <Stack spacing={0.5} alignItems="flex-start">
+          <Stack
+            spacing={0.5}
+            sx={{
+              alignItems: 'flex-start',
+            }}
+          >
             <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums' }} noWrap>
               {row.bankAccount.masked}
             </Typography>
@@ -79,7 +95,12 @@ export function ProviderManagementScreen() {
             />
           </Stack>
         ) : (
-          <Typography variant="body2" color="text.secondary">
+          <Typography
+            variant="body2"
+            sx={{
+              color: 'text.secondary',
+            }}
+          >
             None
           </Typography>
         ),
@@ -96,7 +117,12 @@ export function ProviderManagementScreen() {
         const suspend = row.status === 'ACTIVE';
         if (!row.status && !canVerifyBank) return null;
         return (
-          <Stack spacing={1} alignItems="flex-end">
+          <Stack
+            spacing={1}
+            sx={{
+              alignItems: 'flex-end',
+            }}
+          >
             {row.status ? (
               <Button
                 size="small"

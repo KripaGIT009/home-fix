@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router';
 import { useAuthStore } from '@stores/authStore';
 
 /** How a public auth screen may be opened. */
@@ -45,7 +45,7 @@ export function useSignedInRedirect(enabled = true): {
 
   useEffect(() => {
     if (enabled && isAuthenticated) {
-      navigate(redirectTo, { replace: true });
+      void navigate(redirectTo, { replace: true });
     }
   }, [enabled, isAuthenticated, navigate, redirectTo]);
 

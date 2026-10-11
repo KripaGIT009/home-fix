@@ -50,7 +50,15 @@ export function TrustList({ layout = 'strip' }: { layout?: 'strip' | 'stack' }) 
       }}
     >
       {PROMISES.map(({ Icon, title, caption }) => (
-        <Stack component="li" key={title} direction="row" spacing={1} alignItems="center">
+        <Stack
+          component="li"
+          key={title}
+          direction="row"
+          spacing={1}
+          sx={{
+            alignItems: 'center',
+          }}
+        >
           <Box
             aria-hidden
             sx={{
@@ -67,14 +75,23 @@ export function TrustList({ layout = 'strip' }: { layout?: 'strip' | 'stack' }) 
             <Icon sx={{ fontSize: 17 }} />
           </Box>
           <Box sx={{ minWidth: 0 }}>
-            <Typography variant="body2" fontWeight={700} sx={{ lineHeight: 1.35 }}>
+            <Typography
+              variant="body2"
+              sx={{
+                fontWeight: 700,
+                lineHeight: 1.35,
+              }}
+            >
               {title}
             </Typography>
             <Typography
               variant="caption"
-              color="text.secondary"
-              display="block"
-              sx={{ fontSize: '0.75rem', lineHeight: 1.4 }}
+              sx={{
+                color: 'text.secondary',
+                display: 'block',
+                fontSize: '0.75rem',
+                lineHeight: 1.4,
+              }}
             >
               {caption}
             </Typography>

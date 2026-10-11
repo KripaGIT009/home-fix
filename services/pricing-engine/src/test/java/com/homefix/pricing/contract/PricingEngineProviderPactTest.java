@@ -5,11 +5,13 @@ import static org.mockito.Mockito.when;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.List;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.TestTemplate;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mockito;
+import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter;
 
 import com.homefix.pricing.api.GlobalExceptionHandler;
 import com.homefix.pricing.api.PricingController;
@@ -19,18 +21,19 @@ import com.homefix.pricing.service.PriceQuoteService;
 import com.homefix.pricing.service.PriceRequest;
 import com.homefix.pricing.service.PricingConfigService;
 import com.homefix.pricing.service.ProviderOverrideService;
+import com.homefix.shared.observability.json.HomefixJson;
 
 import au.com.dius.pact.provider.junit5.PactVerificationContext;
 import au.com.dius.pact.provider.junit5.PactVerificationInvocationContextProvider;
 import au.com.dius.pact.provider.junitsupport.Provider;
 import au.com.dius.pact.provider.junitsupport.State;
 import au.com.dius.pact.provider.junitsupport.loader.PactFolder;
-import au.com.dius.pact.provider.spring.junit5.MockMvcTestTarget;
+import au.com.dius.pact.provider.spring.spring7.Spring7MockMvcTestTarget;
 
 /**
  * Provider-side verification (Task 46) that the Pricing Engine honours the HTTP contract the
  * Booking Service published for {@code POST /pricing/estimate}. The controller is exercised
- * through the real Spring MVC stack via a standalone {@link MockMvcTestTarget} — the same
+ * through the real Spring MVC stack via a standalone {@link Spring7MockMvcTestTarget} — the same
  * lightweight setup used by {@code PricingControllerTest} — so no server or Spring context is
  * booted.
  *
@@ -53,9 +56,11 @@ class PricingEngineProviderPactTest {
         PricingConfigService configService = Mockito.mock(PricingConfigService.class);
 
         PricingController controller = new PricingController(quoteService, overrideService, configService);
-        MockMvcTestTarget target = new MockMvcTestTarget();
+        Spring7MockMvcTestTarget target = new Spring7MockMvcTestTarget();
         target.setControllers(controller);
         target.setControllerAdvices(new GlobalExceptionHandler());
+        // The service's JSON settings, as the running service has them.
+        target.setMessageConverters(List.of(new JacksonJsonHttpMessageConverter(HomefixJson.builder().build())));
         context.setTarget(target);
     }
 

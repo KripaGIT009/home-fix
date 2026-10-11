@@ -4,7 +4,7 @@ import java.time.Clock;
 import java.util.HashMap;
 import java.util.Map;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.homefix.chat.config.ChatProperties;
 import com.homefix.chat.service.ChatService;
 import com.homefix.shared.outbox.kafka.DlqForwarder;

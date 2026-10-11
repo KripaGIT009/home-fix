@@ -13,7 +13,7 @@ export const invitationSchema = z.object({
     .max(254, 'Email must be at most 254 characters.')
     .email('Enter a valid email address.'),
   role: z.enum(['ADMIN', 'FINANCE_ADMIN', 'DISPATCHER', 'SUPPORT_AGENT'], {
-    errorMap: () => ({ message: 'Choose a role.' }),
+    error: 'Choose a role.',
   }),
 });
 

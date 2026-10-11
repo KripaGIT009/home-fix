@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { Navigate, useNavigate } from 'react-router';
 import { Alert, AlertTitle, Button, Stack, Typography } from '@mui/material';
 import LoginRoundedIcon from '@mui/icons-material/LoginRounded';
 import LogoutRoundedIcon from '@mui/icons-material/LogoutRounded';
@@ -38,7 +38,7 @@ export function AgencyApplicationScreen() {
   const signOut = () => {
     // Same as the shell's sign-out: revoke in the background, leave at once.
     void logout();
-    navigate('/login', { replace: true });
+    void navigate('/login', { replace: true });
   };
 
   const application = applicationQuery.data;
@@ -119,7 +119,13 @@ export function AgencyApplicationScreen() {
                   <AlertTitle>{application.name}</AlertTitle>
                   {application.rejectionReason ? (
                     <>
-                      <Typography variant="body2" component="span" fontWeight={600}>
+                      <Typography
+                        variant="body2"
+                        component="span"
+                        sx={{
+                          fontWeight: 600,
+                        }}
+                      >
                         Reason:
                       </Typography>{' '}
                       {application.rejectionReason}
@@ -128,7 +134,12 @@ export function AgencyApplicationScreen() {
                     'HomeFix did not give a reason.'
                   )}
                 </Alert>
-                <Typography variant="body2" color="text.secondary">
+                <Typography
+                  variant="body2"
+                  sx={{
+                    color: 'text.secondary',
+                  }}
+                >
                   You can correct your details and apply again.
                 </Typography>
                 <Button variant="contained" size="large" onClick={() => setReapplying(true)}>

@@ -1,6 +1,6 @@
 package com.homefix.gateway.config;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.homefix.gateway.auth.CachingTokenIntrospector;
 import com.homefix.gateway.auth.TokenIntrospector;
 import com.homefix.gateway.auth.WebClientTokenIntrospector;

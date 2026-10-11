@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import {
@@ -48,7 +48,7 @@ export function ServiceAreaScreen() {
   const profile = useMyProfile();
 
   return (
-    <AppShell title="Service area" onBack={() => navigate('/profile')}>
+    <AppShell title="Service area" onBack={() => void navigate('/profile')}>
       <QueryStateView
         isLoading={profile.isLoading}
         isError={profile.isError}
@@ -57,7 +57,7 @@ export function ServiceAreaScreen() {
       >
         {profile.data === null ? <ProfileRequired what="your service area" /> : null}
         {profile.data ? (
-          <ServiceAreaForm profile={profile.data} onSaved={() => navigate('/profile')} />
+          <ServiceAreaForm profile={profile.data} onSaved={() => void navigate('/profile')} />
         ) : null}
       </QueryStateView>
     </AppShell>
@@ -124,13 +124,32 @@ export function ServiceAreaForm({ profile, onSaved }: ServiceAreaFormProps) {
 
       <Card>
         <CardContent>
-          <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5 }}>
+          <Stack
+            direction="row"
+            spacing={1}
+            sx={{
+              alignItems: 'center',
+              mb: 0.5,
+            }}
+          >
             <PlaceRoundedIcon color="primary" aria-hidden />
-            <Typography variant="subtitle1" fontWeight={700} component="h2">
+            <Typography
+              variant="subtitle1"
+              component="h2"
+              sx={{
+                fontWeight: 700,
+              }}
+            >
               Base location
             </Typography>
           </Stack>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+          <Typography
+            variant="body2"
+            sx={{
+              color: 'text.secondary',
+              mb: 1.5,
+            }}
+          >
             Where you usually start from, such as your home or workshop. Distance to each job is
             measured from here.
           </Typography>
@@ -167,7 +186,15 @@ export function ServiceAreaForm({ profile, onSaved }: ServiceAreaFormProps) {
             </Alert>
           ) : null}
 
-          <Typography variant="caption" color="text.secondary" component="p" sx={{ mt: 2, mb: 1 }}>
+          <Typography
+            variant="caption"
+            component="p"
+            sx={{
+              color: 'text.secondary',
+              mt: 2,
+              mb: 1,
+            }}
+          >
             Or enter coordinates (from a maps app, e.g. 12.9716, 77.5946)
           </Typography>
           <Stack direction="row" spacing={1.5}>
@@ -176,20 +203,24 @@ export function ServiceAreaForm({ profile, onSaved }: ServiceAreaFormProps) {
               fullWidth
               size="small"
               autoComplete="off"
-              inputProps={{ inputMode: 'decimal' }}
               error={Boolean(errors.latitude)}
               helperText={errors.latitude?.message}
               {...register('latitude')}
+              slotProps={{
+                htmlInput: { inputMode: 'decimal' },
+              }}
             />
             <TextField
               label="Longitude"
               fullWidth
               size="small"
               autoComplete="off"
-              inputProps={{ inputMode: 'decimal' }}
               error={Boolean(errors.longitude)}
               helperText={errors.longitude?.message}
               {...register('longitude')}
+              slotProps={{
+                htmlInput: { inputMode: 'decimal' },
+              }}
             />
           </Stack>
         </CardContent>
@@ -202,20 +233,40 @@ export function ServiceAreaForm({ profile, onSaved }: ServiceAreaFormProps) {
             name="serviceRadiusKm"
             render={({ field }) => (
               <Box>
-                <Stack direction="row" justifyContent="space-between" alignItems="baseline">
+                <Stack
+                  direction="row"
+                  sx={{
+                    justifyContent: 'space-between',
+                    alignItems: 'baseline',
+                  }}
+                >
                   <Typography
                     id="service-radius-label"
                     variant="subtitle1"
-                    fontWeight={700}
                     component="h2"
+                    sx={{
+                      fontWeight: 700,
+                    }}
                   >
                     Travel radius
                   </Typography>
-                  <Typography variant="subtitle1" fontWeight={700} color="primary">
+                  <Typography
+                    variant="subtitle1"
+                    color="primary"
+                    sx={{
+                      fontWeight: 700,
+                    }}
+                  >
                     {field.value} km
                   </Typography>
                 </Stack>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                <Typography
+                  variant="body2"
+                  sx={{
+                    color: 'text.secondary',
+                    mb: 1,
+                  }}
+                >
                   You are offered jobs up to this far from your base.
                 </Typography>
                 <Box sx={{ px: 1 }}>

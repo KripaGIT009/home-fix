@@ -1,4 +1,4 @@
-import { Link as RouterLink } from 'react-router-dom';
+import { Link as RouterLink } from 'react-router';
 import { Alert, AlertTitle, Box, Button } from '@mui/material';
 import { useVerificationState } from '@features/verification/hooks';
 import { assessProfile, PROFILE_STEP_LABELS, PROFILE_STEP_ROUTES } from './completeness';

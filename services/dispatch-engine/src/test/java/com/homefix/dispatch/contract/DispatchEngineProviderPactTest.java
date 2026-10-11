@@ -8,8 +8,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.TestTemplate;
 import org.junit.jupiter.api.extension.ExtendWith;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import com.homefix.dispatch.event.BookingCreatedEvent;
 
 import au.com.dius.pact.provider.PactVerifyProvider;
@@ -36,7 +36,7 @@ import au.com.dius.pact.provider.junitsupport.loader.PactFolder;
 @ExtendWith(PactVerificationInvocationContextProvider.class)
 class DispatchEngineProviderPactTest {
 
-    private final ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
+    private final ObjectMapper objectMapper = new JsonMapper();
 
     @BeforeEach
     void before(PactVerificationContext context) {

@@ -51,13 +51,32 @@ export function AuthLayout({ title, subtitle, children, below }: AuthLayoutProps
 
         <Box sx={{ flexGrow: 1 }} />
 
-        <Typography variant="caption" color="text.secondary" align="center" sx={{ mt: 3 }}>
+        <Typography
+          variant="caption"
+          align="center"
+          sx={{
+            color: 'text.secondary',
+            mt: 3,
+          }}
+        >
           By continuing, you agree to our{' '}
-          <Link href="#" underline="hover" fontWeight={600}>
+          <Link
+            href="#"
+            underline="hover"
+            sx={{
+              fontWeight: 600,
+            }}
+          >
             Terms
           </Link>{' '}
           &amp;{' '}
-          <Link href="#" underline="hover" fontWeight={600}>
+          <Link
+            href="#"
+            underline="hover"
+            sx={{
+              fontWeight: 600,
+            }}
+          >
             Privacy Policy
           </Link>
           .

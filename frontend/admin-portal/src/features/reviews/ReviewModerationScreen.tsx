@@ -54,7 +54,13 @@ export function ReviewModerationScreen() {
       key: 'status',
       header: 'Status',
       render: (row) => (
-        <Stack direction="row" spacing={0.5} alignItems="center">
+        <Stack
+          direction="row"
+          spacing={0.5}
+          sx={{
+            alignItems: 'center',
+          }}
+        >
           <StatusChip status={row.status} />
           {row.flagReason ? (
             <Tooltip title={row.flagReason}>
@@ -73,7 +79,13 @@ export function ReviewModerationScreen() {
         const canModerate = row.status === 'PENDING' || row.status === 'FLAGGED';
         if (!canModerate) return null;
         return (
-          <Stack direction="row" spacing={1} justifyContent="flex-end">
+          <Stack
+            direction="row"
+            spacing={1}
+            sx={{
+              justifyContent: 'flex-end',
+            }}
+          >
             <Button
               size="small"
               variant="outlined"
@@ -103,7 +115,14 @@ export function ReviewModerationScreen() {
       title="Review Moderation"
       description="Publish or remove reviews. Flagged reviews are shown first."
     >
-      <Stack direction="row" spacing={1} sx={{ mb: 2 }} alignItems="center">
+      <Stack
+        direction="row"
+        spacing={1}
+        sx={{
+          alignItems: 'center',
+          mb: 2,
+        }}
+      >
         <TextField
           size="small"
           select

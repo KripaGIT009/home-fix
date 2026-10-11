@@ -53,14 +53,34 @@ export function CategoryManagementScreen() {
                 <Stack
                   direction="row"
                   spacing={2}
-                  alignItems="center"
-                  justifyContent="space-between"
-                  sx={{ width: '100%', pr: 2 }}
+                  sx={{
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    width: '100%',
+                    pr: 2,
+                  }}
                 >
-                  <Stack direction="row" spacing={1.5} alignItems="center">
-                    <Typography fontWeight={600}>{category.name}</Typography>
+                  <Stack
+                    direction="row"
+                    spacing={1.5}
+                    sx={{
+                      alignItems: 'center',
+                    }}
+                  >
+                    <Typography
+                      sx={{
+                        fontWeight: 600,
+                      }}
+                    >
+                      {category.name}
+                    </Typography>
                     <StatusChip status={category.status} />
-                    <Typography variant="caption" color="text.secondary">
+                    <Typography
+                      variant="caption"
+                      sx={{
+                        color: 'text.secondary',
+                      }}
+                    >
                       {category.subcategories.length} subcategories
                     </Typography>
                   </Stack>

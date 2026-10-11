@@ -12,8 +12,10 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
+
 import com.homefix.booking.client.BearerTokenRelay;
 import com.homefix.shared.resilience.ResilienceFactory;
 import com.sun.net.httpserver.HttpServer;
@@ -29,7 +31,7 @@ class HttpPricingClientAdapterTest {
     private static final String BREAKDOWN = "{\"basePrice\":500.00,\"platformFee\":55.00,"
             + "\"taxes\":99.00,\"couponAmount\":65.40,\"total\":588.60}";
 
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final ObjectMapper mapper = new JsonMapper();
     private HttpServer server;
     private volatile String lastBody;
 
@@ -65,8 +67,8 @@ class HttpPricingClientAdapterTest {
                 UUID.randomUUID(), customer, false, Instant.parse("2024-06-15T10:00:00Z"), "SAVE10"));
 
         JsonNode sent = mapper.readTree(lastBody);
-        assertThat(sent.path("couponCode").asText()).isEqualTo("SAVE10");
-        assertThat(sent.path("userId").asText()).isEqualTo(customer.toString());
+        assertThat(sent.path("couponCode").asString()).isEqualTo("SAVE10");
+        assertThat(sent.path("userId").asString()).isEqualTo(customer.toString());
         assertThat(estimate.total()).isEqualByComparingTo("588.60");
         assertThat(estimate.components()).containsEntry("couponAmount", new java.math.BigDecimal("65.40"));
     }

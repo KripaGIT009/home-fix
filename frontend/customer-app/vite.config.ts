@@ -2,7 +2,15 @@ import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import { fileURLToPath, URL } from 'node:url';
 
-// https://vitejs.dev/config/
+/** Matches modules of the given npm packages (or scopes) under node_modules. */
+function vendor(...packages: string[]): RegExp {
+  const names = packages
+    .map((name) => name.replaceAll('.', '\\.').replaceAll('/', '[\\\\/]'))
+    .join('|');
+  return new RegExp(String.raw`[\\/]node_modules[\\/](?:${names})[\\/]`);
+}
+
+// https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
 
@@ -54,17 +62,19 @@ export default defineConfig(({ mode }) => {
     build: {
       outDir: 'dist',
       sourcemap: mode !== 'production',
-      rollupOptions: {
+      rolldownOptions: {
         output: {
           // One 800 KB chunk means nothing renders until all of it is parsed.
           // Splitting the rarely-changing vendors keeps them cached across
           // deploys and lets the app shell arrive first.
-          manualChunks: {
-            react: ['react', 'react-dom', 'react-router-dom'],
-            mui: ['@mui/material', '@emotion/react', '@emotion/styled'],
-            icons: ['@mui/icons-material'],
-            data: ['@tanstack/react-query', 'axios', 'zustand'],
-            forms: ['react-hook-form', '@hookform/resolvers', 'zod'],
+          codeSplitting: {
+            groups: [
+              { name: 'react', test: vendor('react', 'react-dom', 'react-router', 'scheduler') },
+              { name: 'mui', test: vendor('@mui/material', '@mui/system', '@mui/utils', '@emotion') },
+              { name: 'icons', test: vendor('@mui/icons-material') },
+              { name: 'data', test: vendor('@tanstack/react-query', 'axios', 'zustand') },
+              { name: 'forms', test: vendor('react-hook-form', '@hookform/resolvers', 'zod') },
+            ],
           },
         },
       },

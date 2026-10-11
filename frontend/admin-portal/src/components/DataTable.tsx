@@ -89,7 +89,12 @@ export function DataTable<Row>({ columns, rows, rowKey, onRowClick }: DataTableP
           {rows.length === 0 ? (
             <TableRow>
               <TableCell colSpan={columns.length} align="center" sx={{ py: 5, border: 0 }}>
-                <Typography variant="body2" color="text.secondary">
+                <Typography
+                  variant="body2"
+                  sx={{
+                    color: 'text.secondary',
+                  }}
+                >
                   No records match the current filters.
                 </Typography>
               </TableCell>

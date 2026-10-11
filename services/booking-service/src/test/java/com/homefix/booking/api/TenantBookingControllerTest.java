@@ -20,8 +20,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
-import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder;
-import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
+import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -29,8 +28,9 @@ import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.validation.beanvalidation.LocalValidatorFactoryBean;
+import tools.jackson.databind.cfg.DateTimeFeature;
+import tools.jackson.databind.json.JsonMapper;
 
-import com.fasterxml.jackson.databind.SerializationFeature;
 import com.homefix.booking.address.CustomerAddressPort.ServiceAddress;
 import com.homefix.booking.domain.Booking;
 import com.homefix.booking.domain.BookingStatus;
@@ -62,9 +62,9 @@ class TenantBookingControllerTest {
         mvc = MockMvcBuilders.standaloneSetup(new TenantBookingController(service, new CallerIdentity()))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .setValidator(validator)
-                .setMessageConverters(new MappingJackson2HttpMessageConverter(
-                        Jackson2ObjectMapperBuilder.json()
-                                .featuresToDisable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+                .setMessageConverters(new JacksonJsonHttpMessageConverter(
+                        JsonMapper.builder()
+                                .disable(DateTimeFeature.WRITE_DATES_AS_TIMESTAMPS)
                                 .build()))
                 .build();
         SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(

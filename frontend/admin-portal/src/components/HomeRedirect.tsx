@@ -1,4 +1,4 @@
-import { Navigate } from 'react-router-dom';
+import { Navigate } from 'react-router';
 import { homePathFor } from '@config/navFilter';
 import { useAuthStore } from '@stores/authStore';
 import { APPLICATION_STATUS_PATH } from './RequireAuth';

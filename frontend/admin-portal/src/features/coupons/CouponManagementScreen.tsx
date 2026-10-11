@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useForm } from 'react-hook-form';
+import { useForm, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import {
   Alert,
@@ -19,7 +19,7 @@ import { DataTable, type Column } from '@components/DataTable';
 import { StatusChip } from '@components/StatusChip';
 import { formatCurrency, formatDate, formatNumber } from '@lib/format';
 import { useCoupons, useCreateCoupon, useDeactivateCoupon } from './hooks';
-import { couponSchema, type CouponFormValues } from './schemas';
+import { couponSchema, type CouponFormInput, type CouponFormValues } from './schemas';
 import type { Coupon, CreateCouponPayload } from './api';
 
 /**
@@ -125,9 +125,9 @@ function CreateCouponDialog({ onClose }: CreateCouponDialogProps) {
   const {
     register,
     handleSubmit,
-    watch,
+    control,
     formState: { errors },
-  } = useForm<CouponFormValues>({
+  } = useForm<CouponFormInput, unknown, CouponFormValues>({
     resolver: zodResolver(couponSchema),
     mode: 'onBlur',
     defaultValues: {
@@ -139,7 +139,7 @@ function CreateCouponDialog({ onClose }: CreateCouponDialogProps) {
     },
   });
 
-  const discountType = watch('discountType');
+  const discountType = useWatch({ control, name: 'discountType' });
 
   const onSubmit = (values: CouponFormValues) => {
     const payload: CreateCouponPayload = {
@@ -169,7 +169,7 @@ function CreateCouponDialog({ onClose }: CreateCouponDialogProps) {
       >
         <DialogContent dividers>
           <Grid container spacing={2}>
-            <Grid item xs={12} sm={6}>
+            <Grid size={{ xs: 12, sm: 6 }}>
               <TextField
                 label="Code"
                 fullWidth
@@ -178,7 +178,7 @@ function CreateCouponDialog({ onClose }: CreateCouponDialogProps) {
                 helperText={errors.code?.message}
               />
             </Grid>
-            <Grid item xs={12} sm={6}>
+            <Grid size={{ xs: 12, sm: 6 }}>
               <TextField
                 label="Discount type"
                 select
@@ -192,86 +192,100 @@ function CreateCouponDialog({ onClose }: CreateCouponDialogProps) {
                 <MenuItem value="PERCENTAGE">Percentage</MenuItem>
               </TextField>
             </Grid>
-            <Grid item xs={12} sm={6}>
+            <Grid size={{ xs: 12, sm: 6 }}>
               <TextField
                 label={discountType === 'PERCENTAGE' ? 'Discount (%)' : 'Discount amount'}
                 type="number"
                 fullWidth
-                inputProps={{ min: 0, step: 0.01 }}
                 {...register('discountValue')}
                 error={Boolean(errors.discountValue)}
                 helperText={errors.discountValue?.message}
+                slotProps={{
+                  htmlInput: { min: 0, step: 0.01 },
+                }}
               />
             </Grid>
-            <Grid item xs={12} sm={6}>
+            <Grid size={{ xs: 12, sm: 6 }}>
               <TextField
                 label="Max discount cap"
                 type="number"
                 fullWidth
                 disabled={discountType !== 'PERCENTAGE'}
-                inputProps={{ min: 0, step: 0.01 }}
                 {...register('maxDiscountCap')}
                 error={Boolean(errors.maxDiscountCap)}
                 helperText={
                   errors.maxDiscountCap?.message ??
                   (discountType === 'PERCENTAGE' ? 'Required for percentage coupons.' : undefined)
                 }
+                slotProps={{
+                  htmlInput: { min: 0, step: 0.01 },
+                }}
               />
             </Grid>
-            <Grid item xs={12} sm={6}>
+            <Grid size={{ xs: 12, sm: 6 }}>
               <TextField
                 label="Minimum order value"
                 type="number"
                 fullWidth
-                inputProps={{ min: 0, step: 0.01 }}
                 {...register('minOrderValue')}
                 error={Boolean(errors.minOrderValue)}
                 helperText={errors.minOrderValue?.message}
+                slotProps={{
+                  htmlInput: { min: 0, step: 0.01 },
+                }}
               />
             </Grid>
-            <Grid item xs={12} sm={6} />
-            <Grid item xs={12} sm={6}>
+            <Grid size={{ xs: 12, sm: 6 }} />
+            <Grid size={{ xs: 12, sm: 6 }}>
               <TextField
                 label="Valid from"
                 type="date"
                 fullWidth
-                InputLabelProps={{ shrink: true }}
                 {...register('validFrom')}
                 error={Boolean(errors.validFrom)}
                 helperText={errors.validFrom?.message}
+                slotProps={{
+                  inputLabel: { shrink: true },
+                }}
               />
             </Grid>
-            <Grid item xs={12} sm={6}>
+            <Grid size={{ xs: 12, sm: 6 }}>
               <TextField
                 label="Expiry date"
                 type="date"
                 fullWidth
-                InputLabelProps={{ shrink: true }}
                 {...register('expiryDate')}
                 error={Boolean(errors.expiryDate)}
                 helperText={errors.expiryDate?.message}
+                slotProps={{
+                  inputLabel: { shrink: true },
+                }}
               />
             </Grid>
-            <Grid item xs={12} sm={6}>
+            <Grid size={{ xs: 12, sm: 6 }}>
               <TextField
                 label="Per-user limit"
                 type="number"
                 fullWidth
-                inputProps={{ min: 1, step: 1 }}
                 {...register('perUserLimit')}
                 error={Boolean(errors.perUserLimit)}
                 helperText={errors.perUserLimit?.message}
+                slotProps={{
+                  htmlInput: { min: 1, step: 1 },
+                }}
               />
             </Grid>
-            <Grid item xs={12} sm={6}>
+            <Grid size={{ xs: 12, sm: 6 }}>
               <TextField
                 label="Total limit"
                 type="number"
                 fullWidth
-                inputProps={{ min: 1, step: 1 }}
                 {...register('totalLimit')}
                 error={Boolean(errors.totalLimit)}
                 helperText={errors.totalLimit?.message}
+                slotProps={{
+                  htmlInput: { min: 1, step: 1 },
+                }}
               />
             </Grid>
           </Grid>

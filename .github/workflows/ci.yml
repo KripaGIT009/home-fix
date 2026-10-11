@@ -66,9 +66,10 @@ jobs:
         env:
           REQUESTED: ${{ github.event.inputs.services || 'all' }}
         run: |
-          mapfile -t all < <(for d in services/*/; do [ -f "${d}pom.xml" ] && basename "${d}"; done)
+          # The deployables: every apps/<name> plus the API gateway.
+          mapfile -t all < <({ for d in apps/*/; do [ -f "${d}pom.xml" ] && basename "${d}"; done; [ -f services/api-gateway/pom.xml ] && echo api-gateway; })
           if [ "${#all[@]}" -eq 0 ]; then
-            echo "::error::No services found under services/."
+            echo "::error::No deployables found under apps/."
             exit 1
           fi
           if [ "${REQUESTED}" = "all" ]; then
@@ -79,8 +80,8 @@ jobs:
             for w in "${wanted[@]}"; do
               w=$(echo "${w}" | xargs)
               [ -z "${w}" ] && continue
-              if [ ! -f "services/${w}/pom.xml" ]; then
-                echo "::error::Unknown service '${w}'. Known: ${all[*]}"
+              if [[ " ${all[*]} " != *" ${w} "* ]]; then
+                echo "::error::Unknown deployable '${w}'. Known: ${all[*]}"
                 exit 1
               fi
               selected+=("${w}")

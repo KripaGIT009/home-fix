@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams } from 'react-router';
 import {
   Avatar,
   Badge,
@@ -66,7 +66,12 @@ export function AvailableProfessionalsScreen() {
   return (
     <AppShell title="Professionals near you" width="full">
       <Stack spacing={2}>
-        <Typography variant="body1" color="text.secondary">
+        <Typography
+          variant="body1"
+          sx={{
+            color: 'text.secondary',
+          }}
+        >
           Verified pros near you, ranked by fit. We offer your job to them in turn.
         </Typography>
 
@@ -119,7 +124,13 @@ function ProfessionalCard({ professional }: { professional: AvailableProfessiona
   return (
     <Card>
       <CardContent>
-        <Stack direction="row" spacing={2} alignItems="flex-start">
+        <Stack
+          direction="row"
+          spacing={2}
+          sx={{
+            alignItems: 'flex-start',
+          }}
+        >
           <Badge
             overlap="circular"
             anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
@@ -141,8 +152,20 @@ function ProfessionalCard({ professional }: { professional: AvailableProfessiona
           </Badge>
 
           <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-            <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
-              <Typography variant="subtitle1" fontWeight={700}>
+            <Stack
+              direction="row"
+              spacing={1}
+              sx={{
+                alignItems: 'center',
+                flexWrap: 'wrap',
+              }}
+            >
+              <Typography
+                variant="subtitle1"
+                sx={{
+                  fontWeight: 700,
+                }}
+              >
                 {professional.displayName}
               </Typography>
               {professional.verified ? (
@@ -157,25 +180,61 @@ function ProfessionalCard({ professional }: { professional: AvailableProfessiona
               ) : null}
             </Stack>
 
-            <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 0.25 }}>
-              <Stack direction="row" spacing={0.25} alignItems="center">
+            <Stack
+              direction="row"
+              spacing={1}
+              sx={{
+                alignItems: 'center',
+                mt: 0.25,
+              }}
+            >
+              <Stack
+                direction="row"
+                spacing={0.25}
+                sx={{
+                  alignItems: 'center',
+                }}
+              >
                 <StarRounded sx={{ fontSize: 17, color: brand.warm }} aria-hidden />
-                <Typography variant="body2" fontWeight={700}>
+                <Typography
+                  variant="body2"
+                  sx={{
+                    fontWeight: 700,
+                  }}
+                >
                   {professional.rating.toFixed(1)}
                 </Typography>
               </Stack>
-              <Stack direction="row" spacing={0.5} alignItems="center">
+              <Stack
+                direction="row"
+                spacing={0.5}
+                sx={{
+                  alignItems: 'center',
+                }}
+              >
                 <WorkHistoryRoundedIcon
                   sx={{ fontSize: 16, color: 'text.secondary' }}
                   aria-hidden
                 />
-                <Typography variant="body2" color="text.secondary">
+                <Typography
+                  variant="body2"
+                  sx={{
+                    color: 'text.secondary',
+                  }}
+                >
                   {professional.jobsCompleted} jobs
                 </Typography>
               </Stack>
             </Stack>
 
-            <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mt: 0.75 }}>
+            <Stack
+              direction="row"
+              spacing={1.5}
+              sx={{
+                alignItems: 'center',
+                mt: 0.75,
+              }}
+            >
               <MetaItem
                 icon={<PlaceRoundedIcon sx={{ fontSize: 16 }} />}
                 label={formatDistanceKm(professional.distanceKm)}
@@ -191,10 +250,22 @@ function ProfessionalCard({ professional }: { professional: AvailableProfessiona
         <Divider sx={{ my: 1.5 }} />
 
         <Box>
-          <Typography variant="caption" color="text.secondary" display="block">
+          <Typography
+            variant="caption"
+            sx={{
+              color: 'text.secondary',
+              display: 'block',
+            }}
+          >
             Starting price
           </Typography>
-          <Typography variant="h6" component="p" fontWeight={800}>
+          <Typography
+            variant="h6"
+            component="p"
+            sx={{
+              fontWeight: 800,
+            }}
+          >
             {formatCurrency(professional.startingPrice, professional.currency)}
           </Typography>
         </Box>
@@ -209,8 +280,8 @@ function MetaItem({ icon, label }: { icon: React.ReactNode; label: string }) {
     <Stack
       direction="row"
       spacing={0.5}
-      alignItems="center"
       sx={{
+        alignItems: 'center',
         color: 'text.secondary',
         bgcolor: brand.slateSoft,
         px: 1,
@@ -219,7 +290,12 @@ function MetaItem({ icon, label }: { icon: React.ReactNode; label: string }) {
       }}
     >
       {icon}
-      <Typography variant="caption" fontWeight={600}>
+      <Typography
+        variant="caption"
+        sx={{
+          fontWeight: 600,
+        }}
+      >
         {label}
       </Typography>
     </Stack>

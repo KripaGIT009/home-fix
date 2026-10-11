@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { Controller, useFieldArray, useForm, useWatch, type Control } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import {
@@ -71,7 +71,7 @@ export function AvailabilityScreen() {
   const profile = useMyProfile();
 
   return (
-    <AppShell title="Availability" onBack={() => navigate('/profile')}>
+    <AppShell title="Availability" onBack={() => void navigate('/profile')}>
       <QueryStateView
         isLoading={profile.isLoading}
         isError={profile.isError}
@@ -82,7 +82,10 @@ export function AvailabilityScreen() {
         {profile.data ? (
           <Stack spacing={2}>
             <EmergencyAvailabilityCard profile={profile.data} />
-            <WeeklyAvailabilityForm profile={profile.data} onSaved={() => navigate('/profile')} />
+            <WeeklyAvailabilityForm
+              profile={profile.data}
+              onSaved={() => void navigate('/profile')}
+            />
           </Stack>
         ) : null}
       </QueryStateView>
@@ -99,14 +102,25 @@ function EmergencyAvailabilityCard({ profile }: { profile: ProviderProfile }) {
   return (
     <Card>
       <CardContent>
-        <Stack direction="row" spacing={1.5} alignItems="flex-start">
+        <Stack
+          direction="row"
+          spacing={1.5}
+          sx={{
+            alignItems: 'flex-start',
+          }}
+        >
           <BoltRoundedIcon color="warning" aria-hidden sx={{ mt: 0.75 }} />
           <Box sx={{ flex: 1, minWidth: 0 }}>
             <FormControlLabel
               sx={{ m: 0, width: '100%', justifyContent: 'space-between' }}
               labelPlacement="start"
               label={
-                <Typography variant="subtitle1" fontWeight={700}>
+                <Typography
+                  variant="subtitle1"
+                  sx={{
+                    fontWeight: 700,
+                  }}
+                >
                   Take emergency jobs
                 </Typography>
               }
@@ -118,7 +132,12 @@ function EmergencyAvailabilityCard({ profile }: { profile: ProviderProfile }) {
                 />
               }
             />
-            <Typography variant="body2" color="text.secondary">
+            <Typography
+              variant="body2"
+              sx={{
+                color: 'text.secondary',
+              }}
+            >
               Urgent requests, such as a burst pipe, go only to providers who opt in. They need a
               quick response.
             </Typography>
@@ -176,13 +195,21 @@ export function WeeklyAvailabilityForm({ profile, onSaved }: WeeklyAvailabilityF
           noValidate
           onSubmit={(event) => void handleSubmit(onSubmit)(event)}
         >
-          <Stack direction="row" spacing={1} alignItems="center">
+          <Stack
+            direction="row"
+            spacing={1}
+            sx={{
+              alignItems: 'center',
+            }}
+          >
             <EventAvailableRoundedIcon color="primary" aria-hidden />
             <Typography
               id="weekly-hours-heading"
               variant="subtitle1"
-              fontWeight={700}
               component="h2"
+              sx={{
+                fontWeight: 700,
+              }}
             >
               Weekly hours
             </Typography>
@@ -213,7 +240,12 @@ export function WeeklyAvailabilityForm({ profile, onSaved }: WeeklyAvailabilityF
 
           {mode === 'weekly' ? (
             <Stack spacing={1.5} divider={<Divider flexItem />}>
-              <Typography variant="caption" color="text.secondary">
+              <Typography
+                variant="caption"
+                sx={{
+                  color: 'text.secondary',
+                }}
+              >
                 Times are India Standard Time. A day with no hours means you are not offered jobs
                 that day.
               </Typography>
@@ -223,8 +255,20 @@ export function WeeklyAvailabilityForm({ profile, onSaved }: WeeklyAvailabilityF
                   .filter(({ field }) => field.dayOfWeek === day);
                 return (
                   <Box key={day}>
-                    <Stack direction="row" justifyContent="space-between" alignItems="center">
-                      <Typography variant="subtitle2" fontWeight={700} component="h3">
+                    <Stack
+                      direction="row"
+                      sx={{
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                      }}
+                    >
+                      <Typography
+                        variant="subtitle2"
+                        component="h3"
+                        sx={{
+                          fontWeight: 700,
+                        }}
+                      >
                         {DAY_LABELS[day]}
                       </Typography>
                       <Button
@@ -237,7 +281,12 @@ export function WeeklyAvailabilityForm({ profile, onSaved }: WeeklyAvailabilityF
                       </Button>
                     </Stack>
                     {dayFields.length === 0 ? (
-                      <Typography variant="body2" color="text.secondary">
+                      <Typography
+                        variant="body2"
+                        sx={{
+                          color: 'text.secondary',
+                        }}
+                      >
                         Not available
                       </Typography>
                     ) : null}
@@ -248,7 +297,13 @@ export function WeeklyAvailabilityForm({ profile, onSaved }: WeeklyAvailabilityF
                           slotErrors?.startHour?.message ?? slotErrors?.endHour?.message;
                         return (
                           <Box key={field.id}>
-                            <Stack direction="row" spacing={1} alignItems="center">
+                            <Stack
+                              direction="row"
+                              spacing={1}
+                              sx={{
+                                alignItems: 'center',
+                              }}
+                            >
                               <HourSelect
                                 control={control}
                                 name={`slots.${index}.startHour`}
@@ -328,13 +383,15 @@ function HourSelect({ control, name, label, ariaLabel, hours, error }: HourSelec
           size="small"
           fullWidth
           error={error}
-          SelectProps={{ native: true }}
-          inputProps={{ 'aria-label': ariaLabel }}
-          InputLabelProps={{ shrink: true }}
           value={field.value}
           onChange={(event) => field.onChange(Number(event.target.value))}
           onBlur={field.onBlur}
           inputRef={field.ref}
+          slotProps={{
+            htmlInput: { 'aria-label': ariaLabel },
+            select: { native: true },
+            inputLabel: { shrink: true },
+          }}
         >
           {hours.map((hour) => (
             <option key={hour} value={hour}>

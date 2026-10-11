@@ -17,14 +17,14 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
-import com.fasterxml.jackson.databind.SerializationFeature;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
-import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder;
-import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
+import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import tools.jackson.databind.cfg.DateTimeFeature;
+import tools.jackson.databind.json.JsonMapper;
 
 import com.homefix.complaint.domain.Complaint;
 import com.homefix.complaint.domain.ComplaintCategory;
@@ -52,9 +52,9 @@ class AdminComplaintControllerTest {
         mvc = MockMvcBuilders.standaloneSetup(new AdminComplaintController(service))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 // Boot's auto-configured mapper writes Instants as ISO-8601; mirror it here.
-                .setMessageConverters(new MappingJackson2HttpMessageConverter(
-                        Jackson2ObjectMapperBuilder.json()
-                                .featuresToDisable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+                .setMessageConverters(new JacksonJsonHttpMessageConverter(
+                        JsonMapper.builder()
+                                .disable(DateTimeFeature.WRITE_DATES_AS_TIMESTAMPS)
                                 .build()))
                 .build();
     }

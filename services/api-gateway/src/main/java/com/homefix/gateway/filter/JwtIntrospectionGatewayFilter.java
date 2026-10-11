@@ -62,6 +62,9 @@ public class JwtIntrospectionGatewayFilter implements GlobalFilter, Ordered {
             "/auth/invitations",
             // Razorpay's webhook carries no JWT; the Payment Service verifies its HMAC signature.
             "/payments/webhooks/razorpay",
+            // The web apps' public settings (config.app_config rows marked exposed_to_clients),
+            // read before sign-in; the route only forwards GET.
+            "/config/client",
             "/actuator",
             "/health");
 

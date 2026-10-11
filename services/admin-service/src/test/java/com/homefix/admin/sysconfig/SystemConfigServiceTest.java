@@ -12,7 +12,9 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
+
 import com.homefix.admin.audit.AuditLogService;
 import com.homefix.admin.support.InMemoryAuditLogStore;
 import com.homefix.admin.support.InMemorySystemSettingStore;
@@ -35,7 +37,7 @@ class SystemConfigServiceTest {
     void setUp() {
         store = new InMemorySystemSettingStore();
         auditStore = new InMemoryAuditLogStore();
-        service = new SystemConfigService(store, new AuditLogService(auditStore, new ObjectMapper(), CLOCK), CLOCK);
+        service = new SystemConfigService(store, new AuditLogService(auditStore, new JsonMapper(), CLOCK), CLOCK);
     }
 
     @Test

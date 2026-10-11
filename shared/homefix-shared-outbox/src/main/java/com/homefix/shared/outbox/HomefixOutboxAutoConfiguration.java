@@ -5,7 +5,7 @@ import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.boot.autoconfigure.kafka.KafkaAutoConfiguration;
+import org.springframework.boot.kafka.autoconfigure.KafkaAutoConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.kafka.core.KafkaTemplate;
 
@@ -63,7 +63,7 @@ public class HomefixOutboxAutoConfiguration {
     @ConditionalOnBean(OutboxEventRepository.class)
     @ConditionalOnMissingBean
     public OutboxEventPublisher outboxEventPublisher(OutboxEventRepository repository,
-                                                     com.fasterxml.jackson.databind.ObjectMapper objectMapper) {
+                                                     tools.jackson.databind.ObjectMapper objectMapper) {
         return new OutboxEventPublisher(repository, objectMapper);
     }
 

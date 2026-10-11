@@ -25,6 +25,7 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -307,6 +308,7 @@ class DispatchServiceTest {
 
     @Test
     void declinedOfferPublishesProviderRejectedWithBookingCustomerProviderAndReason() {
+        properties.setOfferBatchSize(1);
         ProviderCandidate decliner = candidate(0.9);
         ProviderCandidate acceptor = candidate(0.6);
         providerQuery.whenRadiusAtLeast(10.0, decliner, acceptor);
@@ -379,7 +381,8 @@ class DispatchServiceTest {
         UUID accepted = service.dispatch(emergencyRequest());
 
         assertThat(accepted).isNull();
-        assertThat(jobOffer.offeredProviders()).containsExactly(first.providerId());
+        // Both were in the one wave that was outstanding when the customer cancelled; no further wave.
+        assertThat(jobOffer.waves()).containsExactly(List.of(first.providerId(), second.providerId()));
         assertThat(rejectedPublisher.rejections()).isEmpty();
         assertThat(bookingTransition.searchingFailedCalled()).isFalse();
         assertThat(notification.dispatcherAlerts()).isZero();
@@ -412,7 +415,8 @@ class DispatchServiceTest {
         // The recorded acceptance is dropped, so the reconciler never retries it either.
         assertThat(acceptanceLedger.outstanding()).isEmpty();
         assertThat(acceptanceLedger.discarded()).hasSize(1);
-        assertThat(jobOffer.offeredProviders()).containsExactly(acceptor.providerId());
+        // The acceptance ended the search: no further wave was offered.
+        assertThat(jobOffer.waves()).hasSize(1);
     }
 
     @Test
@@ -478,9 +482,9 @@ class DispatchServiceTest {
 
         UUID accepted = service.dispatch(request);
 
-        // The provider said yes: nobody else is offered the job and nothing is announced yet.
+        // The provider said yes: no further wave is offered and nothing is announced yet.
         assertThat(accepted).isEqualTo(acceptor.providerId());
-        assertThat(jobOffer.offeredProviders()).containsExactly(acceptor.providerId());
+        assertThat(jobOffer.waves()).hasSize(1);
         assertThat(acceptanceLedger.published()).isFalse();
         assertThat(acceptanceLedger.outstanding()).containsKey(request.bookingId());
         assertThat(acceptanceLedger.postponed()).containsExactly(request.bookingId());
@@ -546,5 +550,127 @@ class DispatchServiceTest {
 
         assertThat(bookingTransition.searchingFailedCalled()).isFalse();
         assertThat(notification.dispatcherAlerts()).isZero();
+    }
+
+    // ---- Waves: several providers at once, first accept wins ----------------------------------
+
+    @Test
+    void offersTheBestRankedProvidersTogetherAndTheNextBestInTheNextWave() {
+        ProviderCandidate p1 = candidate(0.95);
+        ProviderCandidate p2 = candidate(0.85);
+        ProviderCandidate p3 = candidate(0.75);
+        ProviderCandidate p4 = candidate(0.65);
+        ProviderCandidate p5 = candidate(0.55);
+        providerQuery.whenRadiusAtLeast(10.0, p5, p3, p1, p4, p2);
+        jobOffer.respond(p4.providerId(), OfferOutcome.ACCEPTED);
+
+        UUID accepted = service.dispatch(emergencyRequest());
+
+        assertThat(accepted).isEqualTo(p4.providerId());
+        // Default wave size 3: the top three together, then the remaining two.
+        assertThat(jobOffer.waves()).containsExactly(
+                List.of(p1.providerId(), p2.providerId(), p3.providerId()),
+                List.of(p4.providerId(), p5.providerId()));
+        assertThat(jobOffer.lockHeldAtEveryOffer()).isTrue();
+        assertThat(lock.isHeld(p1.providerId())).isFalse();
+        assertThat(lock.isHeld(p5.providerId())).isFalse();
+    }
+
+    @Test
+    void firstAcceptInAWaveTakesTheJobAndNobodyIsAnnouncedAsRejected() {
+        ProviderCandidate p1 = candidate(0.9);
+        ProviderCandidate p2 = candidate(0.8);
+        ProviderCandidate p3 = candidate(0.7);
+        providerQuery.whenRadiusAtLeast(10.0, p1, p2, p3);
+        jobOffer.respond(p1.providerId(), OfferOutcome.REJECTED);
+        jobOffer.respond(p2.providerId(), OfferOutcome.ACCEPTED);
+        jobOffer.respond(p3.providerId(), OfferOutcome.ACCEPTED);
+
+        UUID accepted = service.dispatch(emergencyRequest());
+
+        assertThat(accepted).isEqualTo(p2.providerId());
+        assertThat(bookingTransition.acceptedProviderId()).isEqualTo(p2.providerId());
+        assertThat(bookingTransition.acceptCalls()).isEqualTo(1);
+        assertThat(jobOffer.waves()).hasSize(1);
+        assertThat(rejectedPublisher.rejections()).isEmpty();
+    }
+
+    @Test
+    void anUnacceptedWaveAnnouncesEachProvidersOwnAnswer() {
+        ProviderCandidate decliner = candidate(0.9);
+        ProviderCandidate silent = candidate(0.8);
+        providerQuery.whenRadiusAtLeast(10.0, decliner, silent);
+        jobOffer.respond(decliner.providerId(), OfferOutcome.REJECTED);
+        DispatchRequest request = emergencyRequest();
+
+        service.dispatch(request);
+
+        assertThat(rejectedPublisher.rejections()).containsExactly(
+                new Rejection(request.bookingId(), request.customerId(), decliner.providerId(),
+                        ProviderRejectedEvent.REASON_REJECTED),
+                new Rejection(request.bookingId(), request.customerId(), silent.providerId(),
+                        ProviderRejectedEvent.REASON_TIMED_OUT));
+        // Both dropped from the pool: neither is offered again when the radius expands.
+        assertThat(jobOffer.waves()).hasSize(1);
+    }
+
+    // ---- Agency fallback after the configured minutes ------------------------------------------
+
+    @Test
+    void handsTheBookingToTheAgenciesOnceTheFallbackTimeHasPassed() {
+        properties.setAgencyFallbackMinutes(2);
+        properties.setOfferBatchSize(2);
+        List<ProviderCandidate> pool = new ArrayList<>();
+        for (int i = 0; i < 10; i++) {
+            pool.add(candidate(0.9 - i * 0.05));
+        }
+        providerQuery.whenRadiusAtLeast(10.0, pool.toArray(ProviderCandidate[]::new));
+        jobOffer.whenNobodyAccepts(clock::advance);
+        bookingTransition.routeToTenants();
+        Instant start = clock.instant();
+
+        UUID accepted = service.dispatch(emergencyRequest());
+
+        assertThat(accepted).isNull();
+        // Two 60 s waves fill the two minutes; the other six providers are never offered.
+        assertThat(jobOffer.waves()).hasSize(2);
+        assertThat(jobOffer.offeredProviders()).hasSize(4);
+        assertThat(Duration.between(start, clock.instant())).isEqualTo(Duration.ofMinutes(2));
+        assertThat(providerQuery.queriedRadii()).containsExactly(10.0);
+        assertThat(bookingTransition.searchingFailedCalled()).isTrue();
+        // Routed to the agencies: the dispatcher team is not alerted.
+        assertThat(notification.dispatcherAlerts()).isZero();
+    }
+
+    @Test
+    void noWaveRunsPastTheFallbackTime() {
+        properties.setAgencyFallbackMinutes(1);
+        properties.setOfferTimeoutSeconds(45);
+        properties.setOfferBatchSize(1);
+        providerQuery.whenRadiusAtLeast(10.0, candidate(0.9), candidate(0.8), candidate(0.7));
+        jobOffer.whenNobodyAccepts(clock::advance);
+
+        service.dispatch(emergencyRequest());
+
+        // 45 s for the first wave, then only the 15 s left before the hand-off.
+        assertThat(jobOffer.windows()).containsExactly(Duration.ofSeconds(45), Duration.ofSeconds(15));
+        assertThat(bookingTransition.searchingFailedCalled()).isTrue();
+        assertThat(notification.dispatcherAlerts()).isEqualTo(1);
+    }
+
+    @Test
+    void anAcceptanceInsideTheFallbackTimeIsKept() {
+        properties.setAgencyFallbackMinutes(2);
+        properties.setOfferBatchSize(1);
+        ProviderCandidate first = candidate(0.9);
+        ProviderCandidate second = candidate(0.8);
+        providerQuery.whenRadiusAtLeast(10.0, first, second);
+        jobOffer.respond(second.providerId(), OfferOutcome.ACCEPTED);
+        jobOffer.whenNobodyAccepts(clock::advance);
+
+        UUID accepted = service.dispatch(emergencyRequest());
+
+        assertThat(accepted).isEqualTo(second.providerId());
+        assertThat(bookingTransition.searchingFailedCalled()).isFalse();
     }
 }

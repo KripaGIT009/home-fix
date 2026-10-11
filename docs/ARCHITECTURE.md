@@ -376,18 +376,15 @@ sequenceDiagram
     DISP->>PROV: GET /internal/providers/eligible<br/>(APPROVED, skill tag, radius, available)
     PROV-->>DISP: scored candidates
 
-    loop each candidate, best score first
-        DISP->>RD: SET NX PX lock:provider
-        alt lock held by another booking's offer (provider busy)
-            note over DISP: skip for now but keep in the pool:<br/>retried after the free candidates, for up to one offer window
-        else lock acquired
-            DISP->>RD: store offer (window 60 s)
-            PAPP->>DISP: GET /dispatch/offers via gateway (polled every 5 s)
-            alt accept
-                PAPP->>DISP: POST /dispatch/offers/{bookingId}/accept<br/>(compare-and-set in Redis)
-            else decline or window expires
-                DISP->>PG: outbox ProviderRejected, drop provider, next
-            end
+    loop waves of the best-scored offer-batch-size providers (default 3), until agency-fallback-minutes (default 5)
+        DISP->>RD: SET NX PX lock:provider for each provider in the wave
+        note over DISP: a provider whose lock is held by another booking's offer is busy:<br/>kept in the pool for a later wave (waited on for up to one offer window)
+        DISP->>RD: store the wave's offers in one hash (window 60 s, never past the fallback time)
+        PAPP->>DISP: GET /dispatch/offers via gateway (polled every 5 s)
+        alt first provider accepts
+            PAPP->>DISP: POST /dispatch/offers/{bookingId}/accept<br/>(compare-and-set: accepts and withdraws the others' offers)
+        else everyone declines or the window expires
+            DISP->>PG: outbox ProviderRejected per provider, drop them, next wave
         end
     end
 
@@ -396,9 +393,9 @@ sequenceDiagram
     DISP->>PG: INSERT outbox_event (ProviderAccepted)
 ```
 
-If no candidate accepts within the configured radius cycles, dispatch calls `POST /internal/bookings/{id}/searching-failed`, and booking-service either routes the booking to the covering Tenants (`AWAITING_ASSIGNMENT`, section 5.8) or fails it (`SEARCHING_FAILED`, announced as `BookingCancelled`). Dispatch sends its own "no provider" notices only in the second case.
+If no candidate accepts within `agency-fallback-minutes` (default 5), or the configured radius cycles run out sooner, dispatch calls `POST /internal/bookings/{id}/searching-failed`, and booking-service either routes the booking to the covering Tenants (`AWAITING_ASSIGNMENT`, section 5.8) or fails it (`SEARCHING_FAILED`, announced as `BookingCancelled`). Dispatch sends its own "no provider" notices only in the second case.
 
-Offers live only in Redis: the provider app reads and answers them through the gateway (`/dispatch/offers/**`, SERVICE_PROVIDER only, matched to the JWT subject), and a late or double answer is refused by the compare-and-set. A `BookingCancelled` stops an in-flight search and withdraws the pending offer. Two gaps remain: a dispatch failure after `BookingCreated` is acknowledged (outage, restart mid-search) leaves the booking in `SEARCHING_PROVIDER` with no sweeper, and the `provider-accepted` call and the `ProviderAccepted` row are a dual write. See review sections 16.1, 17.1 and 17.5.
+Offers live only in Redis: the provider app reads and answers them through the gateway (`/dispatch/offers/**`, SERVICE_PROVIDER only, matched to the JWT subject), and a late or double answer is refused by the compare-and-set. All of a booking's offers live in one Redis hash, so the first accept and the withdrawal of everyone else's offer are one atomic write; a provider who accepts a moment later gets 409 `OFFER_TAKEN`. A `BookingCancelled` stops an in-flight search and withdraws the pending offers. Two gaps remain: a dispatch failure after `BookingCreated` is acknowledged (outage, restart mid-search) leaves the booking in `SEARCHING_PROVIDER` with no sweeper, and the `provider-accepted` call and the `ProviderAccepted` row are a dual write. See review sections 16.1, 17.1 and 17.5.
 
 ### 5.4 Job execution milestones
 
@@ -1455,21 +1452,23 @@ flowchart TD
     H --> H4["idle time weight"]
     H1 & H2 & H3 & H4 --> I["Rank descending"]
 
-    I --> J["Next candidate"]
+    I --> J["Next wave: the best<br/>offer-batch-size candidates (default 3)"]
     J --> K["Acquire Redis lock<br/>SET NX PX per provider"]
-    K --> L{"Lock acquired?"}
-    L -->|"no: busy with another offer"| BUSY["Keep in pool; retry after the<br/>free candidates, up to one offer window"]
+    K --> L{"Any lock acquired?"}
+    L -->|"no: all busy with other offers"| BUSY["Keep in pool; wait up to<br/>one offer window"]
     BUSY --> J
-    L -->|yes| M["Offer in Redis, poll for the<br/>provider's answer (60 s window)"]
-    M --> N{"Accepted?"}
-    N -->|no| O["Release lock, ProviderRejected,<br/>drop from pool"]
-    O --> J
+    L -->|yes| M["Offer the wave at once in Redis;<br/>poll for answers (60 s window)"]
+    M --> N{"Someone accepted?"}
+    N -->|no| O["Release locks, ProviderRejected<br/>per provider, drop from pool"]
+    O --> T{"agency-fallback-minutes<br/>passed? (default 5)"}
+    T -->|no| J
+    T -->|yes| E
     J -->|"pool exhausted"| E
     N -->|yes| P["POST provider-accepted<br/>→ PROVIDER_ACCEPTED"]
     P --> Q["Publish ProviderAccepted"]
 ```
 
-Weights are validated with `BigDecimal` and must sum to one. They are stored in a process-local map, so admin changes (Admin Portal, Dispatch module) apply at runtime but are lost on restart and differ between replicas. Before every offer the search checks whether a `BookingCancelled` has arrived, and a 409 or 404 from booking-service ends the run quietly.
+Weights are validated with `BigDecimal` and must sum to one. They are stored in a process-local map, so admin changes (Admin Portal, Dispatch module) apply at runtime but are lost on restart and differ between replicas. Before every wave the search checks whether a `BookingCancelled` has arrived, and a 409 or 404 from booking-service ends the run quietly. The wave size (`offerBatchSize`, 1–10) and the agency hand-off time (`agencyFallbackMinutes`, 1–30) are tunable alongside the weights; no wave's window runs past the hand-off time.
 
 ---
 
@@ -1484,7 +1483,7 @@ graph TB
         RD[("Redis-compatible :6379<br/>Memurai, or a redis container")]
         KF[["Kafka 4.1 KRaft, C:\kafka<br/>:9092 host, :9094 containers<br/>started by hand"]]
         subgraph net["Docker Compose: docker-compose.core.yml"]
-            S["20 service containers<br/>8080 – 8099, mem_limit 448m each"]
+            S["5 Java containers (20 services)<br/>identity-app 896m · jobs-app 1280m<br/>money-app 640m · engagement-app 1152m<br/>api-gateway 448m · ports 8080 – 8099"]
             W["3 nginx SPA containers<br/>5173, 5174, 5175"]
         end
         SMS["docker/dev-sms/dev-sms.log<br/>bind mount, OTP sink"]
@@ -1499,7 +1498,7 @@ graph TB
 
 Postgres, Kafka and Redis are the ones installed on the machine, reached from the containers through `host.docker.internal` (override with `HOMEFIX_DB_HOST`, `HOMEFIX_REDIS_HOST`, `HOMEFIX_KAFKA_BOOTSTRAP_SERVERS`; `docker-compose.infra.yml` runs them as containers instead). Kafka does not start on its own after a reboot, and on native Windows it runs with retention and the log cleaner off because it cannot delete segments. Setup is in [LOCAL_ACCESS.md](LOCAL_ACCESS.md) section 1.
 
-Each service container has a `wget` readiness healthcheck with a 300 s start period and a bounded `on-failure` restart policy. Images are runtime-only: the fat jar must already exist under each service's `target/`. Every Java service has `mem_limit: 448m` and a `JAVA_TOOL_OPTIONS` heap percentage, because twenty unbounded JVMs exhaust the WSL VM.
+The 20 services run in five Java containers: the API gateway and the four deployables under `apps/`, each of which starts its services as separate Spring contexts in one JVM (`shared/homefix-service-host`), every service still on its own port. The deployables' healthcheck probes every hosted service's `/actuator/health/readiness` (180 s start period; the gateway keeps 300 s), with a bounded `on-failure` restart policy. Images are runtime-only (Java 25, `eclipse-temurin:25-jre-alpine`, layered with `-Djarmode=tools extract`): the jar must already exist under `apps/<deployable>/target/` or `services/api-gateway/target/`. Each container has a `mem_limit` sized for the services it hosts and `JAVA_TOOL_OPTIONS` with a heap percentage and the serial collector; five JVMs instead of twenty is most of the memory saving. A variable meant for one hosted service is prefixed with its name (`PRICING_ENGINE__LOGGING_LEVEL_ROOT`); unprefixed variables reach all of the deployable's services.
 
 Settings that differ from the code defaults locally:
 
@@ -1508,12 +1507,41 @@ Settings that differ from the code defaults locally:
 | `PAYMENT_SIMULATOR_ENABLED`, `PAYMENT_DEFAULT_GATEWAY` | payment-service | `true`, `simulator` (or `razorpay` from `.env`) | settles payments through the signed-callback path without a real gateway; **local only**, never set in Helm |
 | `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` | payment-service | from `.env`, test-mode keys, optional | Razorpay Checkout; without them the `razorpay` gateway refuses new payments (503). Helm reads them from `payment-service-secrets` |
 | `EMAIL_PROVIDER`, `EMAIL_FILE_PATH` | auth-service | `file`, the dev mail log | sign-up and reset codes and invitation links go to `docker/dev-mail/dev-mail.log`; Helm keeps `logging` |
-| `ADMIN_PORTAL_URL` | auth-service | `http://localhost:5175` | base of staff invitation links |
 | `PROVIDER_WALLET_CLIENT` | payment-service | `http` | credits provider-service's wallet (code default `logging` pays no one); Helm also sets `http` |
 | `TENANT_ASSIGNMENT_TIMEOUT` | booking-service | `PT60M` | how long a booking may wait for a Tenant assignment; same in Helm |
 | `KAFKA_BOOTSTRAP_SERVERS` | booking-service and the other consumers | `host.docker.internal:9094` | booking-service now consumes `PaymentCompleted` |
 | `INTERNAL_API_KEY` | every service with `/internal/**` callers or endpoints | from `.env` | shared service credential |
 | `DEV_SEED_ENABLED`, `DEV_SEED_PASSWORD` | auth-service | from `.env` (`true`, `HomeFix@2026`) | seeds the test accounts; Compose's own default is off |
+
+#### Settings in the database: `config.app_config`
+
+Platform settings that are the same for every deployable live in one Postgres table rather than in
+environment variables. Each row is a Spring property: `config_key` is the property name and
+`config_value` its value. Every service with a database loads the table at startup through
+`shared/homefix-shared-config`. A row overrides the service's YAML; an environment variable, system
+property or command-line argument still overrides the row. Rows marked `exposed_to_clients` are
+also served without sign-in on `GET /config/client` (catalog-service, routed by the gateway), which
+the web apps read. Never mark a secret.
+
+| `config_key` | Seeded value | Read by |
+| --- | --- | --- |
+| `homefix.apps.customer-app-url` | `http://localhost:5173` | web apps (`/config/client`) |
+| `homefix.apps.provider-app-url` | `http://localhost:5174` | customer-app's "Join as a professional" link |
+| `homefix.apps.admin-portal-url` | `http://localhost:5175` | auth-service's staff invitation links |
+
+The repeatable migration `db/app-config/R__homefix_app_config.sql` creates the table and seeds these
+rows; it never overwrites a row that already exists. There is no admin screen. Change a value with
+SQL, then restart the deployables that read it (the `/config/client` response changes without a
+restart, after its 5-minute cache). **Each environment other than local must set the URLs once**, or
+invitation links point at `localhost`:
+
+```sql
+UPDATE config.app_config SET config_value = 'https://admin.homefix.example', updated_at = now()
+ WHERE config_key = 'homefix.apps.admin-portal-url';
+```
+
+On a brand-new database the first start finds no table yet (Flyway creates it after the
+environment is prepared), so that one start uses the YAML defaults, which match the seeded rows.
 
 ### 10.2 AWS target (Terraform)
 
@@ -1548,7 +1576,7 @@ Terraform is the most complete infrastructure layer. Database migrations now exi
 
 ### 10.3 Namespace and chart layout
 
-All services share one Helm chart, `helm/homefix-service`, with one release per service (`homefix-<service>`) rendered from `values-<environment>.yaml` plus `helm/services/<service>.yaml`. Resources are named after the bare service, so in-cluster DNS matches Compose (`auth-service:8081`). The pipeline deploys into the namespace configured on each GitHub environment, while the Kubernetes manifests under `infra/k8s` still assume six domain namespaces. Reconciling these is step 12 of the roadmap.
+All five deployables share one Helm chart, `helm/homefix-service`, with one release per deployable (`homefix-<deployable>`) rendered from `values-<environment>.yaml` plus `helm/services/<deployable>.yaml`. A deployable that hosts several services exposes each one's port (`containerPort` plus `extraPorts`) on its Deployment and Service. Resources are named after the bare deployable, so in-cluster DNS matches Compose (`identity-app:8081`). The pipeline deploys into the namespace configured on each GitHub environment, while the Kubernetes manifests under `infra/k8s` still assume six domain namespaces. Reconciling these is step 12 of the roadmap.
 
 ---
 

@@ -25,7 +25,9 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
+
 import com.homefix.pricing.api.dto.PricingParametersDto;
 import com.homefix.pricing.domain.PricingParameters;
 import com.homefix.pricing.service.PricingConfigService;
@@ -43,7 +45,7 @@ class AdminPricingControllerTest {
     @Mock private PricingConfigService configService;
 
     private MockMvc mvc;
-    private final ObjectMapper json = new ObjectMapper();
+    private final ObjectMapper json = new JsonMapper();
 
     @BeforeEach
     void setUp() {

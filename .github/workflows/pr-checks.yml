@@ -46,17 +46,26 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           changed_files=$(git diff --name-only "${BASE_SHA}...${HEAD_SHA}")
-          mapfile -t all < <(for d in services/*/; do [ -f "${d}pom.xml" ] && basename "${d}"; done)
-          if grep -qE '^(shared/|\.github/workflows/build-services\.yml$)' <<< "${changed_files}"; then
-            echo "shared/ or the build workflow changed: building every service."
+          # The deployables: every apps/<name> plus the API gateway. A service is built and
+          # tested as part of the deployable that hosts it (its apps/<name>/pom.xml depends on it).
+          mapfile -t all < <({ for d in apps/*/; do [ -f "${d}pom.xml" ] && basename "${d}"; done; echo api-gateway; })
+          if grep -qE '^(pom\.xml$|shared/|\.github/workflows/build-services\.yml$)' <<< "${changed_files}"; then
+            echo "The parent POM, shared/ or the build workflow changed: building every deployable."
             selected=("${all[@]}")
           else
             selected=()
             mapfile -t touched < <(grep -E '^services/[^/]+/' <<< "${changed_files}" | cut -d'/' -f2 | sort -u)
             for svc in "${touched[@]}"; do
-              # A deleted service has no pom.xml left to build.
-              [ -f "services/${svc}/pom.xml" ] && selected+=("${svc}")
+              if [ "${svc}" = "api-gateway" ]; then selected+=("api-gateway"); continue; fi
+              for app in apps/*/; do
+                grep -q "<artifactId>${svc}</artifactId>" "${app}pom.xml" && selected+=("$(basename "${app}")")
+              done
             done
+            mapfile -t apps_touched < <(grep -E '^apps/[^/]+/' <<< "${changed_files}" | cut -d'/' -f2 | sort -u)
+            for app in "${apps_touched[@]}"; do
+              [ -f "apps/${app}/pom.xml" ] && selected+=("${app}")
+            done
+            mapfile -t selected < <(printf '%s\n' "${selected[@]}" | sed '/^$/d' | sort -u)
           fi
           if [ "${#selected[@]}" -eq 0 ]; then
             echo "services=[]" >> "$GITHUB_OUTPUT"

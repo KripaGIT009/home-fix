@@ -20,13 +20,13 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder;
 import org.springframework.transaction.support.TransactionOperations;
+import tools.jackson.databind.cfg.DateTimeFeature;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import com.homefix.booking.domain.Booking;
 import com.homefix.booking.domain.BookingAudit;
 import com.homefix.booking.domain.BookingAuditRepository;
@@ -53,8 +53,8 @@ class ProviderAssignmentServiceTest {
 
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-10-03T10:15:00Z"), ZoneOffset.UTC);
 
-    private final ObjectMapper objectMapper = Jackson2ObjectMapperBuilder.json()
-            .featuresToDisable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+    private final ObjectMapper objectMapper = JsonMapper.builder()
+            .disable(DateTimeFeature.WRITE_DATES_AS_TIMESTAMPS)
             .build();
 
     /** Mirror of chat-service {@code com.homefix.chat.consumer.LifecycleEventPayload}. */
@@ -125,9 +125,9 @@ class ProviderAssignmentServiceTest {
         JsonNode json = objectMapper.readTree(row.getPayload());
         // Exactly the fields of dispatch-engine's ProviderAcceptedEvent, nothing more.
         List<String> fields = new ArrayList<>();
-        json.fieldNames().forEachRemaining(fields::add);
+        json.propertyNames().iterator().forEachRemaining(fields::add);
         assertThat(fields).containsExactly("bookingId", "customerId", "providerId", "bookingCreatedAt", "acceptedAt");
-        assertThat(json.get("acceptedAt").asText()).isEqualTo("2026-10-03T10:15:00Z");
+        assertThat(json.get("acceptedAt").asString()).isEqualTo("2026-10-03T10:15:00Z");
 
         ChatLifecycleEventPayload chat = objectMapper.readValue(row.getPayload(), ChatLifecycleEventPayload.class);
         assertThat(chat.bookingId()).isEqualTo(booking.getId());

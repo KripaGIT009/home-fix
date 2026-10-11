@@ -148,9 +148,21 @@ function ReviewDialog({ entry, onClose }: ReviewDialogProps) {
   return (
     <Dialog open onClose={onClose} maxWidth="md" fullWidth>
       <DialogTitle>
-        <Stack direction="row" justifyContent="space-between" alignItems="baseline" spacing={2}>
+        <Stack
+          direction="row"
+          spacing={2}
+          sx={{
+            justifyContent: 'space-between',
+            alignItems: 'baseline',
+          }}
+        >
           <span>{entry.displayName ?? 'Provider submission'}</span>
-          <Typography variant="caption" color="text.secondary">
+          <Typography
+            variant="caption"
+            sx={{
+              color: 'text.secondary',
+            }}
+          >
             Submitted {formatDateTime(entry.submittedAt)}
           </Typography>
         </Stack>
@@ -165,7 +177,13 @@ function ReviewDialog({ entry, onClose }: ReviewDialogProps) {
           <DocumentViewer documents={documentsQuery.data ?? []} />
         </QueryStateView>
 
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+        <Typography
+          variant="body2"
+          sx={{
+            color: 'text.secondary',
+            mt: 2,
+          }}
+        >
           Accepting the documents starts the background check. The provider moves to the Background
           check tab, where you record its result to approve them for jobs.
         </Typography>
@@ -311,10 +329,22 @@ function BackgroundCheckDialog({ entry, onClose }: BackgroundCheckDialogProps) {
   return (
     <Dialog open onClose={onClose} maxWidth="md" fullWidth>
       <DialogTitle>
-        <Stack direction="row" justifyContent="space-between" alignItems="baseline" spacing={2}>
+        <Stack
+          direction="row"
+          spacing={2}
+          sx={{
+            justifyContent: 'space-between',
+            alignItems: 'baseline',
+          }}
+        >
           <span>{entry.displayName ?? 'Provider'} — background check</span>
           {entry.startedAt ? (
-            <Typography variant="caption" color="text.secondary">
+            <Typography
+              variant="caption"
+              sx={{
+                color: 'text.secondary',
+              }}
+            >
               Started {formatDateTime(entry.startedAt)}
             </Typography>
           ) : null}
@@ -345,13 +375,15 @@ function BackgroundCheckDialog({ entry, onClose }: BackgroundCheckDialogProps) {
             multiline
             minRows={2}
             required
-            inputProps={{ maxLength: 2000 }}
             error={attempted && resultMissing}
             helperText={
               attempted && resultMissing
                 ? 'Record what the check found.'
                 : 'For example: "Identity confirmed, no criminal records found." Kept on the provider\'s record.'
             }
+            slotProps={{
+              htmlInput: { maxLength: 2000 },
+            }}
           />
           {rejecting ? (
             <TextField
@@ -362,13 +394,15 @@ function BackgroundCheckDialog({ entry, onClose }: BackgroundCheckDialogProps) {
               multiline
               minRows={2}
               required
-              inputProps={{ maxLength: 1000 }}
               error={attempted && reasonMissing}
               helperText={
                 attempted && reasonMissing
                   ? 'A reason is required to reject a provider.'
                   : 'Shared with the provider.'
               }
+              slotProps={{
+                htmlInput: { maxLength: 1000 },
+              }}
             />
           ) : null}
         </Stack>

@@ -20,10 +20,12 @@ export function SectionHeading({
   return (
     <Stack
       direction="row"
-      alignItems="flex-end"
-      justifyContent="space-between"
       spacing={2}
-      sx={{ mb: { xs: 1.75, md: 2.25 } }}
+      sx={{
+        alignItems: 'flex-end',
+        justifyContent: 'space-between',
+        mb: { xs: 1.75, md: 2.25 },
+      }}
     >
       <Box sx={{ minWidth: 0 }}>
         <Typography
@@ -41,8 +43,11 @@ export function SectionHeading({
         {caption ? (
           <Typography
             variant="body2"
-            color="text.secondary"
-            sx={{ mt: 0.25, fontSize: '0.8125rem' }}
+            sx={{
+              color: 'text.secondary',
+              mt: 0.25,
+              fontSize: '0.8125rem',
+            }}
           >
             {caption}
           </Typography>

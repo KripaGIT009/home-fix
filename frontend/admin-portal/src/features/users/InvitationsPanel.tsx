@@ -34,7 +34,12 @@ export function InvitationsPanel({ onNotice }: InvitationsPanelProps) {
       header: 'Invited by',
       render: (row) =>
         row.invitedByName ?? (
-          <Typography variant="caption" color="text.secondary">
+          <Typography
+            variant="caption"
+            sx={{
+              color: 'text.secondary',
+            }}
+          >
             {shortId(row.invitedBy)}
           </Typography>
         ),

@@ -86,7 +86,12 @@ export function TenantFormDialog({ tenant, categories, onClose, onSaved }: Tenan
   const statusField = !tenant ? undefined : application ? (
     <Stack spacing={0.75} sx={{ pt: 0.5 }}>
       <StatusChip status={tenant.status} />
-      <Typography variant="caption" color="text.secondary">
+      <Typography
+        variant="caption"
+        sx={{
+          color: 'text.secondary',
+        }}
+      >
         An application&apos;s status changes only by approving or rejecting it.
       </Typography>
     </Stack>

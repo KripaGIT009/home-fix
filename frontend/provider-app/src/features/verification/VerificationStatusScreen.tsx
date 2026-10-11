@@ -64,8 +64,20 @@ function VerificationContent({ state }: { state: VerificationState }) {
     <Stack spacing={2}>
       <Card variant="outlined">
         <CardContent>
-          <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
-            <Typography variant="subtitle1" fontWeight={700}>
+          <Stack
+            direction="row"
+            spacing={1}
+            sx={{
+              justifyContent: 'space-between',
+              alignItems: 'center',
+            }}
+          >
+            <Typography
+              variant="subtitle1"
+              sx={{
+                fontWeight: 700,
+              }}
+            >
               Current status
             </Typography>
             <Chip label={descriptor.label} color={descriptor.severity} />
@@ -74,13 +86,26 @@ function VerificationContent({ state }: { state: VerificationState }) {
             {descriptor.description}
           </Typography>
           <Box sx={{ mt: 1.5, p: 1.5, borderRadius: 2, bgcolor: 'action.hover' }}>
-            <Typography variant="caption" fontWeight={700} color="text.secondary">
+            <Typography
+              variant="caption"
+              sx={{
+                fontWeight: 700,
+                color: 'text.secondary',
+              }}
+            >
               What happens next
             </Typography>
             <Typography variant="body2">{descriptor.next}</Typography>
           </Box>
           {state.updatedAt ? (
-            <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+            <Typography
+              variant="caption"
+              sx={{
+                color: 'text.secondary',
+                mt: 1,
+                display: 'block',
+              }}
+            >
               Last updated {formatDateTime(state.updatedAt)}
             </Typography>
           ) : null}
@@ -96,7 +121,13 @@ function VerificationContent({ state }: { state: VerificationState }) {
       {!isBranchState ? (
         <Card variant="outlined">
           <CardContent>
-            <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 2 }}>
+            <Typography
+              variant="subtitle2"
+              sx={{
+                fontWeight: 700,
+                mb: 2,
+              }}
+            >
               How verification works
             </Typography>
             <Stepper activeStep={stepIndex} orientation="vertical">
@@ -109,7 +140,12 @@ function VerificationContent({ state }: { state: VerificationState }) {
                 >
                   <StepLabel
                     optional={
-                      <Typography variant="caption" color="text.secondary">
+                      <Typography
+                        variant="caption"
+                        sx={{
+                          color: 'text.secondary',
+                        }}
+                      >
                         {step.caption}
                       </Typography>
                     }
@@ -126,7 +162,13 @@ function VerificationContent({ state }: { state: VerificationState }) {
       {!uploadAllowed && hasDocuments ? (
         <Card variant="outlined">
           <CardContent>
-            <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 1 }}>
+            <Typography
+              variant="subtitle2"
+              sx={{
+                fontWeight: 700,
+                mb: 1,
+              }}
+            >
               Documents on file
             </Typography>
             <List dense disablePadding>

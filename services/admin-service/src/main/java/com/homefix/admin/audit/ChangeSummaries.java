@@ -8,10 +8,11 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import tools.jackson.databind.JsonNode;
+
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * Derives the one-line, human-readable change summary the Admin Portal's Audit Logs view shows
@@ -57,7 +58,7 @@ public final class ChangeSummaries {
             return verb;
         }
         List<String> parts = new ArrayList<>();
-        for (Iterator<Map.Entry<String, JsonNode>> fields = values.fields(); fields.hasNext(); ) {
+        for (Iterator<Map.Entry<String, JsonNode>> fields = values.properties().iterator(); fields.hasNext(); ) {
             Map.Entry<String, JsonNode> field = fields.next();
             parts.add(showValues ? field.getKey() + "=" + text(field.getValue()) : field.getKey());
         }
@@ -67,10 +68,10 @@ public final class ChangeSummaries {
     private static String changes(AdminAction action, ObjectNode before, ObjectNode after, boolean showValues) {
         Set<String> names = new LinkedHashSet<>();
         if (before != null) {
-            before.fieldNames().forEachRemaining(names::add);
+            before.propertyNames().iterator().forEachRemaining(names::add);
         }
         if (after != null) {
-            after.fieldNames().forEachRemaining(names::add);
+            after.propertyNames().iterator().forEachRemaining(names::add);
         }
         List<String> parts = new ArrayList<>();
         for (String name : names) {
@@ -92,7 +93,7 @@ public final class ChangeSummaries {
         if (value == null || value.isNull()) {
             return NONE;
         }
-        return value.isValueNode() ? value.asText() : value.toString();
+        return value.isValueNode() ? value.asString() : value.toString();
     }
 
     private static ObjectNode parse(String json, ObjectMapper objectMapper) {
@@ -102,7 +103,7 @@ public final class ChangeSummaries {
         try {
             JsonNode node = objectMapper.readTree(json);
             return node instanceof ObjectNode object ? object : null;
-        } catch (JsonProcessingException malformed) {
+        } catch (JacksonException malformed) {
             return null;
         }
     }

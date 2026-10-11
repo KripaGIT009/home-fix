@@ -14,6 +14,7 @@ import com.homefix.gateway.ratelimit.RateLimitPolicy;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.webtestclient.autoconfigure.AutoConfigureWebTestClient;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.http.HttpHeaders;
@@ -49,13 +50,14 @@ import reactor.core.publisher.Mono;
  *   <li>plain HTTP request &rarr; 301 redirect to HTTPS (Requirement 23.7).</li>
  * </ol>
  */
+@AutoConfigureWebTestClient
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = {
                 // Route a test path to an in-process handler so permitted requests get a real 200.
-                "spring.cloud.gateway.routes[0].id=test-downstream",
-                "spring.cloud.gateway.routes[0].uri=forward:/__downstream",
-                "spring.cloud.gateway.routes[0].predicates[0]=Path=/bookings/**",
+                "spring.cloud.gateway.server.webflux.routes[0].id=test-downstream",
+                "spring.cloud.gateway.server.webflux.routes[0].uri=forward:/__downstream",
+                "spring.cloud.gateway.server.webflux.routes[0].predicates[0]=Path=/bookings/**",
                 // Keep OTP path at its default so it does not interfere with the /bookings tests.
                 "homefix.gateway.https-enforced=true"
         })

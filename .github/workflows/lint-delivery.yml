@@ -1,7 +1,7 @@
 name: Lint delivery config (reusable)
 
 # Lints the workflows and the Helm chart, and checks that every service's port
-# agrees across its Dockerfile, docker-compose.core.yml and its Helm values.
+# agrees across its Dockerfile, docker-compose.core.yml and its Helm values (per deployable).
 # Called by ci.yml and pr-checks.yml.
 
 on:
@@ -37,37 +37,40 @@ jobs:
         with:
           version: v3.16.2
 
-      - name: Every service has Helm values, and ports agree everywhere
+      - name: Every deployable has Helm values, and ports agree everywhere
         run: |
-          # yq (mikefarah v4) is preinstalled on ubuntu-latest runners.
+          # yq (mikefarah v4) is preinstalled on ubuntu-latest runners. A deployable is every
+          # apps/<name> plus the API gateway; each hosted service has a port, and the set of ports
+          # must be the same in the Helm values (containerPort + extraPorts), the Dockerfile's
+          # EXPOSE and the container ports in docker-compose.core.yml.
           status=0
-          for dir in services/*/; do
-            svc=$(basename "${dir}")
-            [ -f "${dir}pom.xml" ] || continue
-            values="helm/services/${svc}.yaml"
+          mapfile -t deployables < <({ for d in apps/*/; do [ -f "${d}pom.xml" ] && basename "${d}"; done; echo api-gateway; })
+          for d in "${deployables[@]}"; do
+            if [ "${d}" = "api-gateway" ]; then dir="services/api-gateway/"; else dir="apps/${d}/"; fi
+            values="helm/services/${d}.yaml"
             if [ ! -f "${values}" ]; then
-              echo "::error::${svc} has no ${values}; it cannot be deployed."
+              echo "::error::${d} has no ${values}; it cannot be deployed."
               status=1
               continue
             fi
             name=$(yq '.serviceName' "${values}")
-            helm_port=$(yq '.containerPort' "${values}")
-            docker_port=$(sed -n 's/^EXPOSE[[:space:]]\{1,\}\([0-9]\{1,\}\).*/\1/p' "${dir}Dockerfile" | head -n 1)
-            compose_port=$(yq ".services.\"${svc}\".environment.SERVER_PORT" docker-compose.core.yml)
-            echo "${svc}: helm=${helm_port} dockerfile=${docker_port} compose=${compose_port}"
-            if [ "${name}" != "${svc}" ]; then
-              echo "::error file=${values}::serviceName is '${name}', expected '${svc}'."
+            helm_ports=$({ yq '.containerPort' "${values}"; yq '.extraPorts[].port' "${values}"; } | sort -n | xargs)
+            docker_ports=$(sed -n 's/^EXPOSE[[:space:]]\{1,\}\(.*\)$/\1/p' "${dir}Dockerfile" | tr ' ' '\n' | sed '/^$/d' | sort -n | xargs)
+            compose_ports=$(yq ".services.\"${d}\".ports[]" docker-compose.core.yml | sed 's/.*://' | sort -n | xargs)
+            echo "${d}: helm=[${helm_ports}] dockerfile=[${docker_ports}] compose=[${compose_ports}]"
+            if [ "${name}" != "${d}" ]; then
+              echo "::error file=${values}::serviceName is '${name}', expected '${d}'."
               status=1
             fi
-            if [ "${helm_port}" != "${docker_port}" ] || [ "${helm_port}" != "${compose_port}" ]; then
-              echo "::error file=${values}::Port mismatch for ${svc}: helm ${helm_port}, Dockerfile EXPOSE ${docker_port}, compose SERVER_PORT ${compose_port}."
+            if [ "${helm_ports}" != "${docker_ports}" ] || [ "${helm_ports}" != "${compose_ports}" ]; then
+              echo "::error file=${values}::Port mismatch for ${d}: helm [${helm_ports}], Dockerfile EXPOSE [${docker_ports}], compose [${compose_ports}]."
               status=1
             fi
           done
           for values in helm/services/*.yaml; do
-            svc=$(basename "${values}" .yaml)
-            if [ ! -f "services/${svc}/pom.xml" ]; then
-              echo "::error file=${values}::No service directory services/${svc}."
+            d=$(basename "${values}" .yaml)
+            if [[ " ${deployables[*]} " != *" ${d} "* ]]; then
+              echo "::error file=${values}::${d} is not a deployable (apps/<name> or api-gateway)."
               status=1
             fi
           done

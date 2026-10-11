@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import {
   Avatar,
   Box,
@@ -62,7 +62,7 @@ export function ProfileScreen() {
     // state. Navigation is not awaited so the button never appears to hang on a
     // slow network; the revoke completes in the background either way.
     void logout();
-    navigate('/login', { replace: true });
+    void navigate('/login', { replace: true });
   };
 
   return (
@@ -70,7 +70,13 @@ export function ProfileScreen() {
       <Stack spacing={2}>
         <Card>
           <CardContent>
-            <Stack direction="row" spacing={2} alignItems="center">
+            <Stack
+              direction="row"
+              spacing={2}
+              sx={{
+                alignItems: 'center',
+              }}
+            >
               <Avatar sx={{ width: 60, height: 60, bgcolor: 'primary.main', fontSize: 22 }}>
                 {initials || <PersonRoundedIcon />}
               </Avatar>
@@ -78,7 +84,12 @@ export function ProfileScreen() {
                 <Typography variant="h6" component="h1" noWrap>
                   {user?.displayName || 'Your account'}
                 </Typography>
-                <Typography variant="body2" color="text.secondary">
+                <Typography
+                  variant="body2"
+                  sx={{
+                    color: 'text.secondary',
+                  }}
+                >
                   {user?.mobileNumber ? formatMobileNumber(user.mobileNumber) : 'Signed in'}
                 </Typography>
                 <QueryStateView
@@ -115,21 +126,21 @@ export function ProfileScreen() {
               icon={<VerifiedUserRoundedIcon />}
               label="Verification"
               caption="Documents, background check and status"
-              onClick={() => navigate('/verification')}
+              onClick={() => void navigate('/verification')}
             />
             <Divider component="li" />
             <ProfileLink
               icon={<AccountBalanceWalletRoundedIcon />}
               label="Earnings & settlements"
               caption="Wallet balance, payouts and history"
-              onClick={() => navigate('/earnings')}
+              onClick={() => void navigate('/earnings')}
             />
             <Divider component="li" />
             <ProfileLink
               icon={<DashboardRoundedIcon />}
               label="Active jobs"
               caption="Everything you are working on now"
-              onClick={() => navigate('/dashboard')}
+              onClick={() => void navigate('/dashboard')}
             />
           </List>
         </Card>
@@ -145,7 +156,13 @@ export function ProfileScreen() {
           Log out
         </Button>
 
-        <Typography variant="caption" color="text.secondary" align="center">
+        <Typography
+          variant="caption"
+          align="center"
+          sx={{
+            color: 'text.secondary',
+          }}
+        >
           HomeFix Provider — Earn More. Serve Better.
         </Typography>
       </Stack>
@@ -171,8 +188,10 @@ function ProfileLink({
       <ListItemText
         primary={label}
         secondary={caption}
-        primaryTypographyProps={{ variant: 'subtitle1', fontWeight: 600 }}
-        secondaryTypographyProps={{ variant: 'caption' }}
+        slotProps={{
+          primary: { variant: 'subtitle1', sx: { fontWeight: 600 } },
+          secondary: { variant: 'caption' },
+        }}
       />
       <ChevronRightRoundedIcon sx={{ color: 'text.secondary' }} />
     </ListItemButton>

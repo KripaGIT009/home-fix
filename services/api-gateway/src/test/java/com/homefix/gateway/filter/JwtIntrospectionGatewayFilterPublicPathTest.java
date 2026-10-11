@@ -34,6 +34,8 @@ class JwtIntrospectionGatewayFilterPublicPathTest {
             "/auth/register/email/verify",
             "/auth/password/forgot",
             "/auth/invitations/abc123/acceptance",
+            // The web apps' public settings.
+            "/config/client",
             // Encoded spellings of public paths stay public: the same decoded path is served.
             "/auth/login/%73ocial",
             "//auth/login/password"
@@ -69,6 +71,10 @@ class JwtIntrospectionGatewayFilterPublicPathTest {
             "/payments/webhooks/razorpayX",
             "/payments/7e4b1c93-0d58-4a26-bf71-3c9e5d2a8b64/razorpay/verify",
             "/payments/webhooks/razorpay/../../settlements",
+            // Only the client settings are public, not anything else under /config.
+            "/config",
+            "/config/clientX",
+            "/config/client/../../admin/users",
             // Dot segments and encoded separators resolve to a protected path.
             "/auth/register/../../admin/users",
             "/auth/login/%2e%2e/%2e%2e/bookings/1",

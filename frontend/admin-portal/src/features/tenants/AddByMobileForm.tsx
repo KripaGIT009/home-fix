@@ -60,7 +60,13 @@ export function AddByMobileForm({
         void handleSubmit(onSubmit)(event);
       }}
     >
-      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems="flex-start">
+      <Stack
+        direction={{ xs: 'column', sm: 'row' }}
+        spacing={1}
+        sx={{
+          alignItems: 'flex-start',
+        }}
+      >
         <TextField
           size="small"
           label={label}

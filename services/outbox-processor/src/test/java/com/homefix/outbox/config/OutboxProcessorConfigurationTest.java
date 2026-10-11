@@ -13,7 +13,7 @@ import org.springframework.core.io.ClassPathResource;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Binds the shipped {@code application.yml} (not a test copy) the way Spring Boot does, so the
+ * Binds the shipped {@code outbox-processor.yml} (not a test copy) the way Spring Boot does, so the
  * defaults operations actually get are asserted: every event type a producer writes has an
  * explicit topic, and the claim lease leaves room for a publish.
  */
@@ -42,7 +42,7 @@ class OutboxProcessorConfigurationTest {
     private static OutboxProcessorProperties shippedProperties() throws IOException {
         StandardEnvironment environment = new StandardEnvironment();
         new YamlPropertySourceLoader()
-                .load("application.yml", new ClassPathResource("application.yml"))
+                .load("outbox-processor.yml", new ClassPathResource("outbox-processor.yml"))
                 .forEach(source -> environment.getPropertySources().addLast(source));
         return Binder.get(environment).bind("homefix.outbox-processor", OutboxProcessorProperties.class)
                 .orElseThrow(() -> new AssertionError("homefix.outbox-processor not bound"));

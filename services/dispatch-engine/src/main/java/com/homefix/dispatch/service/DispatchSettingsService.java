@@ -22,8 +22,8 @@ import org.springframework.stereotype.Service;
  * weights endpoint before it — an update lasts until the next restart, after which the
  * {@code homefix.dispatch.*} configuration and {@code MatchingWeights.DEFAULT} apply again.
  *
- * <p>Every value is validated before anything is changed, so a rejected update leaves all five
- * settings as they were (the Requirement 19.5 guarantee, extended to the radius parameters).
+ * <p>Every value is validated before anything is changed, so a rejected update leaves every
+ * setting as it was (the Requirement 19.5 guarantee, extended to the radius parameters).
  * Updates are serialised so two concurrent Admin saves cannot interleave field by field.
  */
 @Service
@@ -42,6 +42,18 @@ public class DispatchSettingsService {
     public static final long MIN_OFFER_TIMEOUT_SECONDS = 15L;
     public static final long MAX_OFFER_TIMEOUT_SECONDS = 600L;
 
+    /** Wave-size bounds: at least one provider per wave, and no more than a push burst should reach. */
+    public static final int MIN_OFFER_BATCH_SIZE = 1;
+    public static final int MAX_OFFER_BATCH_SIZE = 10;
+
+    /**
+     * Agency-fallback bounds in minutes. It must stay well inside the Booking Service's stalled-search
+     * sweep ({@code homefix.booking.provider-search-timeout}, 60 minutes by default), which settles a
+     * search the Dispatch Engine never reported back on.
+     */
+    public static final long MIN_AGENCY_FALLBACK_MINUTES = 1L;
+    public static final long MAX_AGENCY_FALLBACK_MINUTES = 30L;
+
     private final MatchingWeightsStore weightsStore;
     private final DispatchProperties properties;
 
@@ -57,7 +69,9 @@ public class DispatchSettingsService {
                 properties.getInitialRadiusKm(),
                 properties.getRadiusIncrementKm(),
                 properties.getMaxExpansionCycles(),
-                properties.getOfferTimeoutSeconds());
+                properties.getOfferTimeoutSeconds(),
+                properties.getOfferBatchSize(),
+                properties.getAgencyFallbackMinutes());
     }
 
     /**
@@ -75,9 +89,12 @@ public class DispatchSettingsService {
         properties.setRadiusIncrementKm(settings.radiusIncrementKm());
         properties.setMaxExpansionCycles(settings.maxExpansionCycles());
         properties.setOfferTimeoutSeconds(settings.offerTimeoutSeconds());
+        properties.setOfferBatchSize(settings.offerBatchSize());
+        properties.setAgencyFallbackMinutes(settings.agencyFallbackMinutes());
         log.info("Dispatch settings updated: initialRadiusKm={}, radiusIncrementKm={}, maxExpansionCycles={}, "
-                        + "offerTimeoutSeconds={}", settings.initialRadiusKm(), settings.radiusIncrementKm(),
-                settings.maxExpansionCycles(), settings.offerTimeoutSeconds());
+                        + "offerTimeoutSeconds={}, offerBatchSize={}, agencyFallbackMinutes={}",
+                settings.initialRadiusKm(), settings.radiusIncrementKm(), settings.maxExpansionCycles(),
+                settings.offerTimeoutSeconds(), settings.offerBatchSize(), settings.agencyFallbackMinutes());
         return current();
     }
 
@@ -99,6 +116,16 @@ public class DispatchSettingsService {
             throw new DispatchSettingsValidationException("offerTimeoutSeconds must be in ["
                     + MIN_OFFER_TIMEOUT_SECONDS + ", " + MAX_OFFER_TIMEOUT_SECONDS + "] but was "
                     + s.offerTimeoutSeconds());
+        }
+        if (s.offerBatchSize() < MIN_OFFER_BATCH_SIZE || s.offerBatchSize() > MAX_OFFER_BATCH_SIZE) {
+            throw new DispatchSettingsValidationException("offerBatchSize must be in ["
+                    + MIN_OFFER_BATCH_SIZE + ", " + MAX_OFFER_BATCH_SIZE + "] but was " + s.offerBatchSize());
+        }
+        if (s.agencyFallbackMinutes() < MIN_AGENCY_FALLBACK_MINUTES
+                || s.agencyFallbackMinutes() > MAX_AGENCY_FALLBACK_MINUTES) {
+            throw new DispatchSettingsValidationException("agencyFallbackMinutes must be in ["
+                    + MIN_AGENCY_FALLBACK_MINUTES + ", " + MAX_AGENCY_FALLBACK_MINUTES + "] but was "
+                    + s.agencyFallbackMinutes());
         }
     }
 }

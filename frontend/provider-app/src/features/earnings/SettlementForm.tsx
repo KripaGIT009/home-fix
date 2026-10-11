@@ -1,13 +1,17 @@
 import { useMemo } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Link as RouterLink } from 'react-router-dom';
+import { Link as RouterLink } from 'react-router';
 import { Alert, Button, MenuItem, Stack, TextField } from '@mui/material';
 import { isApiError } from '@api/client';
 import { formatCurrency } from '@lib/format';
 import { BANK_ACCOUNT_ANCHOR } from '@features/profile/constants';
 import { useRequestSettlement } from './hooks';
-import { buildSettlementSchema, type SettlementFormValues } from './schemas';
+import {
+  buildSettlementSchema,
+  type SettlementFormInput,
+  type SettlementFormValues,
+} from './schemas';
 import type { SettlementInfo } from './api';
 
 interface SettlementFormProps {
@@ -41,7 +45,7 @@ export function SettlementForm({ info }: SettlementFormProps) {
     handleSubmit,
     reset,
     formState: { errors },
-  } = useForm<SettlementFormValues>({
+  } = useForm<SettlementFormInput, unknown, SettlementFormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
       amount: undefined as unknown as number,
@@ -102,13 +106,15 @@ export function SettlementForm({ info }: SettlementFormProps) {
         type="number"
         fullWidth
         size="small"
-        inputProps={{ min: 1, max: info.availableBalance, step: 0.01, inputMode: 'decimal' }}
         error={Boolean(errors.amount)}
         helperText={
           errors.amount?.message ??
           `Available: ${formatCurrency(info.availableBalance, info.currency)}`
         }
         {...register('amount')}
+        slotProps={{
+          htmlInput: { min: 1, max: info.availableBalance, step: 0.01, inputMode: 'decimal' },
+        }}
       />
 
       <Controller

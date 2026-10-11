@@ -1,4 +1,4 @@
-import { Controller, useForm } from 'react-hook-form';
+import { Controller, useForm, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import {
   Alert,
@@ -44,7 +44,6 @@ export function InviteStaffDialog({ onClose, onInvited }: InviteStaffDialogProps
     control,
     register,
     handleSubmit,
-    watch,
     setError,
     formState: { errors },
   } = useForm<InvitationFormValues>({
@@ -52,7 +51,7 @@ export function InviteStaffDialog({ onClose, onInvited }: InviteStaffDialogProps
     mode: 'onBlur',
     defaultValues: { email: '', role: 'SUPPORT_AGENT' },
   });
-  const role = watch('role');
+  const role = useWatch({ control, name: 'role' });
 
   const onSubmit = (values: InvitationFormValues) => {
     const email = values.email.trim();

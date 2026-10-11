@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Link as RouterLink, Navigate } from 'react-router-dom';
+import { Link as RouterLink, Navigate } from 'react-router';
 import {
   Alert,
   Button,
@@ -96,13 +96,20 @@ export function RegisterAgencyScreen() {
   };
 
   const signIn = (
-    <Typography variant="body2" color="text.secondary">
+    <Typography
+      variant="body2"
+      sx={{
+        color: 'text.secondary',
+      }}
+    >
       Already have a HomeFix account?{' '}
       <Link
         component={RouterLink}
         to="/login"
         state={{ from: { pathname: APPLICATION_PATH } }}
-        fontWeight={600}
+        sx={{
+          fontWeight: 600,
+        }}
       >
         Sign in
       </Link>
@@ -156,8 +163,10 @@ export function RegisterAgencyScreen() {
             fullWidth
             error={Boolean(errors.displayName)}
             helperText={errors.displayName?.message ?? ' '}
-            inputProps={{ 'aria-label': 'Your name' }}
             {...register('displayName')}
+            slotProps={{
+              htmlInput: { 'aria-label': 'Your name' },
+            }}
           />
         </LabelledField>
 
@@ -169,8 +178,10 @@ export function RegisterAgencyScreen() {
             placeholder="you@agency.com"
             error={Boolean(errors.email)}
             helperText={errors.email?.message ?? 'You will sign in with this address.'}
-            inputProps={{ 'aria-label': 'Email', autoCapitalize: 'none', spellCheck: false }}
             {...register('email')}
+            slotProps={{
+              htmlInput: { 'aria-label': 'Email', autoCapitalize: 'none', spellCheck: false },
+            }}
           />
         </LabelledField>
 
@@ -182,21 +193,29 @@ export function RegisterAgencyScreen() {
             placeholder="98765 43210"
             error={Boolean(errors.mobileNumber)}
             helperText={errors.mobileNumber?.message ?? ' '}
-            InputProps={{
-              startAdornment: (
-                <InputAdornment position="start">
-                  <Typography
-                    variant="body1"
-                    fontWeight={600}
-                    sx={{ pr: 1.25, mr: 1.25, borderRight: 1, borderColor: 'divider' }}
-                  >
-                    +91
-                  </Typography>
-                </InputAdornment>
-              ),
-            }}
-            inputProps={{ inputMode: 'tel', 'aria-label': 'Mobile number' }}
             {...register('mobileNumber')}
+            slotProps={{
+              input: {
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <Typography
+                      variant="body1"
+                      sx={{
+                        fontWeight: 600,
+                        pr: 1.25,
+                        mr: 1.25,
+                        borderRight: 1,
+                        borderColor: 'divider',
+                      }}
+                    >
+                      +91
+                    </Typography>
+                  </InputAdornment>
+                ),
+              },
+
+              htmlInput: { inputMode: 'tel', 'aria-label': 'Mobile number' },
+            }}
           />
         </LabelledField>
 

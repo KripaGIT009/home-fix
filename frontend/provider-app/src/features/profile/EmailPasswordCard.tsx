@@ -75,9 +75,22 @@ export function EmailPasswordCard() {
   return (
     <Card>
       <CardContent>
-        <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1.5 }}>
+        <Stack
+          direction="row"
+          spacing={1}
+          sx={{
+            alignItems: 'center',
+            mb: 1.5,
+          }}
+        >
           <KeyRoundedIcon color="primary" aria-hidden />
-          <Typography variant="subtitle1" fontWeight={700} component="h2">
+          <Typography
+            variant="subtitle1"
+            component="h2"
+            sx={{
+              fontWeight: 700,
+            }}
+          >
             Email &amp; password
           </Typography>
         </Stack>
@@ -161,17 +174,30 @@ function CredentialsSummary({ account }: { account: AccountCredentials }) {
     <Stack spacing={1.25}>
       <Stack
         direction="row"
-        justifyContent="space-between"
-        alignItems="center"
         spacing={1}
-        flexWrap="wrap"
         useFlexGap
+        sx={{
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+        }}
       >
         <Box sx={{ minWidth: 0 }}>
-          <Typography variant="caption" color="text.secondary">
+          <Typography
+            variant="caption"
+            sx={{
+              color: 'text.secondary',
+            }}
+          >
             Email
           </Typography>
-          <Typography variant="body1" fontWeight={600} noWrap>
+          <Typography
+            variant="body1"
+            noWrap
+            sx={{
+              fontWeight: 600,
+            }}
+          >
             {account.email ?? 'Not added'}
           </Typography>
         </Box>
@@ -185,15 +211,30 @@ function CredentialsSummary({ account }: { account: AccountCredentials }) {
         ) : null}
       </Stack>
       <Box>
-        <Typography variant="caption" color="text.secondary">
+        <Typography
+          variant="caption"
+          sx={{
+            color: 'text.secondary',
+          }}
+        >
           Password
         </Typography>
-        <Typography variant="body1" fontWeight={600}>
+        <Typography
+          variant="body1"
+          sx={{
+            fontWeight: 600,
+          }}
+        >
           {account.hasPassword ? 'Set' : 'Not set'}
         </Typography>
       </Box>
       {account.email && account.hasPassword ? null : (
-        <Typography variant="body2" color="text.secondary">
+        <Typography
+          variant="body2"
+          sx={{
+            color: 'text.secondary',
+          }}
+        >
           Add an email and a password to sign in with them as well as with your mobile number.
         </Typography>
       )}
@@ -243,10 +284,12 @@ function EmailChangeForm({ account, onCancel, onCodeSent }: EmailChangeFormProps
         fullWidth
         size="small"
         autoComplete="email"
-        inputProps={{ inputMode: 'email' }}
         error={Boolean(errors.email)}
         helperText={errors.email?.message ?? 'We will email a 6-digit code to this address.'}
         {...register('email')}
+        slotProps={{
+          htmlInput: { inputMode: 'email' },
+        }}
       />
       {account.hasPassword ? (
         <PasswordField
@@ -329,7 +372,12 @@ function EmailCodeForm({ pendingChange, onCancel, onVerified }: EmailCodeFormPro
         void handleSubmit(({ code }) => confirm.mutate({ code }, { onSuccess: onVerified }))(event)
       }
     >
-      <Typography variant="body2" color="text.secondary">
+      <Typography
+        variant="body2"
+        sx={{
+          color: 'text.secondary',
+        }}
+      >
         Enter the 6-digit code we sent to <strong>{pendingChange.email}</strong>.
       </Typography>
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect } from 'react';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { Navigate, useNavigate } from 'react-router';
 import { Box, Button, Typography } from '@mui/material';
 import ArrowBackRoundedIcon from '@mui/icons-material/ArrowBackRounded';
 import { EMAIL_CODE_RESEND_SECONDS } from './constants';
@@ -71,7 +71,7 @@ export function VerifyEmailScreen() {
       <Button
         size="small"
         startIcon={<ArrowBackRoundedIcon />}
-        onClick={() => navigate('/signup', { state: forward })}
+        onClick={() => void navigate('/signup', { state: forward })}
         disabled={verify.isPending}
         sx={{ ml: -1, mb: 1.5, color: 'text.secondary' }}
       >
@@ -81,7 +81,14 @@ export function VerifyEmailScreen() {
       <Typography variant="h3" component="h1">
         Check your email
       </Typography>
-      <Typography variant="body1" color="text.secondary" sx={{ mt: 1, mb: 3 }}>
+      <Typography
+        variant="body1"
+        sx={{
+          color: 'text.secondary',
+          mt: 1,
+          mb: 3,
+        }}
+      >
         We sent a 6-digit code to{' '}
         <Box
           component="span"

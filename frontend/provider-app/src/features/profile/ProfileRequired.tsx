@@ -1,4 +1,4 @@
-import { Link as RouterLink } from 'react-router-dom';
+import { Link as RouterLink } from 'react-router';
 import { Alert, Button } from '@mui/material';
 import { PROFILE_STEP_ROUTES } from './completeness';
 

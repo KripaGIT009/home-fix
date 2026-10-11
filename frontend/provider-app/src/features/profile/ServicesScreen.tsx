@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { Controller, useForm, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import {
@@ -49,7 +49,7 @@ export function ServicesScreen() {
   const catalog = useServiceCatalog();
 
   return (
-    <AppShell title="Services & skills" onBack={() => navigate('/profile')}>
+    <AppShell title="Services & skills" onBack={() => void navigate('/profile')}>
       <QueryStateView
         isLoading={profile.isLoading || catalog.isLoading}
         isError={profile.isError || catalog.isError}
@@ -66,7 +66,7 @@ export function ServicesScreen() {
             profile={profile.data}
             catalog={catalog.data}
             onSaved={(saved) =>
-              navigate(hasBaseLocation(saved) ? '/profile' : PROFILE_STEP_ROUTES.serviceArea)
+              void navigate(hasBaseLocation(saved) ? '/profile' : PROFILE_STEP_ROUTES.serviceArea)
             }
           />
         ) : null}
@@ -108,7 +108,8 @@ export function ServicesForm({ profile, catalog, onSaved }: ServicesFormProps) {
 
   const onSubmit = (values: ServicesFormValues) => {
     save.mutate(toProfilePayload(values, catalog, profile), {
-      onSuccess: onSaved,
+      // Only the saved profile: onSuccess also receives the variables and context.
+      onSuccess: (saved) => onSaved(saved),
       onError: (error) => {
         // A service was switched off since the list was loaded: show the
         // current catalog so the provider can see what is still offered.
@@ -143,7 +144,13 @@ export function ServicesForm({ profile, catalog, onSaved }: ServicesFormProps) {
       <Card>
         <CardContent>
           <Stack spacing={1.5}>
-            <Typography variant="subtitle1" fontWeight={700} component="h2">
+            <Typography
+              variant="subtitle1"
+              component="h2"
+              sx={{
+                fontWeight: 700,
+              }}
+            >
               About you
             </Typography>
             <TextField
@@ -151,23 +158,27 @@ export function ServicesForm({ profile, catalog, onSaved }: ServicesFormProps) {
               fullWidth
               size="small"
               autoComplete="name"
-              inputProps={{ maxLength: PROFILE_LIMITS.displayNameMax }}
               error={Boolean(errors.displayName)}
               helperText={errors.displayName?.message ?? 'Optional'}
               {...register('displayName')}
+              slotProps={{
+                htmlInput: { maxLength: PROFILE_LIMITS.displayNameMax },
+              }}
             />
             <TextField
               label="Years of experience"
               fullWidth
               size="small"
               autoComplete="off"
-              inputProps={{ inputMode: 'numeric', maxLength: 2 }}
               error={Boolean(errors.yearsExperience)}
               helperText={
                 errors.yearsExperience?.message ??
                 `Whole years in this trade, ${PROFILE_LIMITS.minYearsExperience} to ${PROFILE_LIMITS.maxYearsExperience}`
               }
               {...register('yearsExperience')}
+              slotProps={{
+                htmlInput: { inputMode: 'numeric', maxLength: 2 },
+              }}
             />
           </Stack>
         </CardContent>
@@ -175,13 +186,32 @@ export function ServicesForm({ profile, catalog, onSaved }: ServicesFormProps) {
 
       <Card>
         <CardContent>
-          <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5 }}>
+          <Stack
+            direction="row"
+            spacing={1}
+            sx={{
+              alignItems: 'center',
+              mb: 0.5,
+            }}
+          >
             <HandymanRoundedIcon color="primary" aria-hidden />
-            <Typography variant="subtitle1" fontWeight={700} component="h2">
+            <Typography
+              variant="subtitle1"
+              component="h2"
+              sx={{
+                fontWeight: 700,
+              }}
+            >
               Services you offer
             </Typography>
           </Stack>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+          <Typography
+            variant="body2"
+            sx={{
+              color: 'text.secondary',
+              mb: 1.5,
+            }}
+          >
             Pick up to {PROFILE_LIMITS.maxCategories} categories and up to{' '}
             {PROFILE_LIMITS.maxSubcategoriesPerCategory} services in each.
           </Typography>
@@ -204,12 +234,20 @@ export function ServicesForm({ profile, catalog, onSaved }: ServicesFormProps) {
                     const headingId = `category-${category.id}`;
                     return (
                       <Box key={category.id}>
-                        <Stack direction="row" spacing={1} alignItems="center">
+                        <Stack
+                          direction="row"
+                          spacing={1}
+                          sx={{
+                            alignItems: 'center',
+                          }}
+                        >
                           <Typography
                             id={headingId}
                             variant="subtitle2"
-                            fontWeight={700}
                             component="h3"
+                            sx={{
+                              fontWeight: 700,
+                            }}
                           >
                             {category.name}
                           </Typography>
@@ -250,20 +288,44 @@ export function ServicesForm({ profile, catalog, onSaved }: ServicesFormProps) {
 
       <Card>
         <CardContent>
-          <Typography variant="subtitle1" fontWeight={700} component="h2">
+          <Typography
+            variant="subtitle1"
+            component="h2"
+            sx={{
+              fontWeight: 700,
+            }}
+          >
             Your skills
           </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+          <Typography
+            variant="body2"
+            sx={{
+              color: 'text.secondary',
+              mb: 1.5,
+            }}
+          >
             Jobs are matched on these skills. They come from the services you pick.
           </Typography>
           {skillTags.length > 0 ? (
-            <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
+            <Stack
+              direction="row"
+              spacing={0.75}
+              useFlexGap
+              sx={{
+                flexWrap: 'wrap',
+              }}
+            >
               {skillTags.map((tag) => (
                 <Chip key={tag} size="small" variant="outlined" label={tag} />
               ))}
             </Stack>
           ) : (
-            <Typography variant="body2" color="text.secondary">
+            <Typography
+              variant="body2"
+              sx={{
+                color: 'text.secondary',
+              }}
+            >
               Pick a service to see its skills.
             </Typography>
           )}

@@ -1,4 +1,4 @@
-import { forwardRef, useState, type ReactNode } from 'react';
+import { useState, type ReactNode, type Ref } from 'react';
 import { Box, IconButton, InputAdornment, TextField, Typography } from '@mui/material';
 import type { TextFieldProps } from '@mui/material';
 import VisibilityRoundedIcon from '@mui/icons-material/VisibilityRounded';
@@ -31,32 +31,40 @@ function FieldLabel({ htmlFor, children }: { htmlFor: string; children: ReactNod
 }
 
 /** A plain text input (name, email) with its label above it. */
-export const LabelledTextField = forwardRef<HTMLInputElement, LabelledFieldProps>(
-  function LabelledTextField({ id, label, ...props }, ref) {
-    return (
-      <Box>
-        <FieldLabel htmlFor={id}>{label}</FieldLabel>
-        <TextField id={id} fullWidth inputRef={ref} {...props} />
-      </Box>
-    );
-  },
-);
+export function LabelledTextField({
+  id,
+  label,
+  ref,
+  ...props
+}: LabelledFieldProps & { ref?: Ref<HTMLInputElement> }) {
+  return (
+    <Box>
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <TextField id={id} fullWidth inputRef={ref} {...props} />
+    </Box>
+  );
+}
 
 /** A password input with a show/hide toggle. */
-export const PasswordField = forwardRef<HTMLInputElement, LabelledFieldProps>(
-  function PasswordField({ id, label, ...props }, ref) {
-    const [visible, setVisible] = useState(false);
+export function PasswordField({
+  id,
+  label,
+  ref,
+  ...props
+}: LabelledFieldProps & { ref?: Ref<HTMLInputElement> }) {
+  const [visible, setVisible] = useState(false);
 
-    return (
-      <Box>
-        <FieldLabel htmlFor={id}>{label}</FieldLabel>
-        <TextField
-          id={id}
-          fullWidth
-          inputRef={ref}
-          {...props}
-          type={visible ? 'text' : 'password'}
-          InputProps={{
+  return (
+    <Box>
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <TextField
+        id={id}
+        fullWidth
+        inputRef={ref}
+        {...props}
+        type={visible ? 'text' : 'password'}
+        slotProps={{
+          input: {
             endAdornment: (
               <InputAdornment position="end">
                 <IconButton
@@ -69,21 +77,23 @@ export const PasswordField = forwardRef<HTMLInputElement, LabelledFieldProps>(
                 </IconButton>
               </InputAdornment>
             ),
-          }}
-        />
-      </Box>
-    );
-  },
-);
+          },
+        }}
+      />
+    </Box>
+  );
+}
 
 /**
  * The +91 mobile-number input (Requirement 1.1). The value stays as typed; the
  * caller normalises it to E.164 with `toE164` before it is sent.
  */
-export const MobileNumberField = forwardRef<
-  HTMLInputElement,
-  Omit<LabelledFieldProps, 'label'> & { label?: ReactNode }
->(function MobileNumberField({ id, label = 'Mobile number', ...props }, ref) {
+export function MobileNumberField({
+  id,
+  label = 'Mobile number',
+  ref,
+  ...props
+}: Omit<LabelledFieldProps, 'label'> & { label?: ReactNode } & { ref?: Ref<HTMLInputElement> }) {
   return (
     <Box>
       <FieldLabel htmlFor={id}>{label}</FieldLabel>
@@ -95,36 +105,39 @@ export const MobileNumberField = forwardRef<
         placeholder="98765 43210"
         inputRef={ref}
         {...props}
-        InputProps={{
-          startAdornment: (
-            <InputAdornment position="start" sx={{ mr: 0, height: 'auto', maxHeight: 'none' }}>
-              <Box
-                sx={{
-                  pr: 1.5,
-                  mr: 1.5,
-                  py: 0.5,
-                  borderRight: `1px solid ${brand.line}`,
-                  fontWeight: 700,
-                  color: 'text.primary',
-                  fontSize: '1.0625rem',
-                }}
-              >
-                +91
-              </Box>
-            </InputAdornment>
-          ),
-        }}
-        inputProps={{
-          inputMode: 'tel',
-          maxLength: 14,
-          style: {
-            fontSize: '1.125rem',
-            letterSpacing: '0.03em',
-            paddingTop: 16,
-            paddingBottom: 16,
+        slotProps={{
+          input: {
+            startAdornment: (
+              <InputAdornment position="start" sx={{ mr: 0, height: 'auto', maxHeight: 'none' }}>
+                <Box
+                  sx={{
+                    pr: 1.5,
+                    mr: 1.5,
+                    py: 0.5,
+                    borderRight: `1px solid ${brand.line}`,
+                    fontWeight: 700,
+                    color: 'text.primary',
+                    fontSize: '1.0625rem',
+                  }}
+                >
+                  +91
+                </Box>
+              </InputAdornment>
+            ),
+          },
+
+          htmlInput: {
+            inputMode: 'tel',
+            maxLength: 14,
+            style: {
+              fontSize: '1.125rem',
+              letterSpacing: '0.03em',
+              paddingTop: 16,
+              paddingBottom: 16,
+            },
           },
         }}
       />
     </Box>
   );
-});
+}

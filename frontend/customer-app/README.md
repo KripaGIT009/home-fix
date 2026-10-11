@@ -13,15 +13,17 @@ call may do, the app itself does not gate screens by role.
 
 ## Stack
 
-- **React 18 + TypeScript** (strict mode)
-- **Vite** build/dev server
+- **Node.js 24** to build (`"engines": {"node": ">=24"}`; the Docker build uses `node:24-alpine`)
+- **React 19 + TypeScript 6** (strict mode)
+- **Vite 8** build/dev server (Rolldown)
 - **TanStack Query** — server state
 - **Zustand** — client state (auth, active booking)
-- **React Router** — navigation
-- **Material UI** — components/theme (mobile-first, with a desktop layout)
-- **React Hook Form + Zod** — forms and validation
+- **React Router 8** — navigation
+- **Material UI 9** — components/theme (mobile-first, with a desktop layout)
+- **React Hook Form + Zod 4** — forms and validation
 - **Axios** — HTTP client with JWT Bearer + `X-Correlation-ID` injection
-- **Capacitor 7** — Android and iOS shells
+- **ESLint 10** (flat config, `eslint.config.js`) with typescript-eslint, eslint-react, react-hooks 7 and jsx-a11y-x
+- **Capacitor 8** — Android and iOS shells
 
 ## Screens
 
@@ -114,7 +116,7 @@ Vite bakes these into the bundle at build time. See `.env.example`.
 | `VITE_AUTH_BASE_URL` | `VITE_API_BASE_URL` | Base for Auth Service calls (OTP, email sign-up and sign-in, password reset, `/auth/me`, social login, refresh, logout). Native builds point it at the Auth Service itself |
 | `VITE_REALTIME_BASE_URL` | `VITE_API_BASE_URL` | Base for the location SSE stream and chat WebSocket |
 | `VITE_GOOGLE_CLIENT_ID` | empty | Enables Google sign-in; must equal the Auth Service's `GOOGLE_CLIENT_ID` |
-| `VITE_PROVIDER_APP_URL` | `http://localhost:5174` | Where the footer's "Join as a professional" link points (the Provider App) |
+| `VITE_PROVIDER_APP_URL` | `http://localhost:5174` | Fallback for the footer's "Join as a professional" link; the live value is `homefix.apps.provider-app-url` in the backend's `config.app_config` table, read from `GET /config/client` |
 | `VITE_API_GATEWAY_URL` | `http://localhost:8080` | Dev-server proxy target only |
 | `VITE_AUTH_SERVICE_URL` | `http://localhost:8081` | Dev-server proxy target only |
 
@@ -163,7 +165,7 @@ docker compose -f docker-compose.core.yml up -d --build --wait
 
 The `customer-app` image (`Dockerfile`) builds the bundle with the default
 `/api` base and serves it from nginx on <http://localhost:5173>. `nginx.conf`
-proxies `/api/auth/*` to `auth-service:8081` and everything else under `/api/`
+proxies `/api/auth/*` to `identity-app:8081` (auth-service) and everything else under `/api/`
 to `api-gateway:8080`, with WebSocket/SSE support, long-lived caching for
 `/assets/` and no caching for `index.html`. The build copies the app directory,
 so keep native (absolute) URLs out of a local `.env` when building the image.

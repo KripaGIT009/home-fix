@@ -1,4 +1,4 @@
-import { forwardRef, useState, type ReactNode } from 'react';
+import { useState, type ReactNode, type Ref } from 'react';
 import type { UseFormRegisterReturn } from 'react-hook-form';
 import { IconButton, InputAdornment, TextField } from '@mui/material';
 import VisibilityRoundedIcon from '@mui/icons-material/VisibilityRounded';
@@ -20,40 +20,37 @@ type PasswordFieldProps = Omit<UseFormRegisterReturn, 'ref'> & {
  * Password input with a show/hide toggle. Spread a react-hook-form
  * `register(...)` onto it.
  */
-export const PasswordField = forwardRef<HTMLInputElement, PasswordFieldProps>(
-  function PasswordField(
-    {
-      autoComplete,
-      label,
-      ariaLabel,
-      error = false,
-      helperText,
-      disabled = false,
-      size = 'medium',
-      name,
-      onChange,
-      onBlur,
-    },
-    ref,
-  ) {
-    const [visible, setVisible] = useState(false);
+export function PasswordField({
+  autoComplete,
+  label,
+  ariaLabel,
+  error = false,
+  helperText,
+  disabled = false,
+  size = 'medium',
+  name,
+  onChange,
+  onBlur,
+  ref,
+}: PasswordFieldProps & { ref?: Ref<HTMLInputElement> }) {
+  const [visible, setVisible] = useState(false);
 
-    return (
-      <TextField
-        type={visible ? 'text' : 'password'}
-        autoComplete={autoComplete}
-        fullWidth
-        size={size}
-        label={label}
-        error={error}
-        helperText={helperText}
-        disabled={disabled}
-        name={name}
-        onChange={(event) => void onChange(event)}
-        onBlur={(event) => void onBlur(event)}
-        inputRef={ref}
-        inputProps={ariaLabel ? { 'aria-label': ariaLabel } : undefined}
-        InputProps={{
+  return (
+    <TextField
+      type={visible ? 'text' : 'password'}
+      autoComplete={autoComplete}
+      fullWidth
+      size={size}
+      label={label}
+      error={error}
+      helperText={helperText}
+      disabled={disabled}
+      name={name}
+      onChange={(event) => void onChange(event)}
+      onBlur={(event) => void onBlur(event)}
+      inputRef={ref}
+      slotProps={{
+        input: {
           endAdornment: (
             <InputAdornment position="end">
               <IconButton
@@ -67,8 +64,10 @@ export const PasswordField = forwardRef<HTMLInputElement, PasswordFieldProps>(
               </IconButton>
             </InputAdornment>
           ),
-        }}
-      />
-    );
-  },
-);
+        },
+
+        ...(ariaLabel ? { htmlInput: { 'aria-label': ariaLabel } } : {}),
+      }}
+    />
+  );
+}

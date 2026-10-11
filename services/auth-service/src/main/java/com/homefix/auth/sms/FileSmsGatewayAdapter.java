@@ -1,7 +1,6 @@
 package com.homefix.auth.sms;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
@@ -55,7 +54,7 @@ public class FileSmsGatewayAdapter implements SmsGatewayPort {
             if (parent != null) {
                 Files.createDirectories(parent);
             }
-            Files.writeString(outputFile, line, StandardCharsets.UTF_8,
+            Files.writeString(outputFile, line,
                     StandardOpenOption.CREATE, StandardOpenOption.APPEND);
         } catch (IOException ex) {
             throw new SmsDeliveryException(

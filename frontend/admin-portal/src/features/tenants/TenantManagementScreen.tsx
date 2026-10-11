@@ -74,11 +74,21 @@ export function TenantManagementScreen() {
     header: 'Agency',
     render: (row) => (
       <Stack spacing={0.25}>
-        <Typography variant="body2" fontWeight={600}>
+        <Typography
+          variant="body2"
+          sx={{
+            fontWeight: 600,
+          }}
+        >
           {row.name}
         </Typography>
         {row.contactPhone || row.contactEmail ? (
-          <Typography variant="caption" color="text.secondary">
+          <Typography
+            variant="caption"
+            sx={{
+              color: 'text.secondary',
+            }}
+          >
             {[row.contactPhone ? formatMobileNumber(row.contactPhone) : null, row.contactEmail]
               .filter(Boolean)
               .join(' · ')}
@@ -106,7 +116,14 @@ export function TenantManagementScreen() {
             </Link>
           </Typography>
           <Tooltip title={names.join(', ')}>
-            <Typography variant="caption" color="text.secondary" sx={{ maxWidth: 280 }} noWrap>
+            <Typography
+              variant="caption"
+              noWrap
+              sx={{
+                color: 'text.secondary',
+                maxWidth: 280,
+              }}
+            >
               {names.length <= 3
                 ? names.join(', ')
                 : `${names.slice(0, 2).join(', ')} +${names.length - 2} more`}
@@ -159,7 +176,13 @@ export function TenantManagementScreen() {
       render: (row) =>
         row.adminCount === 0 && !isApplication(row.status) ? (
           <Tooltip title="No administrator: nobody can work this agency's requests.">
-            <Typography variant="body2" color="warning.main" fontWeight={700}>
+            <Typography
+              variant="body2"
+              sx={{
+                color: 'warning.main',
+                fontWeight: 700,
+              }}
+            >
               0
             </Typography>
           </Tooltip>
@@ -173,7 +196,13 @@ export function TenantManagementScreen() {
       header: '',
       align: 'right',
       render: (row) => (
-        <Stack direction="row" spacing={1} justifyContent="flex-end">
+        <Stack
+          direction="row"
+          spacing={1}
+          sx={{
+            justifyContent: 'flex-end',
+          }}
+        >
           {isApplication(row.status) ? null : (
             <Button size="small" variant="outlined" onClick={() => setMembers(row)}>
               Members
@@ -192,7 +221,12 @@ export function TenantManagementScreen() {
       key: 'applicant',
       header: 'Applicant',
       render: (row) => (
-        <Typography variant="caption" color="text.secondary">
+        <Typography
+          variant="caption"
+          sx={{
+            color: 'text.secondary',
+          }}
+        >
           {row.applicantUserId ? shortId(row.applicantUserId) : '—'}
         </Typography>
       ),
@@ -203,7 +237,13 @@ export function TenantManagementScreen() {
       header: '',
       align: 'right',
       render: (row) => (
-        <Stack direction="row" spacing={1} justifyContent="flex-end">
+        <Stack
+          direction="row"
+          spacing={1}
+          sx={{
+            justifyContent: 'flex-end',
+          }}
+        >
           {editButton(row)}
           <Button
             size="small"

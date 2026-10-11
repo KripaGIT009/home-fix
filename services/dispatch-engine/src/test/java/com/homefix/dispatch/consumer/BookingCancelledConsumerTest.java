@@ -12,10 +12,12 @@ import static org.mockito.Mockito.when;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
+import com.homefix.dispatch.domain.DispatchRequest;
 import com.homefix.dispatch.domain.OfferStatus;
 import com.homefix.dispatch.service.JobOfferService;
 import com.homefix.dispatch.service.fake.FlagCancellation;
@@ -49,7 +51,7 @@ class BookingCancelledConsumerTest {
     @Mock
     private DlqForwarder dlqForwarder;
 
-    private final ObjectMapper mapper = new ObjectMapper().registerModule(new JavaTimeModule());
+    private final ObjectMapper mapper = new JsonMapper();
     private final FlagCancellation cancellation = new FlagCancellation();
     private JobOfferService offers;
     private BookingCancelledConsumer consumer;
@@ -92,7 +94,7 @@ class BookingCancelledConsumerTest {
 
     @Test
     void cancellation_flagsTheBookingAndWithdrawsItsPendingOffer() {
-        offers.open(bookingId, provider, Duration.ofSeconds(60));
+        offers.open(request(bookingId), List.of(provider), Duration.ofSeconds(60));
 
         consumer.onMessage(record(newEvent(), payload(bookingId)));
 
@@ -104,7 +106,7 @@ class BookingCancelledConsumerTest {
 
     @Test
     void cancellationAfterTheProviderAccepted_leavesTheAcceptStanding() {
-        offers.open(bookingId, provider, Duration.ofSeconds(60));
+        offers.open(request(bookingId), List.of(provider), Duration.ofSeconds(60));
         offers.decide(bookingId, provider, OfferStatus.ACCEPTED);
 
         consumer.onMessage(record(newEvent(), payload(bookingId)));
@@ -152,5 +154,10 @@ class BookingCancelledConsumerTest {
 
         verify(dlqForwarder).forward(eq(TOPIC), eq("key"), eq(eventId.toString()), eq("not-json"), anyString());
         assertThat(cancellation.isCancelled(bookingId)).isFalse();
+    }
+
+    private static DispatchRequest request(UUID booking) {
+        return new DispatchRequest(booking, UUID.randomUUID(), 12.9, 77.6, UUID.randomUUID(),
+                List.of("plumbing"), false, Instant.parse("2026-10-02T09:55:00Z"), null, null);
     }
 }

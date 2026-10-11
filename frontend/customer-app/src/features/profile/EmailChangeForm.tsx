@@ -65,7 +65,12 @@ export function EmailChangeForm({ account, onDone, onCancel }: EmailChangeFormPr
   if (pending) {
     return (
       <Stack spacing={2}>
-        <Typography variant="body2" color="text.secondary">
+        <Typography
+          variant="body2"
+          sx={{
+            color: 'text.secondary',
+          }}
+        >
           We sent a 6-digit code to{' '}
           <Box component="span" sx={{ color: 'text.primary', fontWeight: 700 }}>
             {pending.email}
@@ -156,7 +161,7 @@ function EmailAddressStep({
         type="email"
         autoComplete="email"
         placeholder="you@example.com"
-        inputProps={{ inputMode: 'email', autoCapitalize: 'none', spellCheck: false }}
+        slotProps={{ htmlInput: { inputMode: 'email', autoCapitalize: 'none', spellCheck: false } }}
         error={Boolean(errors.email)}
         helperText={errors.email?.message ?? 'We’ll send a code to this address to confirm it.'}
         {...register('email')}
@@ -172,7 +177,13 @@ function EmailAddressStep({
         />
       ) : null}
 
-      <Stack direction="row" spacing={1.5} justifyContent="flex-end">
+      <Stack
+        direction="row"
+        spacing={1.5}
+        sx={{
+          justifyContent: 'flex-end',
+        }}
+      >
         <Button variant="text" onClick={onCancel} disabled={isSubmitting}>
           Cancel
         </Button>

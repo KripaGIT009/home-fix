@@ -1076,11 +1076,12 @@ The full transition table is in [ARCHITECTURE.md](ARCHITECTURE.md) section 8.1. 
 
 ### catalog-service
 
-Port 8085. `/catalog` is the public read surface; `/admin/catalog` is CRUD. Only `GET /catalog/**` is permitted anonymously; `CatalogRbacConfig` gates every `/admin/**` method (GET, POST, PUT, DELETE) to ADMIN, SUPER_ADMIN.
+Port 8085. `/catalog` is the public read surface; `/admin/catalog` is CRUD; `/config/client` serves the web apps' settings. Only `GET /catalog/**` and `GET /config/client` are permitted anonymously; `CatalogRbacConfig` gates every `/admin/**` method (GET, POST, PUT, DELETE) to ADMIN, SUPER_ADMIN.
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
 | GET | `/catalog/categories` | public | Active categories with active subcategories, cached |
+| GET | `/config/client` | public | The `config.app_config` rows marked `exposed_to_clients`, as key to value |
 | GET | `/admin/catalog/categories` | ADMIN, SUPER_ADMIN | List all, including inactive |
 | POST | `/admin/catalog/categories` | ADMIN, SUPER_ADMIN | Create a category, 201 |
 | PUT | `/admin/catalog/categories/{categoryId}` | ADMIN, SUPER_ADMIN | Update a category |
@@ -1117,6 +1118,20 @@ Port 8085. `/catalog` is the public read surface; `/admin/catalog` is CRUD. Only
     ]
   }
 ]
+```
+
+**GET /config/client** (`shared/homefix-shared-config`, enabled in this service only) returns the
+platform settings the web apps may read: the rows of `config.app_config` whose
+`exposed_to_clients` is true, keyed by Spring property name, read from the table on each request
+and sent with `Cache-Control: max-age=300, public`. Rows are changed with SQL; see
+ARCHITECTURE.md, "Settings in the database".
+
+```json
+{
+  "homefix.apps.admin-portal-url": "http://localhost:5175",
+  "homefix.apps.customer-app-url": "http://localhost:5173",
+  "homefix.apps.provider-app-url": "http://localhost:5174"
+}
 ```
 
 **Category create and update**
@@ -1985,7 +2000,7 @@ Port 8087. The gateway routes `/dispatch/offers/**` (providers answering offers)
 }
 ```
 
-`status` is `PENDING`, `ACCEPTED`, `DECLINED`, `EXPIRED` or `WITHDRAWN` (the booking was cancelled). Answering an expired offer gives 409 `OFFER_EXPIRED`, and answering a decided one gives 409 `OFFER_ALREADY_DECIDED`. The offer is not pushed: providers poll `GET /dispatch/offers`, because the notification call it would make has no endpoint (see below).
+`status` is `PENDING`, `ACCEPTED`, `DECLINED`, `EXPIRED` or `WITHDRAWN` (another provider accepted first, or the booking was cancelled). A booking is offered to several providers at once (`offerBatchSize`, default 3); the first accept wins and withdraws the others. Answering an expired offer gives 409 `OFFER_EXPIRED`, accepting a job another provider already took gives 409 `OFFER_TAKEN`, and answering a decided one gives 409 `OFFER_ALREADY_DECIDED`. The offer is not pushed: providers poll `GET /dispatch/offers`, because the notification call it would make has no endpoint (see below).
 
 **Weights.**
 
@@ -2001,13 +2016,15 @@ Port 8087. The gateway routes `/dispatch/offers/**` (providers answering offers)
 
 All five are `@NotNull` and must sum to exactly 1.0, checked with `BigDecimal` before the store is touched, so a rejected update leaves the existing weights intact. The same shape is the response.
 
-**Config.** It takes and returns `{weights: {distance, availability, rating, skill, performance}, initialRadiusKm, radiusIncrementKm, maxExpansionCycles, offerTimeoutSeconds}`. Every field is `@NotNull`. The rules are:
+**Config.** It takes and returns `{weights: {distance, availability, rating, skill, performance}, initialRadiusKm, radiusIncrementKm, maxExpansionCycles, offerTimeoutSeconds, offerBatchSize, agencyFallbackMinutes}`. Every field is `@NotNull` except the last two: a request that omits them keeps their current values. The rules are:
 
 - the weights sum to 1.0;
 - `initialRadiusKm` > 0;
 - `radiusIncrementKm` ≥ 0;
 - `maxExpansionCycles` 0 to 10;
-- `offerTimeoutSeconds` 15 to 600.
+- `offerTimeoutSeconds` 15 to 600;
+- `offerBatchSize` 1 to 10 (providers offered at once; default 3);
+- `agencyFallbackMinutes` 1 to 30 (minutes before an unaccepted booking goes to the agencies; default 5).
 
 A PUT changes nothing unless every value passes. Weights and settings are held in process memory, so changes are lost on restart and differ between replicas.
 
@@ -2015,7 +2032,7 @@ This service has no `@ControllerAdvice`. Each controller has a local handler tha
 
 - weights and config: 400 `INVALID_DISPATCH_WEIGHTS`;
 - config only: 400 `INVALID_DISPATCH_SETTINGS` and 400 `VALIDATION_ERROR`;
-- offers: 401 `UNAUTHENTICATED` / `INVALID_PRINCIPAL`, 404 `OFFER_NOT_FOUND`, 409 `OFFER_EXPIRED`, 409 `OFFER_ALREADY_DECIDED`.
+- offers: 401 `UNAUTHENTICATED` / `INVALID_PRINCIPAL`, 404 `OFFER_NOT_FOUND`, 409 `OFFER_EXPIRED`, 409 `OFFER_TAKEN`, 409 `OFFER_ALREADY_DECIDED`.
 
 A `@NotNull` violation on the weights endpoint still returns Spring's default body.
 
@@ -2648,7 +2665,7 @@ Producer (dispatch-engine, one per declined or unanswered offer):
 
 - `reason` is `REJECTED` (the provider declined) or `TIMED_OUT` (no answer within the offer window). The job-offer adapter also reports a failure to record the offer as `TIMED_OUT`.
 - Written to the outbox in its own transaction, because a rejection changes no other dispatch-engine state. The write is best-effort: if it fails, the failure is logged and the search moves on to the next candidate.
-- Nothing is published for an accepted offer, an offer withdrawn because the booking was cancelled, or a provider busy with another booking's offer (retried within one offer window). A provider declining a Tenant assignment publishes nothing either.
+- Published per provider only when nobody in their wave accepted. Nothing is published for an accepted offer, for the other providers in a wave someone accepted (their offers are withdrawn), an offer withdrawn because the booking was cancelled, or a provider busy with another booking's offer (retried within one offer window). A provider declining a Tenant assignment publishes nothing either.
 - notification-service reads `bookingId`, `customerId` and `providerId`. Under its recipient policy the customer is the recipient.
 
 #### PaymentCompleted

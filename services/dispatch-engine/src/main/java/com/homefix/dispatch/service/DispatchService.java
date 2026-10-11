@@ -37,23 +37,27 @@ import java.util.UUID;
  * <ol>
  *   <li>queries eligible providers within the current radius (Requirement 8.2);</li>
  *   <li>scores and ranks them using the active {@link MatchingWeights} (Requirement 8.3);</li>
- *   <li>walks the ranking highest-first, acquiring an exclusive per-provider Redis lock before
- *       each offer (Requirement 8.11) and offering the job (Requirement 8.5);</li>
- *   <li>when a provider is busy — their lock is held by another booking's open offer — goes on to
- *       the next candidate, then waits for the busy ones (at most one offer window) before giving
- *       up on the radius. A busy provider has not seen this job, so they are not dropped from the
- *       pool the way a decliner is;</li>
+ *   <li>offers the job in <em>waves</em>: the best-ranked {@code offerBatchSize} providers are
+ *       offered it at the same time, each under an exclusive per-provider Redis lock
+ *       (Requirement 8.11). The first to accept takes the job and the other offers in the wave
+ *       are withdrawn in the same atomic write (Requirement 8.5);</li>
+ *   <li>when a provider is busy — their lock is held by another booking's open offer — they are
+ *       left for a later wave; when everyone left is busy, waits for them (at most one offer
+ *       window) before giving up on the radius. A busy provider has not seen this job, so they are
+ *       not dropped from the pool the way a decliner is;</li>
  *   <li>on acceptance, records it durably, transitions the booking to PROVIDER_ACCEPTED and
  *       publishes ProviderAccepted (Requirement 8.6) — see {@link AcceptanceLedger} for why the
  *       record comes first;</li>
- *   <li>on reject/timeout, publishes ProviderRejected, drops that provider from the pool and moves
- *       to the next (Requirement 8.7);</li>
+ *   <li>when nobody in a wave accepts, publishes ProviderRejected for each provider who declined or
+ *       let the offer time out, drops them from the pool and offers the next wave (Requirement 8.7);</li>
  *   <li>when a radius is exhausted with no acceptance, expands by the configured increment up to
  *       the cycle limit (Requirement 8.8);</li>
- *   <li>if all cycles are exhausted, asks the Booking Service to fail the booking and alerts the
- *       dispatcher team (Requirement 8.9) — unless it routed the booking to partner agencies instead
- *       (AWAITING_ASSIGNMENT, Requirement MT-4.2). The customer is told by the Notification Service,
- *       from the {@code BookingCancelled} the Booking Service publishes for SEARCHING_FAILED.</li>
+ *   <li>once {@code agencyFallbackMinutes} have passed without an acceptance, or every cycle is
+ *       exhausted sooner, hands the booking to the Booking Service, which routes it to the partner
+ *       agencies covering it (AWAITING_ASSIGNMENT, Requirement MT-4.2) or fails it, and then the
+ *       dispatcher team is alerted (Requirement 8.9). The customer is told by the Notification
+ *       Service, from the {@code BookingCancelled} the Booking Service publishes for
+ *       SEARCHING_FAILED. No wave's window runs past that deadline.</li>
  * </ol>
  *
  * <p>Only an answer from the Provider Service counts towards "nobody available". When the
@@ -61,14 +65,13 @@ import java.util.UUID;
  * open breaker, a refused service credential) it is retried for up to one offer window; if the
  * Provider Service is still unavailable the run is abandoned with an ERROR and the exception, as a
  * Booking Service outage on the SEARCHING_FAILED transition ends it, and the booking is left in
- * SEARCHING_PROVIDER for the customer to cancel. It is never failed as having no provider on the strength of a search that did not
- * happen.
+ * SEARCHING_PROVIDER for the customer to cancel. It is never failed as having no provider on the
+ * strength of a search that did not happen.
  *
  * <p>The search stops early, quietly, once the booking no longer needs a provider: the
- * {@code BookingCancelled} flag is checked before every offer and again before a declined or
- * unanswered offer is announced, and a 409/404 from the Booking Service on either terminal
- * transition ({@link BookingNotSearchableException}) ends the run the same way. Without this a
- * cancelled booking kept being offered to, and rejected by, every remaining candidate.
+ * {@code BookingCancelled} flag is checked before every wave and again before declined or
+ * unanswered offers are announced, and a 409/404 from the Booking Service on either terminal
+ * transition ({@link BookingNotSearchableException}) ends the run the same way.
  *
  * <p>All external effects are behind ports so the whole algorithm is exercised with deterministic
  * fakes in unit tests. The class is stateless and thread-safe: it is invoked concurrently from the
@@ -144,10 +147,11 @@ public class DispatchService {
     }
 
     /**
-     * Runs the full matching + offer + radius-expansion loop for a booking.
+     * Runs the full matching + wave offers + radius-expansion loop for a booking.
      *
-     * @return the accepted provider's id, or {@code null} if the search failed after all cycles or
-     *         was abandoned because the booking no longer needs a provider
+     * @return the accepted provider's id, or {@code null} if the booking was handed to the agencies
+     *         (or failed) without an acceptance, or the search was abandoned because the booking no
+     *         longer needs a provider
      * @throws ProviderSearchUnavailableException if the Provider Service stayed unavailable for a
      *         whole offer window; the booking is left in SEARCHING_PROVIDER
      */
@@ -163,7 +167,10 @@ public class DispatchService {
 
     private UUID search(DispatchRequest request) {
         MatchingWeights weights = weightsStore.current();
-        Duration timeout = Duration.ofSeconds(properties.getOfferTimeoutSeconds());
+        Duration offerWindow = Duration.ofSeconds(properties.getOfferTimeoutSeconds());
+        int waveSize = Math.max(1, properties.getOfferBatchSize());
+        long fallbackMinutes = properties.getAgencyFallbackMinutes();
+        Instant fallbackAt = clock.instant().plus(Duration.ofMinutes(fallbackMinutes));
 
         // Providers already offered (and declined/timed-out) are removed from the pool for this
         // booking so an expanded radius never re-offers to someone who already said no (Req 8.7).
@@ -172,49 +179,57 @@ public class DispatchService {
         // cycle 0 = initial radius; cycles 1..maxExpansionCycles = expansions (Req 8.8).
         int totalCycles = properties.getMaxExpansionCycles();
         for (int cycle = 0; cycle <= totalCycles; cycle++) {
+            if (!clock.instant().isBefore(fallbackAt)) {
+                return handOff(request, timeUp(fallbackMinutes));
+            }
             double radiusKm = radiusForCycle(cycle);
             log.debug("Dispatch booking {} cycle {} radius {} km", request.bookingId(), cycle, radiusKm);
 
             List<ProviderCandidate> pending = rankedCandidates(request, radiusKm, weights, exhausted);
             Instant busyDeadline = null;
             while (!pending.isEmpty()) {
-                List<ProviderCandidate> busy = new ArrayList<>();
-                for (ProviderCandidate candidate : pending) {
-                    ensureStillSearching(request);
-                    OfferAttempt attempt = tryOffer(request, candidate, timeout);
-                    if (attempt.acceptedBy() != null) {
-                        return attempt.acceptedBy();
-                    }
-                    if (attempt.busy()) {
-                        busy.add(candidate);
-                    } else {
-                        // Declined or timed out: never offer this provider again for this booking.
-                        exhausted.add(candidate.providerId());
-                    }
-                }
-                if (busy.isEmpty()) {
-                    break;
-                }
-                // Busy providers are mid-offer for another booking. Their lock lives at most one
-                // offer window, so waiting that long gives each of them a chance to see this job;
-                // skipping them outright failed a booking in milliseconds whenever the only nearby
-                // provider was answering someone else.
+                ensureStillSearching(request);
                 Instant now = clock.instant();
-                if (busyDeadline == null) {
-                    busyDeadline = now.plus(timeout);
+                if (!now.isBefore(fallbackAt)) {
+                    return handOff(request, timeUp(fallbackMinutes));
                 }
+                // No wave's window runs past the hand-off to the agencies.
+                Duration remaining = Duration.between(now, fallbackAt);
+                Duration window = remaining.compareTo(offerWindow) < 0 ? remaining : offerWindow;
+                Wave wave = lockWave(request, pending, waveSize, window);
+                if (!wave.locked().isEmpty()) {
+                    UUID acceptedBy = offerWave(request, wave, window, exhausted);
+                    if (acceptedBy != null) {
+                        return acceptedBy;
+                    }
+                    busyDeadline = null;
+                    pending = wave.rest();
+                    continue;
+                }
+                // Everyone left is mid-offer for another booking. Their lock lives at most one offer
+                // window, so waiting that long gives each of them a chance to see this job;
+                // skipping them outright failed a booking in milliseconds whenever the only nearby
+                // providers were answering someone else.
+                if (busyDeadline == null) {
+                    busyDeadline = now.plus(offerWindow);
+                }
+                Instant waitUntil = busyDeadline.isBefore(fallbackAt) ? busyDeadline : fallbackAt;
                 Duration poll = Duration.ofMillis(properties.getOfferPollIntervalMillis());
-                if (!now.isBefore(busyDeadline) || !pause(poll, busyDeadline, now)) {
+                if (!now.isBefore(waitUntil) || !pause(poll, waitUntil, now)) {
                     log.debug("Dispatch booking {} cycle {}: {} provider(s) still busy; moving on",
-                            request.bookingId(), cycle, busy.size());
+                            request.bookingId(), cycle, pending.size());
                     break;
                 }
-                pending = busy;
+                pending = wave.rest();
             }
         }
 
         // Every candidate across every cycle declined or timed out (Requirement 8.9).
-        return searchFailed(request);
+        return handOff(request, "every radius cycle was exhausted");
+    }
+
+    private static String timeUp(long fallbackMinutes) {
+        return "no provider accepted within " + fallbackMinutes + " minute(s)";
     }
 
     /**
@@ -293,34 +308,56 @@ public class DispatchService {
     }
 
     /**
-     * Attempts to offer the job to one candidate under an exclusive lock (Requirements 8.5, 8.11).
-     *
-     * @return who accepted, or that the provider was busy with another offer, or neither when the
-     *         provider declined or let the offer time out
+     * Picks the next wave: walks {@code pending} in rank order and takes an exclusive lock on each
+     * provider until {@code size} are locked (Requirement 8.11). A provider whose lock is held by
+     * another booking's open offer is busy and is left, with everyone not reached, for a later wave.
      */
-    private OfferAttempt tryOffer(DispatchRequest request, ProviderCandidate candidate, Duration timeout) {
-        DistributedLockPort.LockHandle handle = lock.tryAcquire(candidate.providerId(), timeout);
-        if (handle == null) {
-            // Another concurrent booking flow is already offering this provider (Req 8.11).
-            log.debug("Provider {} already locked by a concurrent offer; skipping for booking {}",
-                    candidate.providerId(), request.bookingId());
-            return OfferAttempt.BUSY;
-        }
-        try {
-            JobOfferPort.OfferOutcome outcome =
-                    jobOffer.offer(request, candidate.providerId(), timeout);
-            if (outcome == JobOfferPort.OfferOutcome.ACCEPTED) {
-                return new OfferAttempt(accept(request, candidate.providerId()), false);
+    private Wave lockWave(DispatchRequest request, List<ProviderCandidate> pending, int size, Duration ttl) {
+        List<LockedCandidate> locked = new ArrayList<>();
+        List<ProviderCandidate> rest = new ArrayList<>();
+        for (ProviderCandidate candidate : pending) {
+            if (locked.size() == size) {
+                rest.add(candidate);
+                continue;
             }
-            log.debug("Provider {} responded {} for booking {}",
-                    candidate.providerId(), outcome, request.bookingId());
-            // A cancellation withdraws the pending offer, which reads as a timeout: that is not a
-            // provider rejection and must not be announced as one.
+            DistributedLockPort.LockHandle handle = lock.tryAcquire(candidate.providerId(), ttl);
+            if (handle == null) {
+                log.debug("Provider {} already locked by a concurrent offer; leaving them for a later wave"
+                        + " of booking {}", candidate.providerId(), request.bookingId());
+                rest.add(candidate);
+            } else {
+                locked.add(new LockedCandidate(candidate, handle));
+            }
+        }
+        return new Wave(locked, rest);
+    }
+
+    /**
+     * Offers the job to every provider in the wave at once and waits for the first acceptance
+     * (Requirement 8.5). The locks are released whatever happens.
+     *
+     * @return the provider who took the job, or {@code null} when nobody in the wave accepted; in
+     *         that case each of them has been dropped from the pool and announced as rejected
+     */
+    private UUID offerWave(DispatchRequest request, Wave wave, Duration window, Set<UUID> exhausted) {
+        List<UUID> providerIds = wave.providerIds();
+        try {
+            JobOfferPort.WaveOutcome outcome = jobOffer.offer(request, providerIds, window);
+            if (outcome.acceptedBy() != null) {
+                return accept(request, outcome.acceptedBy());
+            }
+            log.debug("Nobody in a wave of {} accepted booking {}", providerIds.size(), request.bookingId());
+            // A cancellation withdraws the pending offers, which read as timeouts: those are not
+            // provider rejections and must not be announced as such.
             ensureStillSearching(request);
-            reject(request, candidate.providerId(), outcome);
-            return OfferAttempt.NOT_ACCEPTED;
+            for (UUID providerId : providerIds) {
+                // Declined or timed out: never offer this provider again for this booking.
+                exhausted.add(providerId);
+                reject(request, providerId, outcome.outcomeOf(providerId));
+            }
+            return null;
         } finally {
-            lock.release(handle);
+            wave.locked().forEach(l -> lock.release(l.handle()));
         }
     }
 
@@ -410,17 +447,18 @@ public class DispatchService {
     }
 
     /**
-     * Handles the all-cycles-exhausted terminal path (Requirement 8.9). The Booking Service may
-     * route the booking to the partner agencies covering it instead of failing it; that booking is
-     * still being served, so the dispatcher team is not alerted (Requirement MT-4.2).
+     * Ends the search without an acceptance — the agency-fallback time passed or every cycle was
+     * exhausted (Requirement 8.9). The Booking Service routes the booking to the partner agencies
+     * covering it instead of failing it when it can; that booking is still being served, so the
+     * dispatcher team is not alerted (Requirement MT-4.2).
      *
      * <p>The customer's "no provider available" notice is not sent from here: failing the booking
      * publishes {@code BookingCancelled} ({@code status = SEARCHING_FAILED}), from which the
      * Notification Service tells the customer; a routed booking publishes no such event.
      */
-    private UUID searchFailed(DispatchRequest request) {
-        log.warn("Dispatch exhausted all radius cycles for booking {}; marking SEARCHING_FAILED",
-                request.bookingId());
+    private UUID handOff(DispatchRequest request, String why) {
+        log.warn("Dispatch for booking {} ended without an acceptance ({}); handing it to partner agencies"
+                + " or failing it", request.bookingId(), why);
         SearchingFailedOutcome outcome = bookingTransition.markSearchingFailed(request.bookingId());
         if (outcome == SearchingFailedOutcome.AWAITING_ASSIGNMENT) {
             log.info("Booking {} was routed to partner agencies for assignment; skipping the"
@@ -431,9 +469,18 @@ public class DispatchService {
         return null;
     }
 
-    /** Result of one offer attempt: who accepted, or whether the provider was busy elsewhere. */
-    private record OfferAttempt(UUID acceptedBy, boolean busy) {
-        static final OfferAttempt BUSY = new OfferAttempt(null, true);
-        static final OfferAttempt NOT_ACCEPTED = new OfferAttempt(null, false);
+    /** A provider picked for a wave, with the lock that reserves them for this booking. */
+    private record LockedCandidate(ProviderCandidate candidate, DistributedLockPort.LockHandle handle) {
+    }
+
+    /**
+     * One wave: the providers locked for it, and everyone else still to try (busy providers and
+     * those beyond the wave size), in rank order.
+     */
+    private record Wave(List<LockedCandidate> locked, List<ProviderCandidate> rest) {
+
+        List<UUID> providerIds() {
+            return locked.stream().map(l -> l.candidate().providerId()).toList();
+        }
     }
 }

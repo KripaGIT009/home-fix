@@ -2,6 +2,7 @@ package com.homefix.dispatch.adapter;
 
 import com.homefix.dispatch.domain.DispatchRequest;
 import com.homefix.dispatch.domain.JobOffer;
+import com.homefix.dispatch.domain.OfferRound;
 import com.homefix.dispatch.domain.OfferStatus;
 import com.homefix.dispatch.port.JobOfferPort;
 import com.homefix.dispatch.port.NotificationPort;
@@ -12,26 +13,28 @@ import org.slf4j.LoggerFactory;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.Executor;
-import java.util.function.Supplier;
 
 /**
- * Default {@link JobOfferPort} adapter (Requirements 8.5-8.7). The Dispatch Engine owns the offer:
- * it records a PENDING offer through {@link JobOfferService} (Redis-backed, so any instance's
- * provider API can see and decide it), nudges the provider with a best-effort push, and then waits
- * for the provider's answer, which arrives through {@code POST /dispatch/offers/{bookingId}/accept}
+ * Default {@link JobOfferPort} adapter (Requirements 8.5-8.7). The Dispatch Engine owns the offers:
+ * it records a wave of PENDING offers through {@link JobOfferService} (Redis-backed, so any
+ * instance's provider API can see and decide them), nudges each provider with a best-effort push,
+ * and then waits for answers, which arrive through {@code POST /dispatch/offers/{bookingId}/accept}
  * or {@code /decline}.
  *
- * <p>Waiting is a short-interval poll of the offer's status. The dispatch design already dedicates
- * a bulkhead thread to each in-flight offer, so blocking it here costs nothing extra. When the
- * window closes the offer is expired by compare-and-set: if the provider's decision landed first
- * it is honoured, otherwise the offer becomes EXPIRED and any later accept is refused.
+ * <p>Waiting is a short-interval poll of the booking's offers. It ends as soon as one provider in
+ * the wave has accepted (the same write withdrew the others) or everyone has answered. When the
+ * window closes the remaining offers are expired by compare-and-set: a decision that landed first
+ * is honoured, otherwise the offer becomes EXPIRED and any later accept is refused.
  *
- * <p>Failure handling is "treat it as a timeout": if the offer cannot be recorded the provider can
- * never answer it, and the dispatch loop simply moves on to the next candidate. The push runs on a
- * separate executor so a slow or missing Notification Service never eats into the window.
+ * <p>Failure handling is "treat it as a timeout": if the wave cannot be recorded nobody can answer
+ * it, and the dispatch loop simply moves on to the next providers. Pushes run on a separate
+ * executor so a slow or missing Notification Service never eats into the window.
  *
  * <p>Registered by {@code DispatchAdaptersConfig}.
  */
@@ -67,73 +70,86 @@ public class PollingJobOfferAdapter implements JobOfferPort {
     }
 
     @Override
-    public OfferOutcome offer(UUID bookingId, UUID providerId, Duration timeout) {
-        return await(() -> offers.open(bookingId, providerId, timeout));
-    }
-
-    @Override
-    public OfferOutcome offer(DispatchRequest request, UUID providerId, Duration timeout) {
-        return await(() -> offers.open(request, providerId, timeout));
-    }
-
-    private OfferOutcome await(Supplier<JobOffer> open) {
-        JobOffer offer;
+    public WaveOutcome offer(DispatchRequest request, List<UUID> providerIds, Duration timeout) {
+        UUID bookingId = request.bookingId();
+        List<JobOffer> opened;
         try {
-            offer = open.get();
+            opened = offers.open(request, providerIds, timeout);
         } catch (RuntimeException e) {
-            log.warn("Could not record a job offer; treating it as a timeout: {}", e.toString());
-            return OfferOutcome.TIMED_OUT;
+            log.warn("Could not record the job offers for booking {}; treating them as timed out: {}",
+                    bookingId, e.toString());
+            return WaveOutcome.noAnswer(providerIds);
         }
-        UUID bookingId = offer.bookingId();
-        UUID providerId = offer.providerId();
-        pushBestEffort(offer);
+        opened.forEach(this::pushBestEffort);
+        Instant expiresAt = opened.stream().map(JobOffer::expiresAt).max(Instant::compareTo)
+                .orElse(clock.instant());
 
         try {
             Instant now;
-            while ((now = clock.instant()).isBefore(offer.expiresAt())) {
+            while ((now = clock.instant()).isBefore(expiresAt)) {
                 // null is a storage hiccup: keep waiting and let the closing compare-and-set decide.
-                Optional<OfferStatus> status = readStatus(bookingId, providerId);
-                if (status != null) {
-                    if (status.isEmpty()) {
-                        // Gone from storage, or re-offered elsewhere by an overlapping run.
-                        return OfferOutcome.TIMED_OUT;
+                Optional<OfferRound> round = readRound(bookingId);
+                if (round != null) {
+                    if (round.isEmpty()) {
+                        // Gone from storage: nobody can answer any more.
+                        return WaveOutcome.noAnswer(providerIds);
                     }
-                    if (status.get().isTerminal()) {
-                        return outcomeOf(status.get());
+                    if (acceptedInWave(round.get(), providerIds) != null || allAnswered(round.get(), providerIds)) {
+                        return outcomeOf(round.get(), providerIds);
                     }
                 }
-                Duration remaining = Duration.between(now, offer.expiresAt());
+                Duration remaining = Duration.between(now, expiresAt);
                 sleeper.sleep(remaining.compareTo(pollInterval) < 0 ? remaining : pollInterval);
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            log.warn("Interrupted waiting on the offer of booking {} to provider {}; closing it",
-                    bookingId, providerId);
+            log.warn("Interrupted waiting on the offers of booking {}; closing them", bookingId);
         }
-        return close(bookingId, providerId);
+        return close(bookingId, providerIds);
     }
 
-    /** @return the status, empty when the offer is gone, or {@code null} when it could not be read */
-    private Optional<OfferStatus> readStatus(UUID bookingId, UUID providerId) {
+    /** @return the round, empty when it is gone, or {@code null} when it could not be read */
+    private Optional<OfferRound> readRound(UUID bookingId) {
         try {
-            return offers.statusOf(bookingId, providerId);
+            return offers.round(bookingId);
         } catch (RuntimeException e) {
-            log.debug("Could not read the offer of booking {}: {}", bookingId, e.toString());
+            log.debug("Could not read the offers of booking {}: {}", bookingId, e.toString());
             return null;
         }
     }
 
-    /** Expires the offer unless the provider decided first, and reports which happened. */
-    private OfferOutcome close(UUID bookingId, UUID providerId) {
+    /** Expires the wave's pending offers, keeping any decision that landed first. */
+    private WaveOutcome close(UUID bookingId, List<UUID> providerIds) {
         try {
-            OfferStatus last = offers.expire(bookingId, providerId);
-            log.debug("Offer of booking {} to provider {} closed as {}", bookingId, providerId, last);
-            return outcomeOf(last);
+            OfferRound last = offers.expire(bookingId, providerIds);
+            log.debug("Offers of booking {} to {} provider(s) closed", bookingId, providerIds.size());
+            return outcomeOf(last, providerIds);
         } catch (RuntimeException e) {
-            log.warn("Could not close the offer of booking {} to provider {}; treating it as a timeout: {}",
-                    bookingId, providerId, e.toString());
-            return OfferOutcome.TIMED_OUT;
+            log.warn("Could not close the offers of booking {}; treating them as timed out: {}",
+                    bookingId, e.toString());
+            return WaveOutcome.noAnswer(providerIds);
         }
+    }
+
+    private static UUID acceptedInWave(OfferRound round, List<UUID> providerIds) {
+        return round.accepted()
+                .map(JobOffer::providerId)
+                .filter(providerIds::contains)
+                .orElse(null);
+    }
+
+    private static boolean allAnswered(OfferRound round, List<UUID> providerIds) {
+        return providerIds.stream().allMatch(p -> round.offerTo(p).map(o -> o.status().isTerminal()).orElse(true));
+    }
+
+    static WaveOutcome outcomeOf(OfferRound round, List<UUID> providerIds) {
+        Map<UUID, OfferOutcome> outcomes = new LinkedHashMap<>();
+        for (UUID providerId : providerIds) {
+            outcomes.put(providerId, round.offerTo(providerId)
+                    .map(o -> outcomeOf(o.status()))
+                    .orElse(OfferOutcome.TIMED_OUT));
+        }
+        return new WaveOutcome(acceptedInWave(round, providerIds), outcomes);
     }
 
     private void pushBestEffort(JobOffer offer) {

@@ -11,13 +11,13 @@ import static org.mockito.Mockito.when;
 
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
-
+import tools.jackson.databind.json.JsonMapper;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.header.internals.RecordHeader;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.homefix.location.service.LocationService;
 import com.homefix.shared.outbox.kafka.DlqForwarder;
 import com.homefix.shared.outbox.kafka.KafkaProducerTemplate;
@@ -41,7 +41,7 @@ class JobStartedConsumerTest {
         dlqForwarder = mock(DlqForwarder.class);
         locationService = mock(LocationService.class);
         consumer = new JobStartedConsumer(processedEvents, dlqForwarder, locationService,
-                new ObjectMapper());
+                new JsonMapper());
     }
 
     private ConsumerRecord<String, String> record(UUID eventId, String payload) {

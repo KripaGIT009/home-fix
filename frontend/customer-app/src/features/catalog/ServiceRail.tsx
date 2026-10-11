@@ -1,4 +1,4 @@
-import { Link as RouterLink } from 'react-router-dom';
+import { Link as RouterLink } from 'react-router';
 import { Box, Link } from '@mui/material';
 import { Rail } from './Rail';
 import { SectionHeading } from './SectionHeading';
@@ -44,8 +44,10 @@ export function ServiceRail({
               to={seeAllTo}
               underline="hover"
               variant="body2"
-              fontWeight={600}
               aria-label={seeAllLabel}
+              sx={{
+                fontWeight: 600,
+              }}
             >
               See all
             </Link>

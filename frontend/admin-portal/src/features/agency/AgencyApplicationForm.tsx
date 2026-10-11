@@ -105,7 +105,14 @@ function ApplicationFields({ categories, initialName, onCancel }: ApplicationFie
           {tenantErrorMessage(apply.error)}
         </Alert>
       ) : null}
-      <Stack direction="row" spacing={1} justifyContent="flex-end" sx={{ mt: 3 }}>
+      <Stack
+        direction="row"
+        spacing={1}
+        sx={{
+          justifyContent: 'flex-end',
+          mt: 3,
+        }}
+      >
         {onCancel ? (
           <Button onClick={onCancel} disabled={apply.isPending}>
             Cancel

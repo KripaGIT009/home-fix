@@ -37,7 +37,12 @@ export function EarningsScreen() {
   return (
     <AppShell title="Earnings">
       <Stack spacing={2}>
-        <Typography variant="subtitle1" fontWeight={700}>
+        <Typography
+          variant="subtitle1"
+          sx={{
+            fontWeight: 700,
+          }}
+        >
           Request a settlement
         </Typography>
         {settlementInfo.isLoading ? (
@@ -57,7 +62,13 @@ export function EarningsScreen() {
           </Card>
         )}
 
-        <Typography variant="subtitle1" fontWeight={700} sx={{ mt: 1 }}>
+        <Typography
+          variant="subtitle1"
+          sx={{
+            fontWeight: 700,
+            mt: 1,
+          }}
+        >
           Settlement history
         </Typography>
         <QueryStateView
@@ -75,7 +86,13 @@ export function EarningsScreen() {
           </Stack>
         </QueryStateView>
 
-        <Typography variant="subtitle1" fontWeight={700} sx={{ mt: 1 }}>
+        <Typography
+          variant="subtitle1"
+          sx={{
+            fontWeight: 700,
+            mt: 1,
+          }}
+        >
           Earnings by job
         </Typography>
         <QueryStateView
@@ -102,7 +119,13 @@ export function EarningsScreen() {
             >
               Previous
             </Button>
-            <Typography variant="caption" color="text.secondary" aria-live="polite">
+            <Typography
+              variant="caption"
+              aria-live="polite"
+              sx={{
+                color: 'text.secondary',
+              }}
+            >
               Page {page} of {totalPages}
             </Typography>
             <Button
@@ -123,28 +146,70 @@ function EarningsRow({ item }: { item: EarningsHistoryItem }) {
   return (
     <Card variant="outlined">
       <CardContent sx={{ '&:last-child': { pb: 2 } }}>
-        <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
+        <Stack
+          direction="row"
+          spacing={1}
+          sx={{
+            justifyContent: 'space-between',
+            alignItems: 'flex-start',
+          }}
+        >
           <Stack spacing={0.25}>
-            <Typography variant="subtitle2" fontWeight={700}>
+            <Typography
+              variant="subtitle2"
+              sx={{
+                fontWeight: 700,
+              }}
+            >
               {item.serviceName}
             </Typography>
-            <Typography variant="caption" color="text.secondary">
+            <Typography
+              variant="caption"
+              sx={{
+                color: 'text.secondary',
+              }}
+            >
               {item.reference} · {formatDate(item.creditedAt)}
             </Typography>
           </Stack>
-          <Typography variant="subtitle1" fontWeight={700}>
+          <Typography
+            variant="subtitle1"
+            sx={{
+              fontWeight: 700,
+            }}
+          >
             {formatCurrency(item.net, item.currency)}
           </Typography>
         </Stack>
         <Divider sx={{ my: 1 }} />
-        <Stack direction="row" justifyContent="space-between">
-          <Typography variant="caption" color="text.secondary">
+        <Stack
+          direction="row"
+          sx={{
+            justifyContent: 'space-between',
+          }}
+        >
+          <Typography
+            variant="caption"
+            sx={{
+              color: 'text.secondary',
+            }}
+          >
             Gross {formatCurrency(item.gross, item.currency)}
           </Typography>
-          <Typography variant="caption" color="text.secondary">
+          <Typography
+            variant="caption"
+            sx={{
+              color: 'text.secondary',
+            }}
+          >
             Fee −{formatCurrency(item.platformFee, item.currency)}
           </Typography>
-          <Typography variant="caption" fontWeight={700}>
+          <Typography
+            variant="caption"
+            sx={{
+              fontWeight: 700,
+            }}
+          >
             Net {formatCurrency(item.net, item.currency)}
           </Typography>
         </Stack>
@@ -158,12 +223,29 @@ function SettlementRow({ settlement }: { settlement: SettlementRequest }) {
   return (
     <Card variant="outlined">
       <CardContent sx={{ '&:last-child': { pb: 2 } }}>
-        <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
+        <Stack
+          direction="row"
+          spacing={1}
+          sx={{
+            justifyContent: 'space-between',
+            alignItems: 'center',
+          }}
+        >
           <Stack spacing={0.25}>
-            <Typography variant="subtitle2" fontWeight={700}>
+            <Typography
+              variant="subtitle2"
+              sx={{
+                fontWeight: 700,
+              }}
+            >
               {formatCurrency(settlement.amount, settlement.currency)}
             </Typography>
-            <Typography variant="caption" color="text.secondary">
+            <Typography
+              variant="caption"
+              sx={{
+                color: 'text.secondary',
+              }}
+            >
               Requested {formatDateTime(settlement.requestedAt)}
               {settlement.completedAt
                 ? ` · Completed ${formatDateTime(settlement.completedAt)}`

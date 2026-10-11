@@ -5,7 +5,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.homefix.notification.domain.NotificationEventType;
 import com.homefix.shared.outbox.kafka.KafkaProducerTemplate;
 import org.apache.kafka.clients.consumer.ConsumerRecord;

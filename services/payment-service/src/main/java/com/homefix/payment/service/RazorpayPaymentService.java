@@ -11,10 +11,12 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException;
+import tools.jackson.core.JacksonException;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
+
 import com.homefix.payment.domain.PaymentTransaction;
 import com.homefix.payment.domain.TransactionStatus;
 import com.homefix.payment.gateway.RazorpayGatewayAdapter;
@@ -48,7 +50,7 @@ public class RazorpayPaymentService {
 
     private static final Logger log = LoggerFactory.getLogger(RazorpayPaymentService.class);
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final ObjectMapper MAPPER = new JsonMapper();
 
     private final PaymentService paymentService;
     private final RazorpayGatewayAdapter razorpay;
@@ -132,17 +134,17 @@ public class RazorpayPaymentService {
         JsonNode event;
         try {
             event = MAPPER.readTree(payload);
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             throw PaymentException.invalidCallbackPayload("Webhook body is not valid JSON");
         }
-        String type = event.path("event").asText("");
+        String type = event.path("event").asString("");
         switch (type) {
             case "payment.captured", "order.paid" -> settleFromWebhook(type, event);
             case "payment.failed" -> log.info("Razorpay payment {} failed for order {}: {}; the transaction "
                             + "stays PENDING while the customer can still pay the order",
-                    event.at("/payload/payment/entity/id").asText(),
-                    event.at("/payload/payment/entity/order_id").asText(),
-                    event.at("/payload/payment/entity/error_description").asText());
+                    event.at("/payload/payment/entity/id").asString(),
+                    event.at("/payload/payment/entity/order_id").asString(),
+                    event.at("/payload/payment/entity/error_description").asString());
             default -> log.debug("Ignoring Razorpay webhook event {}", type);
         }
     }

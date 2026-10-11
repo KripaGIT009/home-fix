@@ -1,4 +1,4 @@
-##############################################################
+32wqa ##############################################################
 # API Gateway Module — HomeFix
 # AWS API Gateway v2 (HTTP API) with:
 #   - JWT authorizer (Auth Service introspection)

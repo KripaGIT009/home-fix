@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { Alert, Box, Button, Stack, Tab, Tabs, Typography } from '@mui/material';
 import ArrowBackRoundedIcon from '@mui/icons-material/ArrowBackRounded';
 import { isApiError, isUnreachableError } from '@api/client';
@@ -104,20 +104,20 @@ export function LoginScreen() {
 
   const handleEmailCodeSent = useCallback(
     (email: string, info: CodeSentInfo) => {
-      navigate('/signup/verify', { state: { ...forward, email, ...info } });
+      void navigate('/signup/verify', { state: { ...forward, email, ...info } });
     },
     [navigate, forward],
   );
 
   const handleForgotPassword = useCallback(
     (email: string) => {
-      navigate('/forgot-password', { state: { ...forward, ...(email ? { email } : {}) } });
+      void navigate('/forgot-password', { state: { ...forward, ...(email ? { email } : {}) } });
     },
     [navigate, forward],
   );
 
   const handleCreateAccount = useCallback(() => {
-    navigate('/signup', { state: forward });
+    void navigate('/signup', { state: forward });
   }, [navigate, forward]);
 
   // Memoised on the error itself: the parent re-renders every second for the
@@ -149,7 +149,14 @@ export function LoginScreen() {
       <Typography variant="h3" component="h1">
         {isOtpStep ? 'Enter the code' : 'Sign in to HomeFix'}
       </Typography>
-      <Typography variant="body1" color="text.secondary" sx={{ mt: 1, mb: 3 }}>
+      <Typography
+        variant="body1"
+        sx={{
+          color: 'text.secondary',
+          mt: 1,
+          mb: 3,
+        }}
+      >
         {isOtpStep ? (
           <>
             We sent a 6-digit code to{' '}

@@ -1,4 +1,4 @@
-import { Link as RouterLink } from 'react-router-dom';
+import { Link as RouterLink } from 'react-router';
 import { Box, Stack, Typography } from '@mui/material';
 import ScheduleRoundedIcon from '@mui/icons-material/ScheduleRounded';
 import { formatDuration, formatPrice } from '@lib/format';
@@ -46,8 +46,8 @@ export function ServiceTile({
       <Typography
         className="service-tile-name"
         variant="body2"
-        fontWeight={600}
         sx={{
+          fontWeight: 600,
           mt: 1.25,
           lineHeight: 1.4,
           color: 'text.primary',
@@ -63,8 +63,11 @@ export function ServiceTile({
       <Stack
         direction="row"
         spacing={0.5}
-        alignItems="center"
-        sx={{ mt: 0.5, color: 'text.secondary' }}
+        sx={{
+          alignItems: 'center',
+          mt: 0.5,
+          color: 'text.secondary',
+        }}
       >
         <ScheduleRoundedIcon sx={{ fontSize: 14 }} aria-hidden />
         <Typography variant="caption" sx={{ fontSize: '0.75rem' }}>

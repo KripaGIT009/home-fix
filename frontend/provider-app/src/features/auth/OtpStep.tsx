@@ -98,8 +98,10 @@ export function OtpStep({
         <Typography
           variant="body2"
           color={isExpired ? 'error.main' : 'text.secondary'}
-          fontWeight={600}
           aria-live="polite"
+          sx={{
+            fontWeight: 600,
+          }}
         >
           {isExpired ? 'Code expired' : `Expires in ${formatDuration(secondsLeft)}`}
         </Typography>

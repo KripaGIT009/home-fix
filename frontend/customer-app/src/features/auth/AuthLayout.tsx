@@ -6,6 +6,9 @@ import NearMeRoundedIcon from '@mui/icons-material/NearMeRounded';
 import { BrandLogo } from '@components/BrandLogo';
 import { brand, brandGradient, radius, shadows } from '@lib/theme';
 
+/** For the footer's copyright line; read once, not on every render. */
+const COPYRIGHT_YEAR = new Date().getFullYear();
+
 /** Proof points shown on the brand panel. */
 const VALUE_PROPS = [
   {
@@ -74,16 +77,32 @@ export function AuthLayout({ children }: { children: ReactNode }) {
 
         <Typography
           variant="caption"
-          color="text.secondary"
           align="center"
-          sx={{ mt: 3, display: 'block', maxWidth: 360 }}
+          sx={{
+            color: 'text.secondary',
+            mt: 3,
+            display: 'block',
+            maxWidth: 360,
+          }}
         >
           By continuing, you agree to our{' '}
-          <Link href="#" underline="hover" fontWeight={600}>
+          <Link
+            href="#"
+            underline="hover"
+            sx={{
+              fontWeight: 600,
+            }}
+          >
             Terms
           </Link>{' '}
           and{' '}
-          <Link href="#" underline="hover" fontWeight={600}>
+          <Link
+            href="#"
+            underline="hover"
+            sx={{
+              fontWeight: 600,
+            }}
+          >
             Privacy Policy
           </Link>
           .
@@ -151,7 +170,14 @@ function BrandPanel() {
 
         <Stack spacing={2.5} sx={{ display: { xs: 'none', md: 'flex' }, mt: 6 }}>
           {VALUE_PROPS.map((prop) => (
-            <Stack key={prop.label} direction="row" spacing={2} alignItems="center">
+            <Stack
+              key={prop.label}
+              direction="row"
+              spacing={2}
+              sx={{
+                alignItems: 'center',
+              }}
+            >
               <Box
                 aria-hidden
                 sx={{
@@ -169,7 +195,12 @@ function BrandPanel() {
                 {prop.icon}
               </Box>
               <Box>
-                <Typography variant="subtitle1" fontWeight={700}>
+                <Typography
+                  variant="subtitle1"
+                  sx={{
+                    fontWeight: 700,
+                  }}
+                >
                   {prop.label}
                 </Typography>
                 <Typography variant="body2" sx={{ opacity: 0.78 }}>
@@ -185,7 +216,7 @@ function BrandPanel() {
         variant="caption"
         sx={{ position: 'relative', opacity: 0.6, display: { xs: 'none', md: 'block' } }}
       >
-        © {new Date().getFullYear()} HomeFix · Verified Help. Anytime. Anywhere.
+        © {COPYRIGHT_YEAR} HomeFix · Verified Help. Anytime. Anywhere.
       </Typography>
     </Box>
   );

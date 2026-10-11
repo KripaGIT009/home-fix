@@ -10,7 +10,7 @@
 # Prerequisites: the stack is up and `bash docker/seed-pricing.sh` has been run
 # (the Pricing Engine holds parameters in memory in this profile).
 
-AUTH_CONTAINER="${AUTH_CONTAINER:-homefix-core-auth-service-1}"
+AUTH_CONTAINER="${AUTH_CONTAINER:-homefix-core-identity-app-1}"
 
 AUTH=http://localhost:8081
 GATEWAY=http://localhost:8080

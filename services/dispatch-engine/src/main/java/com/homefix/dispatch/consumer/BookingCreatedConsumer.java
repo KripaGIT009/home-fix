@@ -1,6 +1,6 @@
 package com.homefix.dispatch.consumer;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.homefix.dispatch.domain.BookingNotSearchableException;
 import com.homefix.dispatch.domain.DispatchRequest;
 import com.homefix.dispatch.domain.UnresolvableBookingException;

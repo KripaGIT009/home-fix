@@ -46,7 +46,13 @@ export function ProgressTimeline({
             aria-current={step.state === 'current' ? 'step' : undefined}
             sx={{ display: 'flex', gap: 1.75, position: 'relative' }}
           >
-            <Stack alignItems="center" sx={{ flexShrink: 0, width: 24 }}>
+            <Stack
+              sx={{
+                alignItems: 'center',
+                flexShrink: 0,
+                width: 24,
+              }}
+            >
               <StepMarker state={step.state} />
               {isLast ? null : (
                 <Box
@@ -81,7 +87,13 @@ export function ProgressTimeline({
                 </Box>
               </Typography>
               {step.description ? (
-                <Typography variant="body2" color="text.secondary" component="div">
+                <Typography
+                  variant="body2"
+                  component="div"
+                  sx={{
+                    color: 'text.secondary',
+                  }}
+                >
                   {step.description}
                 </Typography>
               ) : null}

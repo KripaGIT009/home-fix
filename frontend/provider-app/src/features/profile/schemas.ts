@@ -279,7 +279,7 @@ export const serviceAreaSchema = z.object({
   latitude: coordinate('latitude', 90),
   longitude: coordinate('longitude', 180),
   serviceRadiusKm: z
-    .number({ invalid_type_error: 'Choose a radius' })
+    .number({ error: 'Choose a radius' })
     .int('Choose a whole number of kilometres')
     .min(
       PROFILE_LIMITS.minServiceRadiusKm,

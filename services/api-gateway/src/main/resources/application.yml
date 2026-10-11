@@ -7,170 +7,178 @@ spring:
       port: ${REDIS_PORT:6379}
   cloud:
     gateway:
-      # Routes to downstream microservices. TLS is terminated at the AWS edge (Task 1); the
-      # X-Forwarded-Proto header conveys the original scheme to the HTTPS-redirect filter.
-      routes:
-        - id: auth-service
-          uri: ${AUTH_SERVICE_URI:http://auth-service:8081}
-          predicates:
-            - Path=/auth/**
-        - id: customer-service
-          uri: ${CUSTOMER_SERVICE_URI:http://customer-service:8082}
-          predicates:
-            - Path=/customers/**
-        - id: provider-service
-          uri: ${PROVIDER_SERVICE_URI:http://provider-service:8083}
-          predicates:
-            - Path=/providers/**
-        - id: booking-service
-          uri: ${BOOKING_SERVICE_URI:http://booking-service:8084}
-          predicates:
-            - Path=/bookings/**
-        - id: catalog-service
-          uri: ${CATALOG_SERVICE_URI:http://catalog-service:8085}
-          predicates:
-            - Path=/catalog/**
-        - id: payment-service
-          uri: ${PAYMENT_SERVICE_URI:http://payment-service:8088}
-          predicates:
-            - Path=/payments/**
-        - id: pricing-engine
-          uri: ${PRICING_ENGINE_URI:http://pricing-engine:8086}
-          predicates:
-            - Path=/pricing/**
-        # Only the provider-facing job-offer API; the rest of the Dispatch Engine is internal.
-        # "/dispatch/offers/**" also matches the bare "/dispatch/offers" list.
-        - id: dispatch-engine
-          uri: ${DISPATCH_ENGINE_URI:http://dispatch-engine:8087}
-          predicates:
-            - Path=/dispatch/offers/**
-        - id: location-service
-          uri: ${LOCATION_SERVICE_URI:http://location-service:8092}
-          predicates:
-            - Path=/locations/**
-        - id: verification-service
-          uri: ${VERIFICATION_SERVICE_URI:http://verification-service:8094}
-          predicates:
-            - Path=/verifications/**
-        - id: invoice-service
-          uri: ${INVOICE_SERVICE_URI:http://invoice-service:8089}
-          predicates:
-            - Path=/invoices/**
-        - id: complaint-service
-          uri: ${COMPLAINT_SERVICE_URI:http://complaint-service:8091}
-          predicates:
-            - Path=/complaints/**
-        - id: chat-service
-          uri: ${CHAT_SERVICE_URI:http://chat-service:8093}
-          predicates:
-            - Path=/chat/**
-        - id: rating-review-service
-          uri: ${RATING_SERVICE_URI:http://rating-review-service:8097}
-          predicates:
-            - Path=/reviews/**
-        - id: promotion-service
-          uri: ${PROMOTION_SERVICE_URI:http://promotion-service:8098}
-          predicates:
-            - Path=/coupons/**
-        - id: notification-service
-          uri: ${NOTIFICATION_SERVICE_URI:http://notification-service:8090}
-          predicates:
-            - Path=/notifications/**
-        - id: reporting-service
-          uri: ${REPORTING_SERVICE_URI:http://reporting-service:8096}
-          predicates:
-            - Path=/reports/**
-        # The Admin Service owns the /admin surface the portal calls. Services that
-        # expose their own /admin/** sub-tree (catalog, pricing, dispatch,
-        # verification) are reached through their service-specific prefixes above;
-        # these three routes keep the paths the Admin Portal actually uses pointed
-        # at the service that implements them.
-        - id: admin-catalog
-          uri: ${CATALOG_SERVICE_URI:http://catalog-service:8085}
-          predicates:
-            - Path=/admin/catalog/**
-        - id: admin-pricing
-          uri: ${PRICING_ENGINE_URI:http://pricing-engine:8086}
-          predicates:
-            - Path=/admin/pricing/**
-        - id: admin-verifications
-          uri: ${VERIFICATION_SERVICE_URI:http://verification-service:8094}
-          predicates:
-            - Path=/admin/verifications/**,/admin/verification/**
-        # Each Admin Portal module is served by the service that owns its data, under the
-        # exact path the portal calls. Routes match in declaration order, so these must stay
-        # above the admin-service catch-all; admin-service keeps only what it owns
-        # (dashboard, system configuration, audit log).
-        - id: admin-users
-          uri: ${AUTH_SERVICE_URI:http://auth-service:8081}
-          predicates:
-            - Path=/admin/users/**,/admin/users
-        # Staff invitations live with accounts in auth-service (email-auth Requirement 6).
-        - id: admin-invitations
-          uri: ${AUTH_SERVICE_URI:http://auth-service:8081}
-          predicates:
-            - Path=/admin/invitations/**,/admin/invitations
-        - id: admin-providers
-          uri: ${PROVIDER_SERVICE_URI:http://provider-service:8083}
-          predicates:
-            - Path=/admin/providers/**,/admin/providers
-        - id: admin-bookings
-          uri: ${BOOKING_SERVICE_URI:http://booking-service:8084}
-          predicates:
-            - Path=/admin/bookings/**,/admin/bookings
-        - id: admin-payments
-          uri: ${PAYMENT_SERVICE_URI:http://payment-service:8088}
-          predicates:
-            - Path=/admin/payments/**,/admin/payments
-        - id: admin-complaints
-          uri: ${COMPLAINT_SERVICE_URI:http://complaint-service:8091}
-          predicates:
-            - Path=/admin/complaints/**,/admin/complaints
-        - id: admin-coupons
-          uri: ${PROMOTION_SERVICE_URI:http://promotion-service:8098}
-          predicates:
-            - Path=/admin/coupons/**,/admin/coupons
-        - id: admin-reviews
-          uri: ${RATING_SERVICE_URI:http://rating-review-service:8097}
-          predicates:
-            - Path=/admin/reviews/**,/admin/reviews
-        - id: admin-reports
-          uri: ${REPORTING_SERVICE_URI:http://reporting-service:8096}
-          predicates:
-            - Path=/admin/reports/**,/admin/reports
-        - id: admin-notification-templates
-          uri: ${NOTIFICATION_SERVICE_URI:http://notification-service:8090}
-          predicates:
-            - Path=/admin/notification-templates/**,/admin/notification-templates
-        - id: admin-dispatch
-          uri: ${DISPATCH_ENGINE_URI:http://dispatch-engine:8087}
-          predicates:
-            - Path=/admin/dispatch/**
-        # Tenants (service agencies) are owned by provider-service: platform admins manage them
-        # under /admin/tenants, Tenant admins work their own team under /tenant/**. A Tenant's
-        # assignment queue and jobs are bookings, so /tenant/bookings/** goes to booking-service
-        # and must stay above the /tenant/** route (Requirement MT-10, design "api-gateway").
-        - id: admin-tenants
-          uri: ${PROVIDER_SERVICE_URI:http://provider-service:8083}
-          predicates:
-            - Path=/admin/tenants/**,/admin/tenants
-        # Agency self-registration (email-auth Requirement 5); any signed-in user may apply.
-        - id: tenant-applications
-          uri: ${PROVIDER_SERVICE_URI:http://provider-service:8083}
-          predicates:
-            - Path=/tenant-applications/**,/tenant-applications
-        - id: tenant-bookings
-          uri: ${BOOKING_SERVICE_URI:http://booking-service:8084}
-          predicates:
-            - Path=/tenant/bookings/**,/tenant/bookings
-        - id: tenant
-          uri: ${PROVIDER_SERVICE_URI:http://provider-service:8083}
-          predicates:
-            - Path=/tenant/**
-        - id: admin-service
-          uri: ${ADMIN_SERVICE_URI:http://admin-service:8095}
-          predicates:
-            - Path=/admin/**
+      server:
+        webflux:
+          # Routes to downstream microservices. TLS is terminated at the AWS edge (Task 1); the
+          # X-Forwarded-Proto header conveys the original scheme to the HTTPS-redirect filter.
+          routes:
+            - id: auth-service
+              uri: ${AUTH_SERVICE_URI:http://identity-app:8081}
+              predicates:
+                - Path=/auth/**
+            - id: customer-service
+              uri: ${CUSTOMER_SERVICE_URI:http://identity-app:8082}
+              predicates:
+                - Path=/customers/**
+            - id: provider-service
+              uri: ${PROVIDER_SERVICE_URI:http://identity-app:8083}
+              predicates:
+                - Path=/providers/**
+            - id: booking-service
+              uri: ${BOOKING_SERVICE_URI:http://jobs-app:8084}
+              predicates:
+                - Path=/bookings/**
+            - id: catalog-service
+              uri: ${CATALOG_SERVICE_URI:http://jobs-app:8085}
+              predicates:
+                - Path=/catalog/**
+            # GET /config/client: the config.app_config rows the web apps may read (public).
+            - id: client-config
+              uri: ${CATALOG_SERVICE_URI:http://jobs-app:8085}
+              predicates:
+                - Path=/config/client
+                - Method=GET
+            - id: payment-service
+              uri: ${PAYMENT_SERVICE_URI:http://money-app:8088}
+              predicates:
+                - Path=/payments/**
+            - id: pricing-engine
+              uri: ${PRICING_ENGINE_URI:http://jobs-app:8086}
+              predicates:
+                - Path=/pricing/**
+            # Only the provider-facing job-offer API; the rest of the Dispatch Engine is internal.
+            # "/dispatch/offers/**" also matches the bare "/dispatch/offers" list.
+            - id: dispatch-engine
+              uri: ${DISPATCH_ENGINE_URI:http://jobs-app:8087}
+              predicates:
+                - Path=/dispatch/offers/**
+            - id: location-service
+              uri: ${LOCATION_SERVICE_URI:http://jobs-app:8092}
+              predicates:
+                - Path=/locations/**
+            - id: verification-service
+              uri: ${VERIFICATION_SERVICE_URI:http://identity-app:8094}
+              predicates:
+                - Path=/verifications/**
+            - id: invoice-service
+              uri: ${INVOICE_SERVICE_URI:http://money-app:8089}
+              predicates:
+                - Path=/invoices/**
+            - id: complaint-service
+              uri: ${COMPLAINT_SERVICE_URI:http://engagement-app:8091}
+              predicates:
+                - Path=/complaints/**
+            - id: chat-service
+              uri: ${CHAT_SERVICE_URI:http://jobs-app:8093}
+              predicates:
+                - Path=/chat/**
+            - id: rating-review-service
+              uri: ${RATING_SERVICE_URI:http://engagement-app:8097}
+              predicates:
+                - Path=/reviews/**
+            - id: promotion-service
+              uri: ${PROMOTION_SERVICE_URI:http://jobs-app:8098}
+              predicates:
+                - Path=/coupons/**
+            - id: notification-service
+              uri: ${NOTIFICATION_SERVICE_URI:http://engagement-app:8090}
+              predicates:
+                - Path=/notifications/**
+            - id: reporting-service
+              uri: ${REPORTING_SERVICE_URI:http://engagement-app:8096}
+              predicates:
+                - Path=/reports/**
+            # The Admin Service owns the /admin surface the portal calls. Services that
+            # expose their own /admin/** sub-tree (catalog, pricing, dispatch,
+            # verification) are reached through their service-specific prefixes above;
+            # these three routes keep the paths the Admin Portal actually uses pointed
+            # at the service that implements them.
+            - id: admin-catalog
+              uri: ${CATALOG_SERVICE_URI:http://jobs-app:8085}
+              predicates:
+                - Path=/admin/catalog/**
+            - id: admin-pricing
+              uri: ${PRICING_ENGINE_URI:http://jobs-app:8086}
+              predicates:
+                - Path=/admin/pricing/**
+            - id: admin-verifications
+              uri: ${VERIFICATION_SERVICE_URI:http://identity-app:8094}
+              predicates:
+                - Path=/admin/verifications/**,/admin/verification/**
+            # Each Admin Portal module is served by the service that owns its data, under the
+            # exact path the portal calls. Routes match in declaration order, so these must stay
+            # above the admin-service catch-all; admin-service keeps only what it owns
+            # (dashboard, system configuration, audit log).
+            - id: admin-users
+              uri: ${AUTH_SERVICE_URI:http://identity-app:8081}
+              predicates:
+                - Path=/admin/users/**,/admin/users
+            # Staff invitations live with accounts in auth-service (email-auth Requirement 6).
+            - id: admin-invitations
+              uri: ${AUTH_SERVICE_URI:http://identity-app:8081}
+              predicates:
+                - Path=/admin/invitations/**,/admin/invitations
+            - id: admin-providers
+              uri: ${PROVIDER_SERVICE_URI:http://identity-app:8083}
+              predicates:
+                - Path=/admin/providers/**,/admin/providers
+            - id: admin-bookings
+              uri: ${BOOKING_SERVICE_URI:http://jobs-app:8084}
+              predicates:
+                - Path=/admin/bookings/**,/admin/bookings
+            - id: admin-payments
+              uri: ${PAYMENT_SERVICE_URI:http://money-app:8088}
+              predicates:
+                - Path=/admin/payments/**,/admin/payments
+            - id: admin-complaints
+              uri: ${COMPLAINT_SERVICE_URI:http://engagement-app:8091}
+              predicates:
+                - Path=/admin/complaints/**,/admin/complaints
+            - id: admin-coupons
+              uri: ${PROMOTION_SERVICE_URI:http://jobs-app:8098}
+              predicates:
+                - Path=/admin/coupons/**,/admin/coupons
+            - id: admin-reviews
+              uri: ${RATING_SERVICE_URI:http://engagement-app:8097}
+              predicates:
+                - Path=/admin/reviews/**,/admin/reviews
+            - id: admin-reports
+              uri: ${REPORTING_SERVICE_URI:http://engagement-app:8096}
+              predicates:
+                - Path=/admin/reports/**,/admin/reports
+            - id: admin-notification-templates
+              uri: ${NOTIFICATION_SERVICE_URI:http://engagement-app:8090}
+              predicates:
+                - Path=/admin/notification-templates/**,/admin/notification-templates
+            - id: admin-dispatch
+              uri: ${DISPATCH_ENGINE_URI:http://jobs-app:8087}
+              predicates:
+                - Path=/admin/dispatch/**
+            # Tenants (service agencies) are owned by provider-service: platform admins manage them
+            # under /admin/tenants, Tenant admins work their own team under /tenant/**. A Tenant's
+            # assignment queue and jobs are bookings, so /tenant/bookings/** goes to booking-service
+            # and must stay above the /tenant/** route (Requirement MT-10, design "api-gateway").
+            - id: admin-tenants
+              uri: ${PROVIDER_SERVICE_URI:http://identity-app:8083}
+              predicates:
+                - Path=/admin/tenants/**,/admin/tenants
+            # Agency self-registration (email-auth Requirement 5); any signed-in user may apply.
+            - id: tenant-applications
+              uri: ${PROVIDER_SERVICE_URI:http://identity-app:8083}
+              predicates:
+                - Path=/tenant-applications/**,/tenant-applications
+            - id: tenant-bookings
+              uri: ${BOOKING_SERVICE_URI:http://jobs-app:8084}
+              predicates:
+                - Path=/tenant/bookings/**,/tenant/bookings
+            - id: tenant
+              uri: ${PROVIDER_SERVICE_URI:http://identity-app:8083}
+              predicates:
+                - Path=/tenant/**
+            - id: admin-service
+              uri: ${ADMIN_SERVICE_URI:http://engagement-app:8095}
+              predicates:
+                - Path=/admin/**
 
 server:
   port: ${SERVER_PORT:8080}
@@ -182,7 +190,7 @@ homefix:
     https-enforced: ${HTTPS_ENFORCED:true}
     auth:
       # Auth Service JWT introspection endpoint (Requirement 23.1).
-      introspect-uri: ${AUTH_INTROSPECT_URI:http://auth-service:8081/auth/introspect}
+      introspect-uri: ${AUTH_INTROSPECT_URI:http://identity-app:8081/auth/introspect}
       # Reuse of positive introspection results, keyed by a hash of the token. An active result
       # lives for at most this long and never past the token's exp; failures and inactive results
       # are never cached. Revocation (if ever added for access tokens) takes effect within the

@@ -45,25 +45,33 @@ export function MobileStep({ onSubmit, isSubmitting, errorMessage }: MobileStepP
           placeholder="98765 43210"
           error={Boolean(errors.mobileNumber)}
           helperText={errors.mobileNumber?.message ?? 'We will text you a verification code.'}
-          InputProps={{
-            startAdornment: (
-              <InputAdornment position="start">
-                <Typography
-                  variant="body1"
-                  fontWeight={600}
-                  sx={{ pr: 1.25, mr: 1.25, borderRight: 1, borderColor: 'divider' }}
-                >
-                  +91
-                </Typography>
-              </InputAdornment>
-            ),
-          }}
-          inputProps={{
-            inputMode: 'tel',
-            'aria-label': 'Mobile number',
-            style: { fontSize: '1.0625rem', letterSpacing: '0.02em' },
-          }}
           {...register('mobileNumber')}
+          slotProps={{
+            input: {
+              startAdornment: (
+                <InputAdornment position="start">
+                  <Typography
+                    variant="body1"
+                    sx={{
+                      fontWeight: 600,
+                      pr: 1.25,
+                      mr: 1.25,
+                      borderRight: 1,
+                      borderColor: 'divider',
+                    }}
+                  >
+                    +91
+                  </Typography>
+                </InputAdornment>
+              ),
+            },
+
+            htmlInput: {
+              inputMode: 'tel',
+              'aria-label': 'Mobile number',
+              style: { fontSize: '1.0625rem', letterSpacing: '0.02em' },
+            },
+          }}
         />
       </Box>
 

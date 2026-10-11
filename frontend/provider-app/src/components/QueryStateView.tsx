@@ -39,7 +39,13 @@ export function QueryStateView({
   if (isError) {
     const message = isApiError(error) ? error.message : 'Something went wrong. Please try again.';
     return (
-      <Stack spacing={2} sx={{ py: 3 }} alignItems="flex-start">
+      <Stack
+        spacing={2}
+        sx={{
+          alignItems: 'flex-start',
+          py: 3,
+        }}
+      >
         <Alert severity="error" sx={{ width: '100%' }}>
           {message}
         </Alert>
@@ -54,7 +60,14 @@ export function QueryStateView({
 
   if (isEmpty) {
     return (
-      <Stack spacing={1} alignItems="center" sx={{ py: 7, textAlign: 'center' }}>
+      <Stack
+        spacing={1}
+        sx={{
+          alignItems: 'center',
+          py: 7,
+          textAlign: 'center',
+        }}
+      >
         <Box
           sx={{
             width: 56,
@@ -68,7 +81,13 @@ export function QueryStateView({
         >
           <InboxRoundedIcon aria-hidden />
         </Box>
-        <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 280 }}>
+        <Typography
+          variant="body2"
+          sx={{
+            color: 'text.secondary',
+            maxWidth: 280,
+          }}
+        >
           {emptyMessage}
         </Typography>
       </Stack>

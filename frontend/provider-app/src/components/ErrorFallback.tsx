@@ -20,9 +20,13 @@ export function ErrorFallback({ error, resetErrorBoundary }: FallbackProps) {
       <Stack
         role="alert"
         spacing={2}
-        alignItems="center"
-        textAlign="center"
-        sx={{ minHeight: '100dvh', justifyContent: 'center', py: 4 }}
+        sx={{
+          alignItems: 'center',
+          textAlign: 'center',
+          minHeight: '100dvh',
+          justifyContent: 'center',
+          py: 4,
+        }}
       >
         <Box
           sx={{
@@ -40,14 +44,16 @@ export function ErrorFallback({ error, resetErrorBoundary }: FallbackProps) {
         <Typography variant="h5" component="h1">
           Something went wrong
         </Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 360 }}>
+        <Typography
+          variant="body2"
+          sx={{
+            color: 'text.secondary',
+            maxWidth: 360,
+          }}
+        >
           {message}
         </Typography>
-        <Button
-          variant="contained"
-          startIcon={<RefreshRoundedIcon />}
-          onClick={resetErrorBoundary}
-        >
+        <Button variant="contained" startIcon={<RefreshRoundedIcon />} onClick={resetErrorBoundary}>
           Try again
         </Button>
       </Stack>

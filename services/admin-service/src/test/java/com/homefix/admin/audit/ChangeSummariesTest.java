@@ -7,14 +7,15 @@ import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * The one-line change summaries shown in the Audit Logs view (Requirement 19.8).
  */
 class ChangeSummariesTest {
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper = new JsonMapper();
 
     private static AuditLogEntry entry(AdminAction action, String before, String after) {
         return new AuditLogEntry(UUID.randomUUID(), UUID.randomUUID(), action, "USER", "u-1",

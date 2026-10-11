@@ -18,7 +18,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
+
 import com.homefix.pricing.config.PricingProperties;
 import com.homefix.pricing.domain.PricingParameters;
 
@@ -35,7 +37,7 @@ class RedisPricingConfigCacheAdapterTest {
     @Mock private RedisTemplate<String, String> redis;
     @Mock private ValueOperations<String, String> valueOps;
 
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final ObjectMapper mapper = new JsonMapper();
     private final PricingProperties properties = new PricingProperties();
 
     private RedisPricingConfigCacheAdapter adapter;

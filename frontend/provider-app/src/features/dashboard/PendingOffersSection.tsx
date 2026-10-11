@@ -42,11 +42,27 @@ export function PendingOffersSection({ onOpen }: PendingOffersSectionProps) {
 
   return (
     <Stack spacing={1.5}>
-      <Stack direction="row" justifyContent="space-between" alignItems="baseline">
-        <Typography variant="subtitle1" fontWeight={700}>
+      <Stack
+        direction="row"
+        sx={{
+          justifyContent: 'space-between',
+          alignItems: 'baseline',
+        }}
+      >
+        <Typography
+          variant="subtitle1"
+          sx={{
+            fontWeight: 700,
+          }}
+        >
           Job offers
         </Typography>
-        <Typography variant="caption" color="text.secondary">
+        <Typography
+          variant="caption"
+          sx={{
+            color: 'text.secondary',
+          }}
+        >
           {open.length} waiting for you
         </Typography>
       </Stack>
@@ -76,13 +92,30 @@ function PendingOfferCard({ offer, secondsLeft, onOpen }: PendingOfferCardProps)
     <Card variant="outlined" sx={{ borderColor: offer.emergency ? 'error.main' : 'primary.main' }}>
       <CardActionArea onClick={() => onOpen(offer.bookingId)}>
         <CardContent>
-          <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
+          <Stack
+            direction="row"
+            spacing={1}
+            sx={{
+              justifyContent: 'space-between',
+              alignItems: 'flex-start',
+            }}
+          >
             <Stack spacing={0.25}>
-              <Typography variant="subtitle1" fontWeight={700}>
+              <Typography
+                variant="subtitle1"
+                sx={{
+                  fontWeight: 700,
+                }}
+              >
                 {offer.emergency ? 'Emergency job' : 'New job'}
               </Typography>
               {offer.reference ? (
-                <Typography variant="caption" color="text.secondary">
+                <Typography
+                  variant="caption"
+                  sx={{
+                    color: 'text.secondary',
+                  }}
+                >
                   {offer.reference}
                 </Typography>
               ) : null}
@@ -101,9 +134,11 @@ function PendingOfferCard({ offer, secondsLeft, onOpen }: PendingOfferCardProps)
           <Stack
             direction="row"
             spacing={1}
-            alignItems="center"
-            color="text.secondary"
-            sx={{ mt: 1.5 }}
+            sx={{
+              alignItems: 'center',
+              color: 'text.secondary',
+              mt: 1.5,
+            }}
           >
             <ScheduleRoundedIcon fontSize="small" aria-hidden />
             <Typography variant="body2">
@@ -118,7 +153,12 @@ function PendingOfferCard({ offer, secondsLeft, onOpen }: PendingOfferCardProps)
               color={secondsLeft <= 10 ? 'warning' : 'primary'}
               aria-label="Time remaining to respond"
             />
-            <Typography variant="caption" color="text.secondary">
+            <Typography
+              variant="caption"
+              sx={{
+                color: 'text.secondary',
+              }}
+            >
               Respond within {secondsLeft} s
             </Typography>
           </Stack>

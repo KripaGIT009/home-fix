@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { Navigate, useLocation, useNavigate } from 'react-router';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Alert, Button, Stack } from '@mui/material';
@@ -74,7 +74,7 @@ function EmailCodeForm({ details }: { details: EmailCodeLocationState }) {
       },
       {
         onSuccess: () =>
-          navigate(details.from?.pathname ?? DEFAULT_SIGNED_IN_ROUTE, { replace: true }),
+          void navigate(details.from?.pathname ?? DEFAULT_SIGNED_IN_ROUTE, { replace: true }),
       },
     );
   };
@@ -96,11 +96,11 @@ function EmailCodeForm({ details }: { details: EmailCodeLocationState }) {
   const cameFromSignUp = details.displayName !== undefined;
   const leave = () => {
     if (cameFromSignUp) {
-      navigate(AUTH_ROUTES.signUp);
+      void navigate(AUTH_ROUTES.signUp);
       return;
     }
     const state: LoginLocationState = { signInMethod: 'email', email: details.email };
-    navigate(AUTH_ROUTES.login, { state });
+    void navigate(AUTH_ROUTES.login, { state });
   };
 
   const codeExpired = verify.error?.code === EMAIL_AUTH_ERRORS.codeExpired;

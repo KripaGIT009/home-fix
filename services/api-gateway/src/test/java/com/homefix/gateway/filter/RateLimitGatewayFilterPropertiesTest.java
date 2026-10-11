@@ -8,7 +8,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
+
 import com.homefix.gateway.auth.IntrospectionResult;
 import com.homefix.gateway.ratelimit.RateLimitCounter;
 import com.homefix.gateway.ratelimit.RateLimitPolicy;
@@ -48,7 +50,7 @@ class RateLimitGatewayFilterPropertiesTest {
 
         RateLimitPolicy policy = RateLimitPolicy.defaults();
         InMemoryRateLimitCounter counter = new InMemoryRateLimitCounter();
-        GatewayErrorWriter errorWriter = new GatewayErrorWriter(new ObjectMapper());
+        GatewayErrorWriter errorWriter = new GatewayErrorWriter(new JsonMapper());
         RateLimitGatewayFilter filter = new RateLimitGatewayFilter(policy, counter, errorWriter);
 
         String subject = "user-" + extraRequests; // distinct key per try keeps windows isolated

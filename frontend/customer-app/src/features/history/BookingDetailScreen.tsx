@@ -1,5 +1,5 @@
 import { useCallback, type ReactNode } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router';
 import {
   Alert,
   Avatar,
@@ -24,7 +24,7 @@ import NearMeRoundedIcon from '@mui/icons-material/NearMeRounded';
 import ReplayRoundedIcon from '@mui/icons-material/ReplayRounded';
 import SearchOffRoundedIcon from '@mui/icons-material/SearchOffRounded';
 import HandymanRoundedIcon from '@mui/icons-material/HandymanRounded';
-import { Link as RouterLink } from 'react-router-dom';
+import { Link as RouterLink } from 'react-router';
 import { AppShell } from '@components/AppShell';
 import { QueryStateView } from '@components/QueryStateView';
 import { EmptyState, IconTile } from '@components/StateViews';
@@ -83,11 +83,11 @@ export function BookingDetailScreen() {
     <AppShell
       title="Booking details"
       {...(query.data ? { subtitle: `Reference ${query.data.referenceNumber}` } : {})}
-      onBack={() => navigate('/history')}
+      onBack={() => void navigate('/history')}
       width="full"
     >
       {notFound ? (
-        <BookingNotFound onBack={() => navigate('/history')} />
+        <BookingNotFound onBack={() => void navigate('/history')} />
       ) : (
         <QueryStateView
           isLoading={query.isLoading}
@@ -102,9 +102,9 @@ export function BookingDetailScreen() {
           {query.data ? (
             <BookingDetailBody
               detail={query.data}
-              onTrack={() => navigate(`/bookings/${bookingId}/track`)}
-              onChat={() => navigate(`/bookings/${bookingId}/chat`)}
-              onBookAgain={(subcategoryId) => navigate(`/book/${subcategoryId}`)}
+              onTrack={() => void navigate(`/bookings/${bookingId}/track`)}
+              onChat={() => void navigate(`/bookings/${bookingId}/chat`)}
+              onBookAgain={(subcategoryId) => void navigate(`/book/${subcategoryId}`)}
               onDownloadInvoice={handleDownloadInvoice}
               invoicePending={invoiceDownload.isPending}
               invoiceError={invoiceError}
@@ -174,7 +174,13 @@ function BookingDetailBody({
     >
       <Card sx={{ gridArea: 'summary' }}>
         <CardContent>
-          <Stack direction="row" spacing={2} alignItems="flex-start">
+          <Stack
+            direction="row"
+            spacing={2}
+            sx={{
+              alignItems: 'flex-start',
+            }}
+          >
             <IconTile size={52} bg={art.wash} color={art.accent}>
               {category ? (
                 <CategoryIcon iconKey={category.icon} categoryName={category.name} />
@@ -189,10 +195,12 @@ function BookingDetailBody({
               <Stack
                 direction="row"
                 spacing={1}
-                alignItems="center"
-                flexWrap="wrap"
                 useFlexGap
-                sx={{ mt: 1 }}
+                sx={{
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                  mt: 1,
+                }}
               >
                 <StatusChip status={detail.status} size="medium" />
                 {detail.emergency ? <EmergencyTag /> : null}
@@ -239,7 +247,12 @@ function BookingDetailBody({
 
       <Card sx={{ gridArea: 'actions', position: { md: 'sticky' }, top: { md: 96 } }}>
         <CardContent>
-          <Typography variant="body2" color="text.secondary">
+          <Typography
+            variant="body2"
+            sx={{
+              color: 'text.secondary',
+            }}
+          >
             {paid ? 'Paid' : payable ? 'Total to pay' : terminal ? 'Amount' : 'Estimated total'}
           </Typography>
           <Typography variant="h2" component="p" sx={{ mt: 0.25 }}>
@@ -248,20 +261,39 @@ function BookingDetailBody({
           {payable && detail.parts?.length ? (
             <Typography
               variant="body2"
-              color="text.secondary"
               component="div"
-              sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 0.25 }}
+              sx={{
+                color: 'text.secondary',
+                mt: 1,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 0.25,
+              }}
             >
               <PartsList detail={detail} />
             </Typography>
           ) : null}
           {paid ? (
-            <Typography variant="caption" color="success.dark" display="block" sx={{ mt: 0.5 }}>
+            <Typography
+              variant="caption"
+              sx={{
+                color: 'success.dark',
+                display: 'block',
+                mt: 0.5,
+              }}
+            >
               Payment received — thank you.
             </Typography>
           ) : null}
           {terminal || payable ? null : (
-            <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
+            <Typography
+              variant="caption"
+              sx={{
+                color: 'text.secondary',
+                display: 'block',
+                mt: 0.5,
+              }}
+            >
               You approve any change before it is charged.
             </Typography>
           )}
@@ -311,9 +343,22 @@ function BookingDetailBody({
             ) : null}
           </Stack>
 
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 2.5 }}>
+          <Typography
+            variant="body2"
+            sx={{
+              color: 'text.secondary',
+              mt: 2.5,
+            }}
+          >
             Something not right?{' '}
-            <Link component={RouterLink} to="/help" fontWeight={600} underline="hover">
+            <Link
+              component={RouterLink}
+              to="/help"
+              underline="hover"
+              sx={{
+                fontWeight: 600,
+              }}
+            >
               Get help
             </Link>
           </Typography>
@@ -337,8 +382,8 @@ function EmergencyTag() {
     <Stack
       direction="row"
       spacing={0.5}
-      alignItems="center"
       sx={{
+        alignItems: 'center',
         px: 1.25,
         py: 0.5,
         borderRadius: `${radius.pill}px`,
@@ -347,7 +392,12 @@ function EmergencyTag() {
       }}
     >
       <BoltRoundedIcon sx={{ fontSize: 15 }} aria-hidden />
-      <Typography variant="caption" fontWeight={700}>
+      <Typography
+        variant="caption"
+        sx={{
+          fontWeight: 700,
+        }}
+      >
         Emergency
       </Typography>
     </Stack>
@@ -356,7 +406,13 @@ function EmergencyTag() {
 
 function DetailRow({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
   return (
-    <Stack direction="row" spacing={1.5} alignItems="flex-start">
+    <Stack
+      direction="row"
+      spacing={1.5}
+      sx={{
+        alignItems: 'flex-start',
+      }}
+    >
       <Box
         sx={{ color: 'text.secondary', display: 'flex', pt: 0.25, '& svg': { fontSize: 20 } }}
         aria-hidden
@@ -364,10 +420,22 @@ function DetailRow({ icon, label, value }: { icon: ReactNode; label: string; val
         {icon}
       </Box>
       <Box sx={{ minWidth: 0 }}>
-        <Typography variant="caption" color="text.secondary" display="block">
+        <Typography
+          variant="caption"
+          sx={{
+            color: 'text.secondary',
+            display: 'block',
+          }}
+        >
           {label}
         </Typography>
-        <Typography variant="body1" fontWeight={600} sx={{ wordBreak: 'break-word' }}>
+        <Typography
+          variant="body1"
+          sx={{
+            fontWeight: 600,
+            wordBreak: 'break-word',
+          }}
+        >
           {value}
         </Typography>
       </Box>
@@ -383,7 +451,13 @@ function ProviderRow({ provider }: { provider: NonNullable<BookingDetail['provid
     .join('')
     .toUpperCase();
   return (
-    <Stack direction="row" spacing={1.5} alignItems="center">
+    <Stack
+      direction="row"
+      spacing={1.5}
+      sx={{
+        alignItems: 'center',
+      }}
+    >
       <Avatar
         aria-hidden
         sx={{ width: 44, height: 44, bgcolor: brand.accentSoft, color: 'primary.main' }}
@@ -391,11 +465,29 @@ function ProviderRow({ provider }: { provider: NonNullable<BookingDetail['provid
         {initials}
       </Avatar>
       <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-        <Typography variant="caption" color="text.secondary" display="block">
+        <Typography
+          variant="caption"
+          sx={{
+            color: 'text.secondary',
+            display: 'block',
+          }}
+        >
           Your professional
         </Typography>
-        <Stack direction="row" spacing={0.5} alignItems="center">
-          <Typography variant="subtitle1" fontWeight={700} noWrap>
+        <Stack
+          direction="row"
+          spacing={0.5}
+          sx={{
+            alignItems: 'center',
+          }}
+        >
+          <Typography
+            variant="subtitle1"
+            noWrap
+            sx={{
+              fontWeight: 700,
+            }}
+          >
             {provider.displayName}
           </Typography>
           {provider.verified ? (
@@ -406,9 +498,20 @@ function ProviderRow({ provider }: { provider: NonNullable<BookingDetail['provid
           ) : null}
         </Stack>
       </Box>
-      <Stack direction="row" spacing={0.25} alignItems="center">
+      <Stack
+        direction="row"
+        spacing={0.25}
+        sx={{
+          alignItems: 'center',
+        }}
+      >
         <StarRounded sx={{ fontSize: 18, color: brand.warm }} aria-hidden />
-        <Typography variant="body2" fontWeight={700}>
+        <Typography
+          variant="body2"
+          sx={{
+            fontWeight: 700,
+          }}
+        >
           {provider.rating.toFixed(1)}
         </Typography>
       </Stack>

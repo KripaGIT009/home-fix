@@ -68,19 +68,22 @@ export function PasswordStep({
           placeholder="you@agency.com"
           error={Boolean(errors.identifier)}
           helperText={errors.identifier?.message ?? ' '}
-          InputProps={{
-            startAdornment: (
-              <InputAdornment position="start">
-                <PersonOutlineRoundedIcon fontSize="small" sx={{ color: 'text.secondary' }} />
-              </InputAdornment>
-            ),
-          }}
-          inputProps={{
-            'aria-label': 'Email or username',
-            autoCapitalize: 'none',
-            spellCheck: false,
-          }}
           {...register('identifier')}
+          slotProps={{
+            input: {
+              startAdornment: (
+                <InputAdornment position="start">
+                  <PersonOutlineRoundedIcon fontSize="small" sx={{ color: 'text.secondary' }} />
+                </InputAdornment>
+              ),
+            },
+
+            htmlInput: {
+              'aria-label': 'Email or username',
+              autoCapitalize: 'none',
+              spellCheck: false,
+            },
+          }}
         />
       </LabelledField>
 

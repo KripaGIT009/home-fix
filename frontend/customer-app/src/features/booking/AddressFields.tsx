@@ -84,7 +84,13 @@ export function AddressFields({ register, errors, setValue }: AddressFieldsProps
 
   return (
     <Stack spacing={2}>
-      <Stack direction="row" justifyContent="space-between" alignItems="center">
+      <Stack
+        direction="row"
+        sx={{
+          justifyContent: 'space-between',
+          alignItems: 'center',
+        }}
+      >
         <Typography variant="subtitle2">Service address</Typography>
         <Button
           type="button"
@@ -100,7 +106,14 @@ export function AddressFields({ register, errors, setValue }: AddressFieldsProps
       </Stack>
 
       {savedAddresses && savedAddresses.length > 0 ? (
-        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+        <Stack
+          direction="row"
+          spacing={1}
+          useFlexGap
+          sx={{
+            flexWrap: 'wrap',
+          }}
+        >
           {savedAddresses.map((saved) => (
             <Chip
               key={saved.addressId}
@@ -148,8 +161,10 @@ export function AddressFields({ register, errors, setValue }: AddressFieldsProps
           fullWidth
           error={Boolean(errors.address?.postalCode)}
           helperText={errors.address?.postalCode?.message ?? ' '}
-          inputProps={{ inputMode: 'numeric', maxLength: 6 }}
           {...register('address.postalCode')}
+          slotProps={{
+            htmlInput: { inputMode: 'numeric', maxLength: 6 },
+          }}
         />
       </Stack>
     </Stack>

@@ -6,9 +6,8 @@ import java.util.Optional;
 import java.util.UUID;
 
 import org.springframework.data.redis.core.StringRedisTemplate;
-
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 import com.homefix.location.config.LocationProperties;
 import com.homefix.location.domain.CachedLocation;
 import com.homefix.location.domain.Coordinates;
@@ -86,7 +85,7 @@ public class RedisLocationStoreAdapter implements LocationStorePort {
                     location.coordinates().latitude(),
                     location.coordinates().longitude(),
                     location.recordedAt().toString()));
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             throw new IllegalStateException("Failed to serialize cached location", e);
         }
     }
@@ -99,7 +98,7 @@ public class RedisLocationStoreAdapter implements LocationStorePort {
                     UUID.fromString(stored.providerId()),
                     new Coordinates(stored.latitude(), stored.longitude()),
                     Instant.parse(stored.recordedAt()));
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             throw new IllegalStateException("Failed to deserialize cached location", e);
         }
     }

@@ -46,8 +46,10 @@ export function StatePanel({
       <CardContent sx={{ py: { xs: 3, md: 5 }, px: { xs: 2.5, md: 5 } }}>
         <Stack
           spacing={2}
-          alignItems={{ xs: 'center', sm: 'flex-start' }}
-          textAlign={{ xs: 'center', sm: 'left' }}
+          sx={{
+            alignItems: { xs: 'center', sm: 'flex-start' },
+            textAlign: { xs: 'center', sm: 'left' },
+          }}
         >
           {visual ?? (
             <IconTile size={60} bg={colors.bg} color={colors.fg}>
@@ -60,9 +62,12 @@ export function StatePanel({
             </Typography>
             <Typography
               variant="body1"
-              color="text.secondary"
               component="div"
-              sx={{ mt: 1, maxWidth: 560 }}
+              sx={{
+                color: 'text.secondary',
+                mt: 1,
+                maxWidth: 560,
+              }}
             >
               {children}
             </Typography>

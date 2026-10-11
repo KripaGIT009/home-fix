@@ -42,9 +42,13 @@ export function StandalonePage({
     >
       <Stack
         direction="row"
-        justifyContent="space-between"
-        alignItems="center"
-        sx={{ width: '100%', maxWidth: width === 'md' ? 760 : 480, mb: 3 }}
+        sx={{
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          width: '100%',
+          maxWidth: width === 'md' ? 760 : 480,
+          mb: 3,
+        }}
       >
         <BrandLogo size={36} />
         {action}
@@ -64,7 +68,12 @@ export function StandalonePage({
             {title}
           </Typography>
           {description ? (
-            <Typography variant="body2" color="text.secondary">
+            <Typography
+              variant="body2"
+              sx={{
+                color: 'text.secondary',
+              }}
+            >
               {description}
             </Typography>
           ) : null}

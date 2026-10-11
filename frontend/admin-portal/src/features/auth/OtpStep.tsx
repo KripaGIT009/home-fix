@@ -96,29 +96,33 @@ export function OtpStep({
         error={Boolean(errors.otp)}
         helperText={errors.otp?.message ?? ' '}
         disabled={inputsDisabled}
-        inputProps={{
-          inputMode: 'numeric',
-          maxLength: OTP_LENGTH,
-          'aria-label': 'Verification code',
-          style: {
-            // Wide tracking reads as a code field without a per-digit input grid,
-            // which keeps paste and password managers working.
-            textAlign: 'center',
-            fontSize: '1.5rem',
-            fontWeight: 700,
-            letterSpacing: '0.5em',
-            textIndent: '0.5em',
+        {...register('otp')}
+        slotProps={{
+          htmlInput: {
+            inputMode: 'numeric',
+            maxLength: OTP_LENGTH,
+            'aria-label': 'Verification code',
+            style: {
+              // Wide tracking reads as a code field without a per-digit input grid,
+              // which keeps paste and password managers working.
+              textAlign: 'center',
+              fontSize: '1.5rem',
+              fontWeight: 700,
+              letterSpacing: '0.5em',
+              textIndent: '0.5em',
+            },
           },
         }}
-        {...register('otp')}
       />
 
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Typography
           variant="body2"
           color={isExpired ? 'error.main' : 'text.secondary'}
-          fontWeight={600}
           aria-live="polite"
+          sx={{
+            fontWeight: 600,
+          }}
         >
           {isExpired ? 'Code expired' : `Expires in ${formatDuration(secondsLeft)}`}
         </Typography>

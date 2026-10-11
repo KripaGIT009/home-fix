@@ -5,6 +5,13 @@
                              https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
+    <parent>
+        <groupId>com.homefix</groupId>
+        <artifactId>homefix-parent</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+        <relativePath>../../pom.xml</relativePath>
+    </parent>
+
     <groupId>com.homefix</groupId>
     <artifactId>promotion-service</artifactId>
     <version>1.0.0-SNAPSHOT</version>
@@ -21,58 +28,34 @@
         libraries (Tasks 4-6).
     </description>
 
-    <properties>
-        <java.version>21</java.version>
-        <maven.compiler.source>21</maven.compiler.source>
-        <maven.compiler.target>21</maven.compiler.target>
-        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-
-        <!-- Dependency versions (aligned with shared modules and the sibling services) -->
-        <spring-boot.version>3.2.5</spring-boot.version>
-        <homefix-shared.version>1.0.0-SNAPSHOT</homefix-shared.version>
-        <jacoco.version>0.8.12</jacoco.version>
-        <jqwik.version>1.8.4</jqwik.version>
-    </properties>
-
-    <dependencyManagement>
-        <dependencies>
-            <dependency>
-                <groupId>org.springframework.boot</groupId>
-                <artifactId>spring-boot-dependencies</artifactId>
-                <version>${spring-boot.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-        </dependencies>
-    </dependencyManagement>
-
     <dependencies>
         <!-- ===== HomeFix shared libraries (Tasks 4-6) ===== -->
         <dependency>
             <groupId>com.homefix.shared</groupId>
             <artifactId>homefix-shared-security</artifactId>
-            <version>${homefix-shared.version}</version>
         </dependency>
         <dependency>
             <groupId>com.homefix.shared</groupId>
             <artifactId>homefix-shared-observability</artifactId>
-            <version>${homefix-shared.version}</version>
         </dependency>
         <dependency>
             <groupId>com.homefix.shared</groupId>
             <artifactId>homefix-shared-resilience</artifactId>
-            <version>${homefix-shared.version}</version>
         </dependency>
         <dependency>
             <groupId>com.homefix.shared</groupId>
             <artifactId>homefix-shared-outbox</artifactId>
-            <version>${homefix-shared.version}</version>
+        </dependency>
+        <!-- Settings from the config.app_config table. -->
+        <dependency>
+            <groupId>com.homefix.shared</groupId>
+            <artifactId>homefix-shared-config</artifactId>
         </dependency>
 
         <!-- ===== Spring Boot starters ===== -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-web</artifactId>
+            <artifactId>spring-boot-starter-webmvc</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -83,9 +66,14 @@
             <artifactId>spring-boot-starter-data-jpa</artifactId>
         </dependency>
         <dependency>
-            <!-- Schema migrations: src/main/resources/db/migration (V1 = baseline). -->
+            <!-- Schema migrations: src/main/resources/db/migration/promotion-service (V1 = baseline). -->
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-flyway</artifactId>
+        </dependency>
+        <!-- PostgreSQL support is a module of its own since Flyway 10. -->
+        <dependency>
             <groupId>org.flywaydb</groupId>
-            <artifactId>flyway-core</artifactId>
+            <artifactId>flyway-database-postgresql</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -117,8 +105,13 @@
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>org.springframework.security</groupId>
-            <artifactId>spring-security-test</artifactId>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webmvc-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security-test</artifactId>
             <scope>test</scope>
         </dependency>
         <!-- In-memory DB for repository/integration slice tests -->
@@ -131,64 +124,14 @@
         <dependency>
             <groupId>net.jqwik</groupId>
             <artifactId>jqwik</artifactId>
-            <version>${jqwik.version}</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
 
     <build>
         <plugins>
-            <plugin>
-                <groupId>org.springframework.boot</groupId>
-                <artifactId>spring-boot-maven-plugin</artifactId>
-                <version>${spring-boot.version}</version>
-                <executions>
-                    <execution>
-                        <goals>
-                            <goal>repackage</goal>
-                        </goals>
-                    </execution>
-                </executions>
-            </plugin>
-
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.13.0</version>
-                <configuration>
-                    <release>21</release>
-                    <!-- Retain parameter names in the bytecode. Spring resolves an unnamed
-                         @PathVariable/@RequestParam by reflecting on the parameter name, which
-                         javac drops without this; these services import the Spring Boot BOM but
-                         do not inherit spring-boot-starter-parent, which is what would otherwise
-                         set it. Without it such a handler fails at request time with a 500. -->
-                    <parameters>true</parameters>
-                </configuration>
-            </plugin>
-
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-surefire-plugin</artifactId>
-                <version>3.2.5</version>
-            </plugin>
 
             <!-- JaCoCo coverage report (aligned with shared modules) -->
-            <plugin>
-                <groupId>org.jacoco</groupId>
-                <artifactId>jacoco-maven-plugin</artifactId>
-                <version>${jacoco.version}</version>
-                <executions>
-                    <execution>
-                        <id>prepare-agent</id>
-                        <goals><goal>prepare-agent</goal></goals>
-                    </execution>
-                    <execution>
-                        <id>report</id>
-                        <phase>verify</phase>
-                        <goals><goal>report</goal></goals>
-                    </execution>
-                </executions>
-            </plugin>
         </plugins>
     </build>
 </project>

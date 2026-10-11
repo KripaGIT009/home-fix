@@ -110,9 +110,11 @@ export function OtpStep({
             id={ERROR_ID}
             role="alert"
             variant="body2"
-            color="error.main"
-            fontWeight={600}
-            sx={{ mt: 1 }}
+            sx={{
+              color: 'error.main',
+              fontWeight: 600,
+              mt: 1,
+            }}
           >
             {fieldError}
           </Typography>
@@ -121,15 +123,19 @@ export function OtpStep({
 
       <Stack
         direction="row"
-        justifyContent="space-between"
-        alignItems="center"
-        sx={{ minHeight: 36 }}
+        sx={{
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          minHeight: 36,
+        }}
       >
         <Typography
           variant="body2"
           color={isExpired ? 'error.main' : 'text.secondary'}
-          fontWeight={600}
           aria-live="polite"
+          sx={{
+            fontWeight: 600,
+          }}
         >
           {isExpired ? 'Code expired' : `Code expires in ${formatDuration(secondsLeft)}`}
         </Typography>

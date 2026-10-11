@@ -87,7 +87,7 @@ export function ReportGenerationScreen() {
         <Card variant="outlined" sx={{ maxWidth: 720 }}>
           <CardContent>
             <Grid container spacing={2}>
-              <Grid item xs={12}>
+              <Grid size={{ xs: 12 }}>
                 <TextField
                   select
                   label="Report type"
@@ -99,7 +99,13 @@ export function ReportGenerationScreen() {
                 >
                   {(typesQuery.data ?? []).map((type) => (
                     <MenuItem key={type.id} value={type.id}>
-                      <Stack direction="row" spacing={1} alignItems="center">
+                      <Stack
+                        direction="row"
+                        spacing={1}
+                        sx={{
+                          alignItems: 'center',
+                        }}
+                      >
                         <span>{type.name}</span>
                         {type.financeOnly ? (
                           <Chip size="small" label="Finance" color="secondary" />
@@ -109,30 +115,34 @@ export function ReportGenerationScreen() {
                   ))}
                 </TextField>
               </Grid>
-              <Grid item xs={12} sm={4}>
+              <Grid size={{ xs: 12, sm: 4 }}>
                 <TextField
                   label="From"
                   type="date"
                   value={fromDate}
                   onChange={(event) => setFromDate(event.target.value)}
-                  InputLabelProps={{ shrink: true }}
                   fullWidth
                   error={touched && !fromDate}
+                  slotProps={{
+                    inputLabel: { shrink: true },
+                  }}
                 />
               </Grid>
-              <Grid item xs={12} sm={4}>
+              <Grid size={{ xs: 12, sm: 4 }}>
                 <TextField
                   label="To"
                   type="date"
                   value={toDate}
                   onChange={(event) => setToDate(event.target.value)}
-                  InputLabelProps={{ shrink: true }}
                   fullWidth
                   error={touched && (!toDate || days < 0)}
                   helperText={touched && days < 0 ? 'To date must be after from date.' : undefined}
+                  slotProps={{
+                    inputLabel: { shrink: true },
+                  }}
                 />
               </Grid>
-              <Grid item xs={12} sm={4}>
+              <Grid size={{ xs: 12, sm: 4 }}>
                 <TextField
                   select
                   label="Format"

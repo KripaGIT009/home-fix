@@ -1,4 +1,4 @@
-import { Link as RouterLink, Navigate, useNavigate } from 'react-router-dom';
+import { Link as RouterLink, Navigate, useNavigate } from 'react-router';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import {
@@ -76,14 +76,14 @@ export function SignUpScreen() {
           mobileNumber: payload.mobileNumber,
           resendInSeconds: RESEND_COOLDOWN_SECONDS,
         };
-        navigate(AUTH_ROUTES.verifyEmail, { state });
+        void navigate(AUTH_ROUTES.verifyEmail, { state });
       },
     });
   };
 
   const goToOtpSignIn = () => {
     const state: LoginLocationState = { signInMethod: 'mobile' };
-    navigate(AUTH_ROUTES.login, { state });
+    void navigate(AUTH_ROUTES.login, { state });
   };
 
   const mobileInUse = signup.error?.code === EMAIL_AUTH_ERRORS.mobileInUse;
@@ -93,9 +93,22 @@ export function SignUpScreen() {
       title="Create your account"
       subtitle="Sign up with your email to start taking jobs on HomeFix."
       below={
-        <Typography variant="body2" color="text.secondary" align="center">
+        <Typography
+          variant="body2"
+          align="center"
+          sx={{
+            color: 'text.secondary',
+          }}
+        >
           Already have an account?{' '}
-          <Link component={RouterLink} to={AUTH_ROUTES.login} underline="hover" fontWeight={700}>
+          <Link
+            component={RouterLink}
+            to={AUTH_ROUTES.login}
+            underline="hover"
+            sx={{
+              fontWeight: 700,
+            }}
+          >
             Sign in
           </Link>
         </Typography>
@@ -135,8 +148,10 @@ export function SignUpScreen() {
             placeholder="Ravi Kumar"
             error={Boolean(errors.displayName)}
             helperText={errors.displayName?.message}
-            inputProps={{ 'aria-label': 'Full name' }}
             {...register('displayName')}
+            slotProps={{
+              htmlInput: { 'aria-label': 'Full name' },
+            }}
           />
         </Box>
 
@@ -149,8 +164,10 @@ export function SignUpScreen() {
             placeholder="you@example.com"
             error={Boolean(errors.email)}
             helperText={errors.email?.message ?? 'We will email you a 6-digit code to verify it.'}
-            inputProps={{ inputMode: 'email', 'aria-label': 'Email' }}
             {...register('email')}
+            slotProps={{
+              htmlInput: { inputMode: 'email', 'aria-label': 'Email' },
+            }}
           />
         </Box>
 
@@ -163,25 +180,33 @@ export function SignUpScreen() {
             placeholder="98765 43210"
             error={Boolean(errors.mobileNumber)}
             helperText={errors.mobileNumber?.message ?? 'Customers and HomeFix reach you on it.'}
-            InputProps={{
-              startAdornment: (
-                <InputAdornment position="start">
-                  <Typography
-                    variant="body1"
-                    fontWeight={600}
-                    sx={{ pr: 1.25, mr: 1.25, borderRight: 1, borderColor: 'divider' }}
-                  >
-                    +91
-                  </Typography>
-                </InputAdornment>
-              ),
-            }}
-            inputProps={{
-              inputMode: 'tel',
-              'aria-label': 'Mobile number',
-              style: { fontSize: '1.0625rem', letterSpacing: '0.02em' },
-            }}
             {...register('mobileNumber')}
+            slotProps={{
+              input: {
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <Typography
+                      variant="body1"
+                      sx={{
+                        fontWeight: 600,
+                        pr: 1.25,
+                        mr: 1.25,
+                        borderRight: 1,
+                        borderColor: 'divider',
+                      }}
+                    >
+                      +91
+                    </Typography>
+                  </InputAdornment>
+                ),
+              },
+
+              htmlInput: {
+                inputMode: 'tel',
+                'aria-label': 'Mobile number',
+                style: { fontSize: '1.0625rem', letterSpacing: '0.02em' },
+              },
+            }}
           />
         </Box>
 

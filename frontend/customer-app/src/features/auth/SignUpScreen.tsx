@@ -1,6 +1,6 @@
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { Alert, AlertTitle, Button, Link, Stack, Typography } from '@mui/material';
 import ArrowBackRoundedIcon from '@mui/icons-material/ArrowBackRounded';
 import ArrowForwardRoundedIcon from '@mui/icons-material/ArrowForwardRounded';
@@ -49,7 +49,7 @@ export function SignUpScreen() {
       { displayName, email, mobileNumber: toE164(mobileNumber), password },
       {
         onSuccess: (data) => {
-          navigate('/signup/verify', {
+          void navigate('/signup/verify', {
             state: { ...forward, email, expiresInSeconds: data.expiresInSeconds },
           });
         },
@@ -65,7 +65,7 @@ export function SignUpScreen() {
       <Button
         size="small"
         startIcon={<ArrowBackRoundedIcon />}
-        onClick={() => navigate('/login', { state: { ...forward, method: 'email' } })}
+        onClick={() => void navigate('/login', { state: { ...forward, method: 'email' } })}
         disabled={signUp.isPending}
         sx={{ ml: -1, mb: 1.5, color: 'text.secondary' }}
       >
@@ -75,7 +75,14 @@ export function SignUpScreen() {
       <Typography variant="h3" component="h1">
         Create your account
       </Typography>
-      <Typography variant="body1" color="text.secondary" sx={{ mt: 1, mb: 3 }}>
+      <Typography
+        variant="body1"
+        sx={{
+          color: 'text.secondary',
+          mt: 1,
+          mb: 3,
+        }}
+      >
         Sign up with your email. We’ll send a 6-digit code to confirm it.
       </Typography>
 
@@ -88,7 +95,7 @@ export function SignUpScreen() {
               <Button
                 color="inherit"
                 size="small"
-                onClick={() => navigate('/login', { state: { ...forward, method: 'mobile' } })}
+                onClick={() => void navigate('/login', { state: { ...forward, method: 'mobile' } })}
                 sx={{ whiteSpace: 'nowrap' }}
               >
                 Sign in with OTP
@@ -119,7 +126,9 @@ export function SignUpScreen() {
           type="email"
           autoComplete="email"
           placeholder="you@example.com"
-          inputProps={{ inputMode: 'email', autoCapitalize: 'none', spellCheck: false }}
+          slotProps={{
+            htmlInput: { inputMode: 'email', autoCapitalize: 'none', spellCheck: false },
+          }}
           error={Boolean(errors.email)}
           helperText={errors.email?.message}
           {...register('email')}
@@ -158,16 +167,24 @@ export function SignUpScreen() {
           {signUp.isPending ? 'Creating account…' : 'Create account'}
         </Button>
 
-        <Typography variant="body2" color="text.secondary" align="center">
+        <Typography
+          variant="body2"
+          align="center"
+          sx={{
+            color: 'text.secondary',
+          }}
+        >
           Already have an account?{' '}
           <Link
             component="button"
             type="button"
             variant="body2"
             underline="hover"
-            fontWeight={700}
-            onClick={() => navigate('/login', { state: { ...forward, method: 'email' } })}
-            sx={{ verticalAlign: 'baseline' }}
+            onClick={() => void navigate('/login', { state: { ...forward, method: 'email' } })}
+            sx={{
+              fontWeight: 700,
+              verticalAlign: 'baseline',
+            }}
           >
             Sign in
           </Link>

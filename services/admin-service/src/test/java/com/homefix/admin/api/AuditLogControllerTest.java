@@ -19,8 +19,10 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
+
 import com.homefix.admin.audit.AdminAction;
 import com.homefix.admin.audit.AuditLogEntry;
 import com.homefix.admin.audit.AuditLogQueryService;
@@ -41,7 +43,7 @@ class AuditLogControllerTest {
     private static final UUID ACTOR = UUID.fromString("55555555-5555-5555-5555-555555555555");
     private static final Instant BASE = Instant.parse("2026-10-01T09:00:00Z");
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper = new JsonMapper();
     private InMemoryAuditLogStore auditStore;
     private InMemorySystemSettingStore settingStore;
     private MockMvc mockMvc;
@@ -124,8 +126,8 @@ class AuditLogControllerTest {
             String json = mockMvc.perform(request).andExpect(status().isOk())
                     .andReturn().getResponse().getContentAsString();
             JsonNode page = objectMapper.readTree(json);
-            page.get("entries").forEach(entry -> seen.add(entry.get("entityId").asText()));
-            cursor = page.hasNonNull("nextCursor") ? page.get("nextCursor").asText() : null;
+            page.get("entries").forEach(entry -> seen.add(entry.get("entityId").asString()));
+            cursor = page.hasNonNull("nextCursor") ? page.get("nextCursor").asString() : null;
             pages++;
         } while (cursor != null);
 

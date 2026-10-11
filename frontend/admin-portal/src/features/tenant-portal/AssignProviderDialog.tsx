@@ -18,7 +18,7 @@ import {
   useMediaQuery,
   type Theme,
 } from '@mui/material';
-import { Link as RouterLink } from 'react-router-dom';
+import { Link as RouterLink } from 'react-router';
 import { isApiError } from '@api/client';
 import { brand } from '@lib/theme';
 import { formatCurrency, shortId } from '@lib/format';
@@ -122,7 +122,12 @@ export function AssignProviderDialog({
     >
       <DialogTitle>
         Assign {booking.reference}
-        <Typography variant="body2" color="text.secondary">
+        <Typography
+          variant="body2"
+          sx={{
+            color: 'text.secondary',
+          }}
+        >
           The provider confirms or declines in their app. A decline returns the request to your
           queue.
         </Typography>
@@ -137,7 +142,14 @@ export function AssignProviderDialog({
             border: `1px solid ${brand.line}`,
           }}
         >
-          <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5 }}>
+          <Stack
+            direction="row"
+            spacing={1}
+            sx={{
+              alignItems: 'center',
+              mb: 0.5,
+            }}
+          >
             <Typography variant="subtitle1">{booking.serviceName ?? 'Service'}</Typography>
             {booking.isEmergency ? <Chip size="small" color="error" label="Emergency" /> : null}
             <Box sx={{ flexGrow: 1 }} />
@@ -224,14 +236,28 @@ function ProviderOption({ provider }: { provider: TeamProvider }) {
     <Stack
       direction={{ xs: 'column', sm: 'row' }}
       spacing={{ xs: 0.5, sm: 1.5 }}
-      alignItems={{ xs: 'flex-start', sm: 'center' }}
-      sx={{ py: 0.25 }}
+      sx={{
+        alignItems: { xs: 'flex-start', sm: 'center' },
+        py: 0.25,
+      }}
     >
       <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-        <Typography variant="body2" fontWeight={600} noWrap>
+        <Typography
+          variant="body2"
+          noWrap
+          sx={{
+            fontWeight: 600,
+          }}
+        >
           {provider.displayName ?? shortId(provider.providerId)}
         </Typography>
-        <Typography variant="caption" color="text.secondary" component="div">
+        <Typography
+          variant="caption"
+          component="div"
+          sx={{
+            color: 'text.secondary',
+          }}
+        >
           {provider.assignable
             ? (provider.primarySkill ?? 'No primary skill set')
             : notAssignableReason(provider)}

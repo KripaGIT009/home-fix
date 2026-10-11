@@ -1,7 +1,6 @@
 package com.homefix.auth.email;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
@@ -56,7 +55,7 @@ public class FileEmailSenderAdapter implements EmailSenderPort {
             if (parent != null) {
                 Files.createDirectories(parent);
             }
-            Files.writeString(outputFile, entry, StandardCharsets.UTF_8,
+            Files.writeString(outputFile, entry,
                     StandardOpenOption.CREATE, StandardOpenOption.APPEND);
         } catch (IOException ex) {
             throw new EmailDeliveryException("Could not write the dev mail to " + outputFile, ex);

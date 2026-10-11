@@ -41,8 +41,8 @@ import com.homefix.notification.domain.TemplateText;
 class NotificationTemplateSeedTest {
 
     private static final List<String> MIGRATIONS = List.of(
-            "db/migration/V2__notification_templates.sql",
-            "db/migration/V3__tenant_assigned_templates.sql");
+            "db/migration/notification-service/V2__notification_templates.sql",
+            "db/migration/notification-service/V3__tenant_assigned_templates.sql");
     private static final Pattern ROW = Pattern.compile("^\\s*\\((.*), now\\(\\)\\)[,;]?\\s*$", Pattern.MULTILINE);
     /** The one UPDATE shape the migrations use: re-seed one row's text unless an admin edited it. */
     private static final Pattern UPDATE = Pattern.compile(

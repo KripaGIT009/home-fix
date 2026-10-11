@@ -3,7 +3,7 @@ $phone = "+919494949494"
 Set-Content docker\r.json ("{""mobileNumber"":""" + $phone + """}") -NoNewline -Encoding ascii
 curl.exe -s -o NUL -X POST -H "Content-Type: application/json" --data "@docker/r.json" http://localhost:5173/api/auth/register/otp
 Start-Sleep -Seconds 1
-$otp = ([regex]"code is (\d{6})").Match((docker logs homefix-core-auth-service-1 2>&1 | Select-String "DEV SMS" | Select-Object -Last 1).ToString()).Groups[1].Value
+$otp = ([regex]"code is (\d{6})").Match((docker logs homefix-core-identity-app-1 2>&1 | Select-String "DEV SMS" | Select-Object -Last 1).ToString()).Groups[1].Value
 Set-Content docker\v.json ("{""mobileNumber"":""" + $phone + """,""otp"":""" + $otp + """}") -NoNewline -Encoding ascii
 $verify = curl.exe -s -X POST -H "Content-Type: application/json" --data "@docker/v.json" http://localhost:5173/api/auth/register/verify
 $token = ([regex]'"accessToken"\s*:\s*"([^"]+)"').Match($verify).Groups[1].Value

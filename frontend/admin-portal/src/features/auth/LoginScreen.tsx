@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { SyntheticEvent } from 'react';
-import { Link as RouterLink, useLocation, useNavigate } from 'react-router-dom';
+import { Link as RouterLink, useLocation, useNavigate } from 'react-router';
 import {
   Alert,
   Box,
@@ -33,6 +33,9 @@ import { MobileStep } from './MobileStep';
 import { OtpStep } from './OtpStep';
 import { PasswordStep } from './PasswordStep';
 import type { CredentialsFormValues, MobileFormValues } from './schemas';
+
+/** For the footer's copyright line; read once, not on every render. */
+const COPYRIGHT_YEAR = new Date().getFullYear();
 
 interface RedirectState {
   from?: { pathname?: string };
@@ -119,7 +122,7 @@ export function LoginScreen() {
 
   useEffect(() => {
     if (isAuthenticated) {
-      navigate(redirectTo, { replace: true });
+      void navigate(redirectTo, { replace: true });
     }
   }, [isAuthenticated, navigate, redirectTo]);
 
@@ -298,7 +301,14 @@ export function LoginScreen() {
 
           <Stack spacing={2.75}>
             {HIGHLIGHTS.map(({ icon: Icon, title, body }) => (
-              <Stack key={title} direction="row" spacing={2} alignItems="flex-start">
+              <Stack
+                key={title}
+                direction="row"
+                spacing={2}
+                sx={{
+                  alignItems: 'flex-start',
+                }}
+              >
                 <Box
                   aria-hidden
                   sx={{
@@ -331,7 +341,7 @@ export function LoginScreen() {
           variant="caption"
           sx={{ position: 'relative', color: 'rgba(255,255,255,0.55)' }}
         >
-          © {new Date().getFullYear()} HomeFix. Internal staff console.
+          © {COPYRIGHT_YEAR} HomeFix. Internal staff console.
         </Typography>
       </Box>
 
@@ -366,7 +376,12 @@ export function LoginScreen() {
             <Typography variant="h4" component="h1">
               {heading}
             </Typography>
-            <Typography variant="body2" color="text.secondary">
+            <Typography
+              variant="body2"
+              sx={{
+                color: 'text.secondary',
+              }}
+            >
               {subheading}
             </Typography>
           </Stack>
@@ -462,9 +477,21 @@ export function LoginScreen() {
 
           {/* Agency sign-up (email-auth Requirement 5.1): a service company with
               no account yet starts here rather than at the staff form. */}
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          <Typography
+            variant="body2"
+            sx={{
+              color: 'text.secondary',
+              mb: 2,
+            }}
+          >
             Running a service agency?{' '}
-            <Link component={RouterLink} to="/agency/register" fontWeight={600}>
+            <Link
+              component={RouterLink}
+              to="/agency/register"
+              sx={{
+                fontWeight: 600,
+              }}
+            >
               Register your agency
             </Link>
           </Typography>
@@ -475,7 +502,12 @@ export function LoginScreen() {
             icon={<ShieldRoundedIcon fontSize="small" />}
             sx={{ border: 'none', bgcolor: brand.accentSoft, px: 1.5, py: 0.75 }}
           >
-            <Typography variant="caption" color="text.secondary">
+            <Typography
+              variant="caption"
+              sx={{
+                color: 'text.secondary',
+              }}
+            >
               For HomeFix staff and partner agencies. Sign-in attempts are recorded, and five
               consecutive failures lock the account for 30 minutes.
             </Typography>

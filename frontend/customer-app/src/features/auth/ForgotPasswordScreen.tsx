@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { Alert, Box, Button, Stack, Typography } from '@mui/material';
 import ArrowBackRoundedIcon from '@mui/icons-material/ArrowBackRounded';
 import ArrowForwardRoundedIcon from '@mui/icons-material/ArrowForwardRounded';
@@ -83,7 +83,7 @@ export function ForgotPasswordScreen() {
   }, [reset, forgot]);
 
   const backToSignIn = () =>
-    navigate('/login', {
+    void navigate('/login', {
       state: { ...forward, method: 'email', ...(email ? { email } : {}) },
     });
 
@@ -106,7 +106,14 @@ export function ForgotPasswordScreen() {
           <Typography variant="h3" component="h1">
             Reset your password
           </Typography>
-          <Typography variant="body1" color="text.secondary" sx={{ mt: 1, mb: 3 }}>
+          <Typography
+            variant="body1"
+            sx={{
+              color: 'text.secondary',
+              mt: 1,
+              mb: 3,
+            }}
+          >
             Enter the email you sign in with. We’ll send you a 6-digit code to set a new password.
           </Typography>
           <ForgotEmailStep
@@ -121,7 +128,14 @@ export function ForgotPasswordScreen() {
           <Typography variant="h3" component="h1">
             Set a new password
           </Typography>
-          <Typography variant="body1" color="text.secondary" sx={{ mt: 1, mb: 3 }}>
+          <Typography
+            variant="body1"
+            sx={{
+              color: 'text.secondary',
+              mt: 1,
+              mb: 3,
+            }}
+          >
             If{' '}
             <Box
               component="span"
@@ -143,7 +157,12 @@ export function ForgotPasswordScreen() {
           />
         </>
       ) : (
-        <Stack spacing={2.5} alignItems="flex-start">
+        <Stack
+          spacing={2.5}
+          sx={{
+            alignItems: 'flex-start',
+          }}
+        >
           <Box
             aria-hidden
             sx={{
@@ -162,7 +181,13 @@ export function ForgotPasswordScreen() {
             <Typography variant="h3" component="h1">
               Password changed
             </Typography>
-            <Typography variant="body1" color="text.secondary" sx={{ mt: 1 }}>
+            <Typography
+              variant="body1"
+              sx={{
+                color: 'text.secondary',
+                mt: 1,
+              }}
+            >
               For your security we’ve signed you out on every device. Sign in with your new password
               to continue.
             </Typography>
@@ -217,7 +242,7 @@ function ForgotEmailStep({
         type="email"
         autoComplete="email"
         placeholder="you@example.com"
-        inputProps={{ inputMode: 'email', autoCapitalize: 'none', spellCheck: false }}
+        slotProps={{ htmlInput: { inputMode: 'email', autoCapitalize: 'none', spellCheck: false } }}
         error={Boolean(errors.email)}
         helperText={errors.email?.message}
         {...register('email')}

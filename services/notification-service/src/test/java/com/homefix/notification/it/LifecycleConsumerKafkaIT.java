@@ -37,10 +37,10 @@ import org.springframework.kafka.test.EmbeddedKafkaBroker;
 import org.springframework.kafka.test.context.EmbeddedKafka;
 import org.springframework.kafka.test.utils.KafkaTestUtils;
 import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 /**
  * End-to-end integration tests for the Notification Service's Kafka consume path against a
@@ -122,12 +122,12 @@ class LifecycleConsumerKafkaIT {
 
     // The terminal delivery step is mocked so we can count dispatches and force failures; every
     // stage before it (listener, dedup, retry, DLQ) is the real production code.
-    @MockBean
+    @MockitoBean
     private NotificationDeliveryService deliveryService;
 
     // Contact lookup goes to the Auth Service over HTTP; stubbed here (an unknown user resolves to
     // an empty contact) so the test needs no Auth Service. The adapter has its own HTTP test.
-    @MockBean
+    @MockitoBean
     private ContactDirectoryPort contactDirectory;
 
     private Consumer<String, String> dltConsumer;

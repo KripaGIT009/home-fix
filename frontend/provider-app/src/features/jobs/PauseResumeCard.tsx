@@ -50,10 +50,21 @@ export function PauseResumeCard({ bookingId, status }: PauseResumeCardProps) {
     return (
       <Card variant="outlined">
         <CardContent>
-          <Typography variant="subtitle2" fontWeight={700}>
+          <Typography
+            variant="subtitle2"
+            sx={{
+              fontWeight: 700,
+            }}
+          >
             Job paused
           </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+          <Typography
+            variant="body2"
+            sx={{
+              color: 'text.secondary',
+              mt: 0.5,
+            }}
+          >
             Resume when you&apos;re ready to continue working.
           </Typography>
           {resume.isError ? (
@@ -79,7 +90,12 @@ export function PauseResumeCard({ bookingId, status }: PauseResumeCardProps) {
   return (
     <Card variant="outlined">
       <CardContent>
-        <Typography variant="subtitle2" fontWeight={700}>
+        <Typography
+          variant="subtitle2"
+          sx={{
+            fontWeight: 700,
+          }}
+        >
           Need a break?
         </Typography>
         {showReason ? (

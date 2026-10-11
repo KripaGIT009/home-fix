@@ -76,13 +76,15 @@ export function ApplicationDecisionDialog({
             minRows={3}
             required
             sx={{ mt: 2 }}
-            inputProps={{ maxLength: REASON_MAX_LENGTH }}
             error={reasonInvalid}
             helperText={
               reasonInvalid
                 ? 'A reason is required to reject an application.'
                 : `${reason.length}/${REASON_MAX_LENGTH} · Shared with the applicant.`
             }
+            slotProps={{
+              htmlInput: { maxLength: REASON_MAX_LENGTH },
+            }}
           />
         )}
         {decide.isError ? (

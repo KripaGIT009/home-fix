@@ -25,9 +25,12 @@ class RouteOrderTest {
     static void loadRoutes() throws Exception {
         try (InputStream in = RouteOrderTest.class.getResourceAsStream("/application.yml")) {
             Map<String, Object> root = new Yaml().load(in);
-            Map<String, Object> gateway = (Map<String, Object>) ((Map<String, Object>) ((Map<String, Object>)
-                    root.get("spring")).get("cloud")).get("gateway");
-            List<Map<String, Object>> routes = (List<Map<String, Object>>) gateway.get("routes");
+            // Spring Cloud Gateway 2025: spring.cloud.gateway.server.webflux.routes.
+            Map<String, Object> node = root;
+            for (String key : List.of("spring", "cloud", "gateway", "server", "webflux")) {
+                node = (Map<String, Object>) node.get(key);
+            }
+            List<Map<String, Object>> routes = (List<Map<String, Object>>) node.get("routes");
             routeIds = routes.stream().map(route -> (String) route.get("id")).toList();
         }
     }

@@ -19,11 +19,11 @@ import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
 import com.homefix.dispatch.domain.JobOffer;
+import com.homefix.dispatch.domain.OfferRound;
 import com.homefix.dispatch.domain.OfferStatus;
 import com.homefix.dispatch.port.JobOfferStore.Change;
 import org.junit.jupiter.api.BeforeEach;
@@ -38,15 +38,17 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 /**
  * Unit tests for {@link RedisJobOfferStore} against a mocked {@link StringRedisTemplate}, the way
  * {@link RedisDistributedLockAdapterTest} tests the lock: session callbacks are run against mocked
- * operations so the exact command sequence can be checked. Covers the hash encoding round trip,
- * the atomic save of offer and index, pruning of stale index entries, and the WATCH/MULTI/EXEC
- * compare-and-set including its retry on a discarded transaction (Requirements 8.5-8.7).
+ * operations so the exact command sequence can be checked. Covers the hash encoding of a whole
+ * round (and the single-offer layout written before waves), indexing of newly offered providers,
+ * pruning of stale index entries, and the WATCH/MULTI/EXEC compare-and-set including its retry on a
+ * discarded transaction (Requirements 8.5-8.7).
  */
 @SuppressWarnings({"unchecked", "rawtypes"})
 class RedisJobOfferStoreTest {
 
     private static final Instant T0 = Instant.parse("2026-10-02T10:00:00Z");
     private static final Duration WINDOW = Duration.ofSeconds(60);
+    private static final Duration TTL = Duration.ofSeconds(90);
 
     private StringRedisTemplate redis;
     private RedisOperations<String, String> session;
@@ -56,6 +58,7 @@ class RedisJobOfferStoreTest {
 
     private final UUID bookingId = UUID.randomUUID();
     private final UUID provider = UUID.randomUUID();
+    private final UUID second = UUID.randomUUID();
 
     @BeforeEach
     void setUp() {
@@ -72,67 +75,69 @@ class RedisJobOfferStoreTest {
         store = new RedisJobOfferStore(redis);
     }
 
-    private JobOffer pending() {
-        return JobOffer.pending(bookingId, provider, T0, WINDOW);
+    private JobOffer pending(UUID to) {
+        return JobOffer.pending(bookingId, to, T0, WINDOW);
     }
 
-    private JobOffer full() {
-        return new JobOffer(bookingId, provider, OfferStatus.ACCEPTED, T0, T0.plus(WINDOW),
-                T0.plusSeconds(12), true, UUID.randomUUID(), "HFX-2026-0000321",
-                Instant.parse("2026-10-03T08:00:00Z"));
+    private OfferRound round(JobOffer... offers) {
+        return new OfferRound(bookingId, List.of(offers));
     }
 
-    private static Map<Object, Object> stored(JobOffer offer) {
-        return new HashMap<>(RedisJobOfferStore.toHash(offer));
+    private OfferRound full() {
+        Instant scheduled = Instant.parse("2026-10-03T08:00:00Z");
+        UUID subcategory = UUID.randomUUID();
+        return round(
+                new JobOffer(bookingId, provider, OfferStatus.ACCEPTED, T0, T0.plus(WINDOW),
+                        T0.plusSeconds(12), true, subcategory, "HFX-2026-0000321", scheduled),
+                new JobOffer(bookingId, second, OfferStatus.WITHDRAWN, T0, T0.plus(WINDOW),
+                        T0.plusSeconds(12), true, subcategory, "HFX-2026-0000321", scheduled));
+    }
+
+    private static Map<Object, Object> stored(OfferRound round) {
+        return new HashMap<>(RedisJobOfferStore.toHash(round));
     }
 
     // ---- encoding ------------------------------------------------------------------------------
 
     @Test
-    void hashEncoding_roundTripsEveryField() {
-        JobOffer offer = full();
+    void hashEncoding_roundTripsEveryOfferAndField() {
+        OfferRound round = full();
 
-        assertThat(RedisJobOfferStore.fromHash(stored(offer))).isEqualTo(offer);
+        assertThat(RedisJobOfferStore.fromHash(bookingId, stored(round))).isEqualTo(round);
     }
 
     @Test
-    void hashEncoding_omitsAbsentOptionalFields() {
-        Map<String, String> fields = RedisJobOfferStore.toHash(pending());
+    void hashEncoding_keepsOneFieldPerProviderAndOmitsAbsentOptionalFields() {
+        Map<String, String> fields = RedisJobOfferStore.toHash(round(pending(provider), pending(second)));
 
-        assertThat(fields).doesNotContainKeys("decidedAt", "subcategoryId", "reference", "scheduledAt");
-        assertThat(RedisJobOfferStore.fromHash(new HashMap<>(fields))).isEqualTo(pending());
+        assertThat(fields).containsKeys("offer:" + provider, "offer:" + second);
+        assertThat(fields).doesNotContainKeys("subcategoryId", "reference", "scheduledAt");
+        assertThat(RedisJobOfferStore.fromHash(bookingId, new HashMap<>(fields)))
+                .isEqualTo(round(pending(provider), pending(second)));
     }
 
-    // ---- save ----------------------------------------------------------------------------------
-
     @Test
-    void save_replacesTheOfferAndIndexesItAtomicallyWithTheTtl() {
-        Duration ttl = Duration.ofSeconds(90);
-        String offerKey = RedisJobOfferStore.offerKey(bookingId);
-        String indexKey = RedisJobOfferStore.indexKey(provider);
+    void hashDecoding_readsTheSingleOfferLayoutWrittenBeforeWaves() {
+        Map<Object, Object> legacy = new HashMap<>(Map.of(
+                "bookingId", bookingId.toString(),
+                "providerId", provider.toString(),
+                "status", "PENDING",
+                "offeredAt", Long.toString(T0.toEpochMilli()),
+                "expiresAt", Long.toString(T0.plus(WINDOW).toEpochMilli()),
+                "emergency", "false"));
 
-        store.save(pending(), ttl);
-
-        InOrder order = inOrder(session, hash, set);
-        order.verify(session).multi();
-        order.verify(session).delete(offerKey);
-        order.verify(hash).putAll(offerKey, RedisJobOfferStore.toHash(pending()));
-        order.verify(session).expire(offerKey, ttl);
-        order.verify(set).add(indexKey, bookingId.toString());
-        order.verify(session).expire(indexKey, ttl);
-        order.verify(session).exec();
-        assertThat(offerKey).isEqualTo("dispatch:offer:booking:" + bookingId);
-        assertThat(indexKey).isEqualTo("dispatch:offers:provider:" + provider);
+        assertThat(RedisJobOfferStore.fromHash(bookingId, legacy)).isEqualTo(round(pending(provider)));
     }
 
     // ---- reads ---------------------------------------------------------------------------------
 
     @Test
     void find_decodesTheStoredHash() {
-        JobOffer offer = full();
-        when(hash.entries(RedisJobOfferStore.offerKey(bookingId))).thenReturn(stored(offer));
+        OfferRound round = full();
+        when(hash.entries(RedisJobOfferStore.offerKey(bookingId))).thenReturn(stored(round));
 
-        assertThat(store.find(bookingId)).contains(offer);
+        assertThat(store.find(bookingId)).contains(round);
+        assertThat(RedisJobOfferStore.offerKey(bookingId)).isEqualTo("dispatch:offer:booking:" + bookingId);
     }
 
     @Test
@@ -143,25 +148,22 @@ class RedisJobOfferStoreTest {
     }
 
     @Test
-    void findByProvider_returnsLiveOffersAndPrunesStaleIndexEntries() {
-        UUID reoffered = UUID.randomUUID();
+    void findByProvider_returnsTheirOffersAndPrunesStaleIndexEntries() {
         UUID expired = UUID.randomUUID();
         String indexKey = RedisJobOfferStore.indexKey(provider);
-        Set<String> members = new LinkedHashSet<>(List.of(bookingId.toString(), reoffered.toString(),
-                expired.toString(), "not-a-uuid"));
+        Set<String> members = new LinkedHashSet<>(List.of(bookingId.toString(), expired.toString(), "not-a-uuid"));
         when(set.members(indexKey)).thenReturn(members);
-        when(hash.entries(RedisJobOfferStore.offerKey(bookingId))).thenReturn(stored(pending()));
-        when(hash.entries(RedisJobOfferStore.offerKey(reoffered))).thenReturn(
-                stored(JobOffer.pending(reoffered, UUID.randomUUID(), T0, WINDOW)));
+        when(hash.entries(RedisJobOfferStore.offerKey(bookingId)))
+                .thenReturn(stored(round(pending(provider), pending(second))));
         when(hash.entries(RedisJobOfferStore.offerKey(expired))).thenReturn(Map.of());
 
         List<JobOffer> offers = store.findByProvider(provider);
 
-        assertThat(offers).containsExactly(pending());
-        verify(set).remove(indexKey, reoffered.toString());
+        assertThat(offers).containsExactly(pending(provider));
         verify(set).remove(indexKey, expired.toString());
         verify(set).remove(indexKey, "not-a-uuid");
         verify(set, never()).remove(indexKey, bookingId.toString());
+        assertThat(indexKey).isEqualTo("dispatch:offers:provider:" + provider);
     }
 
     @Test
@@ -174,87 +176,110 @@ class RedisJobOfferStoreTest {
     // ---- compare-and-set -----------------------------------------------------------------------
 
     @Test
-    void update_writesTheTransitionUnderWatchAndMulti() {
+    void openingAWave_writesTheRoundAndIndexesEveryNewProviderWithTheTtl() {
         String key = RedisJobOfferStore.offerKey(bookingId);
-        when(hash.entries(key)).thenReturn(stored(pending()));
+        when(hash.entries(key)).thenReturn(Map.of());
         // What a real commit returns: HMSET's status reply is dropped by RedisTemplate.exec(), so
         // only the HLEN count survives.
-        when(session.exec()).thenReturn(List.of(9L));
-        JobOffer accepted = pending().decide(provider, OfferStatus.ACCEPTED, T0.plusSeconds(5));
+        when(session.exec()).thenReturn(List.of(4L));
+        OfferRound wave = round(pending(provider), pending(second));
 
-        Optional<Change> change = store.update(bookingId, o -> accepted);
+        Change change = store.update(bookingId, r -> r.open(wave.offers()), TTL);
 
-        assertThat(change).contains(new Change(pending(), accepted));
-        InOrder order = inOrder(session, hash);
+        assertThat(change).isEqualTo(new Change(OfferRound.empty(bookingId), wave));
+        InOrder order = inOrder(session, hash, set);
         order.verify(session).watch(key);
         order.verify(hash).entries(key);
         order.verify(session).multi();
-        order.verify(hash).putAll(key, RedisJobOfferStore.toHash(accepted));
+        order.verify(hash).putAll(key, RedisJobOfferStore.toHash(wave));
+        order.verify(session).expire(key, TTL);
         order.verify(hash).size(key);
         order.verify(session).exec();
-        verify(session, times(1)).exec();
+        verify(set).add(RedisJobOfferStore.indexKey(provider), bookingId.toString());
+        verify(set).add(RedisJobOfferStore.indexKey(second), bookingId.toString());
+        verify(session).expire(RedisJobOfferStore.indexKey(provider), TTL);
+        verify(session).expire(RedisJobOfferStore.indexKey(second), TTL);
     }
 
     @Test
-    void update_ofAMissingOffer_unwatchesAndReportsNothing() {
-        when(hash.entries(anyString())).thenReturn(Map.of());
+    void aDecision_writesWithoutTouchingTheExpiryOrTheIndex() {
+        String key = RedisJobOfferStore.offerKey(bookingId);
+        when(hash.entries(key)).thenReturn(stored(round(pending(provider), pending(second))));
+        when(session.exec()).thenReturn(List.of(4L));
 
-        assertThat(store.update(bookingId, o -> o)).isEmpty();
-        verify(session).unwatch();
-        verify(session, never()).multi();
+        Change change = store.update(bookingId,
+                r -> r.decide(provider, OfferStatus.ACCEPTED, T0.plusSeconds(5)), null);
+
+        assertThat(change.after().accepted()).get().extracting(JobOffer::providerId).isEqualTo(provider);
+        assertThat(change.after().offerTo(second)).get().extracting(JobOffer::status).isEqualTo(OfferStatus.WITHDRAWN);
+        verify(hash).putAll(key, RedisJobOfferStore.toHash(change.after()));
+        verify(session, never()).expire(anyString(), any(Duration.class));
+        verify(set, never()).add(anyString(), anyString());
     }
 
     @Test
     void update_thatChangesNothing_writesNothing() {
-        when(hash.entries(anyString())).thenReturn(stored(pending()));
+        when(hash.entries(anyString())).thenReturn(stored(round(pending(provider))));
 
-        Optional<Change> change = store.update(bookingId, o -> o);
+        Change change = store.update(bookingId, r -> r, null);
 
-        assertThat(change).contains(new Change(pending(), pending()));
+        assertThat(change).isEqualTo(new Change(round(pending(provider)), round(pending(provider))));
         verify(session).unwatch();
         verify(session, never()).multi();
         verify(hash, never()).putAll(anyString(), anyMap());
     }
 
     @Test
+    void update_ofNothingStored_withATransitionThatAddsNothing_writesNothing() {
+        when(hash.entries(anyString())).thenReturn(Map.of());
+
+        Change change = store.update(bookingId, r -> r.close(null, OfferStatus.WITHDRAWN, T0), null);
+
+        assertThat(change.after().isEmpty()).isTrue();
+        verify(session, never()).multi();
+    }
+
+    @Test
     void update_retriesWhenAConcurrentWriteDiscardsTheTransaction() {
         String key = RedisJobOfferStore.offerKey(bookingId);
-        JobOffer declinedMeanwhile = pending().decide(provider, OfferStatus.DECLINED, T0.plusSeconds(1));
-        // First read sees PENDING but EXEC is discarded; the retry reads the concurrent DECLINED,
-        // and the accept transition leaves it as it is.
-        when(hash.entries(key)).thenReturn(stored(pending()), stored(declinedMeanwhile));
+        OfferRound acceptedMeanwhile = round(pending(provider), pending(second))
+                .decide(second, OfferStatus.ACCEPTED, T0.plusSeconds(1));
+        // First read sees both PENDING but EXEC is discarded; the retry reads the other provider's
+        // concurrent accept, and this provider's accept then changes nothing.
+        when(hash.entries(key)).thenReturn(stored(round(pending(provider), pending(second))), stored(acceptedMeanwhile));
         when(session.exec()).thenReturn(null);
 
-        Optional<Change> change = store.update(bookingId,
-                o -> o.decide(provider, OfferStatus.ACCEPTED, T0.plusSeconds(2)));
+        Change change = store.update(bookingId,
+                r -> r.decide(provider, OfferStatus.ACCEPTED, T0.plusSeconds(2)), null);
 
-        assertThat(change).contains(new Change(declinedMeanwhile, declinedMeanwhile));
+        assertThat(change).isEqualTo(new Change(acceptedMeanwhile, acceptedMeanwhile));
         verify(session, times(2)).watch(key);
         verify(session, times(1)).exec();
     }
 
     @Test
     void update_treatsAnEmptyExecReplyAsAConflictToo() {
-        when(hash.entries(anyString())).thenReturn(stored(pending()));
-        when(session.exec()).thenReturn(List.of(), List.of(Boolean.TRUE));
+        when(hash.entries(anyString())).thenReturn(stored(round(pending(provider))));
+        when(session.exec()).thenReturn(List.of(), List.of(3L));
 
-        Optional<Change> change = store.update(bookingId,
-                o -> o.close(provider, OfferStatus.EXPIRED, T0.plus(WINDOW)));
+        Change change = store.update(bookingId,
+                r -> r.close(List.of(provider), OfferStatus.EXPIRED, T0.plus(WINDOW)), null);
 
-        assertThat(change).get().extracting(c -> c.after().status()).isEqualTo(OfferStatus.EXPIRED);
+        assertThat(change.after().offerTo(provider)).get().extracting(JobOffer::status).isEqualTo(OfferStatus.EXPIRED);
         verify(session, times(2)).exec();
     }
 
     @Test
     void update_givesUpAfterTheAttemptLimitUnderContention() {
-        when(hash.entries(anyString())).thenReturn(stored(pending()));
+        when(hash.entries(anyString())).thenReturn(stored(round(pending(provider))));
         when(session.exec()).thenReturn(List.of());
 
         assertThatThrownBy(() -> store.update(bookingId,
-                o -> o.close(null, OfferStatus.WITHDRAWN, T0)))
+                r -> r.close(null, OfferStatus.WITHDRAWN, T0), null))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining(bookingId.toString());
         verify(session, times(RedisJobOfferStore.MAX_CAS_ATTEMPTS)).exec();
-        verify(hash, times(RedisJobOfferStore.MAX_CAS_ATTEMPTS)).putAll(eq(RedisJobOfferStore.offerKey(bookingId)), anyMap());
+        verify(hash, times(RedisJobOfferStore.MAX_CAS_ATTEMPTS))
+                .putAll(eq(RedisJobOfferStore.offerKey(bookingId)), anyMap());
     }
 }

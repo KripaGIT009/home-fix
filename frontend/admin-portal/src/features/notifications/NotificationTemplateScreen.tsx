@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import {
   Alert,
   Button,
@@ -78,10 +78,13 @@ function EditDialog({ template, onClose }: EditDialogProps) {
   const [subject, setSubject] = useState(template.subject ?? '');
   const [body, setBody] = useState(template.body);
 
-  useEffect(() => {
+  // A different template: start from its saved text (reset during render, not in an effect).
+  const [syncedFrom, setSyncedFrom] = useState(template);
+  if (syncedFrom !== template) {
+    setSyncedFrom(template);
     setSubject(template.subject ?? '');
     setBody(template.body);
-  }, [template]);
+  }
 
   const bodyInvalid = !body.trim();
   const [touched, setTouched] = useState(false);

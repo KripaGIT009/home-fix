@@ -1,5 +1,5 @@
 import { useRef, useState, type FormEvent } from 'react';
-import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router';
 import { Box, IconButton, InputBase } from '@mui/material';
 import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
@@ -54,7 +54,7 @@ export function ServiceSearchField({ variant = 'header' }: { variant?: 'header' 
       inputRef.current?.blur();
       return;
     }
-    navigate(query ? `${HOME_PATH}?q=${encodeURIComponent(query)}` : HOME_PATH);
+    void navigate(query ? `${HOME_PATH}?q=${encodeURIComponent(query)}` : HOME_PATH);
   };
 
   const page = variant === 'page';

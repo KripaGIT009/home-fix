@@ -49,7 +49,7 @@ CUSTOMER=http://localhost:8082
 GATEWAY=http://localhost:8080
 # psql_q / kafka_tool for the locally installed Postgres and Kafka.
 . "$(dirname "$0")/local-infra.sh"
-DISPATCH_CONTAINER="${DISPATCH_CONTAINER:-homefix-core-dispatch-engine-1}"
+DISPATCH_CONTAINER="${DISPATCH_CONTAINER:-homefix-core-jobs-app-1}"
 SMS_LOG="${SMS_LOG:-$(dirname "$0")/dev-sms/dev-sms.log}"
 
 PASSED=0

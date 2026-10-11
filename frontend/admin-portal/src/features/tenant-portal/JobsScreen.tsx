@@ -51,12 +51,35 @@ export function JobsScreen() {
       key: 'job',
       header: 'Job',
       render: (row) => (
-        <Stack spacing={0.5} alignItems="flex-start" sx={{ minWidth: 140 }}>
-          <Typography variant="body2" fontWeight={600}>
+        <Stack
+          spacing={0.5}
+          sx={{
+            alignItems: 'flex-start',
+            minWidth: 140,
+          }}
+        >
+          <Typography
+            variant="body2"
+            sx={{
+              fontWeight: 600,
+            }}
+          >
             {row.serviceName ?? 'Service'}
           </Typography>
-          <Stack direction="row" spacing={0.75} alignItems="center">
-            <Typography variant="caption" color="text.secondary" noWrap>
+          <Stack
+            direction="row"
+            spacing={0.75}
+            sx={{
+              alignItems: 'center',
+            }}
+          >
+            <Typography
+              variant="caption"
+              noWrap
+              sx={{
+                color: 'text.secondary',
+              }}
+            >
               {row.reference}
             </Typography>
             {row.isEmergency ? (
@@ -122,8 +145,10 @@ export function JobsScreen() {
       <Stack
         direction={{ xs: 'column', sm: 'row' }}
         spacing={1}
-        alignItems={{ xs: 'stretch', sm: 'center' }}
-        sx={{ mb: 2 }}
+        sx={{
+          alignItems: { xs: 'stretch', sm: 'center' },
+          mb: 2,
+        }}
       >
         <TextField
           size="small"
@@ -141,7 +166,12 @@ export function JobsScreen() {
           ))}
         </TextField>
         {rows.length >= TENANT_BOOKINGS_LIMIT ? (
-          <Typography variant="caption" color="text.secondary">
+          <Typography
+            variant="caption"
+            sx={{
+              color: 'text.secondary',
+            }}
+          >
             Showing the latest {TENANT_BOOKINGS_LIMIT}. Filter by status to find older jobs.
           </Typography>
         ) : null}

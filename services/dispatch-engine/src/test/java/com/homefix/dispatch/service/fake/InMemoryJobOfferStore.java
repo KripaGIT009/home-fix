@@ -1,6 +1,7 @@
 package com.homefix.dispatch.service.fake;
 
 import com.homefix.dispatch.domain.JobOffer;
+import com.homefix.dispatch.domain.OfferRound;
 import com.homefix.dispatch.port.JobOfferStore;
 
 import java.time.Duration;
@@ -15,53 +16,58 @@ import java.util.UUID;
 import java.util.function.UnaryOperator;
 
 /**
- * In-memory {@link JobOfferStore} with the same contract as the Redis one: one offer per booking,
- * a per-provider index that may go stale, and {@link #update} applied atomically (here by
- * synchronising). TTLs are recorded, not enforced.
+ * In-memory {@link JobOfferStore} with the same contract as the Redis one: one {@link OfferRound}
+ * per booking, a per-provider index that may go stale, and {@link #update} applied atomically
+ * (here by synchronising). TTLs are recorded, not enforced.
  */
 public class InMemoryJobOfferStore implements JobOfferStore {
 
-    private final Map<UUID, JobOffer> offers = new LinkedHashMap<>();
+    private final Map<UUID, OfferRound> rounds = new LinkedHashMap<>();
     private final Map<UUID, Set<UUID>> index = new HashMap<>();
     private final Map<UUID, Duration> ttls = new HashMap<>();
 
     @Override
-    public synchronized void save(JobOffer offer, Duration ttl) {
-        offers.put(offer.bookingId(), offer);
-        index.computeIfAbsent(offer.providerId(), p -> new LinkedHashSet<>()).add(offer.bookingId());
-        ttls.put(offer.bookingId(), ttl);
-    }
-
-    @Override
-    public synchronized Optional<JobOffer> find(UUID bookingId) {
-        return Optional.ofNullable(offers.get(bookingId));
+    public synchronized Optional<OfferRound> find(UUID bookingId) {
+        return Optional.ofNullable(rounds.get(bookingId));
     }
 
     @Override
     public synchronized List<JobOffer> findByProvider(UUID providerId) {
         return index.getOrDefault(providerId, Set.of()).stream()
-                .map(offers::get)
-                .filter(o -> o != null)
+                .map(rounds::get)
+                .filter(r -> r != null)
+                .flatMap(r -> r.offerTo(providerId).stream())
                 .toList();
     }
 
     @Override
-    public synchronized Optional<Change> update(UUID bookingId, UnaryOperator<JobOffer> transition) {
-        JobOffer before = offers.get(bookingId);
-        if (before == null) {
-            return Optional.empty();
+    public synchronized Change update(UUID bookingId, UnaryOperator<OfferRound> transition, Duration ttl) {
+        OfferRound before = rounds.getOrDefault(bookingId, OfferRound.empty(bookingId));
+        OfferRound after = transition.apply(before);
+        if (after.equals(before)) {
+            return new Change(before, before);
         }
-        JobOffer after = transition.apply(before);
-        offers.put(bookingId, after);
-        return Optional.of(new Change(before, after));
+        rounds.put(bookingId, after);
+        for (JobOffer offer : after.offers()) {
+            index.computeIfAbsent(offer.providerId(), p -> new LinkedHashSet<>()).add(bookingId);
+        }
+        if (ttl != null) {
+            ttls.put(bookingId, ttl);
+        }
+        return new Change(before, after);
+    }
+
+    /** Stores a single offer directly, as if a one-provider wave had been opened. */
+    public synchronized void put(JobOffer offer, Duration ttl) {
+        update(offer.bookingId(), r -> r.open(List.of(offer)), ttl);
     }
 
     public synchronized Duration ttlOf(UUID bookingId) {
         return ttls.get(bookingId);
     }
 
-    /** Simulates the offer's key expiring out of storage. */
+    /** Simulates the round's key expiring out of storage. */
     public synchronized void evict(UUID bookingId) {
-        offers.remove(bookingId);
+        rounds.remove(bookingId);
     }
 }

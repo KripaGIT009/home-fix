@@ -63,10 +63,21 @@ export function DocumentUploadForm({ documents }: DocumentUploadFormProps) {
   return (
     <Card variant="outlined">
       <CardContent>
-        <Typography variant="subtitle2" fontWeight={700}>
+        <Typography
+          variant="subtitle2"
+          sx={{
+            fontWeight: 700,
+          }}
+        >
           Upload your documents
         </Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+        <Typography
+          variant="body2"
+          sx={{
+            color: 'text.secondary',
+            mt: 0.5,
+          }}
+        >
           Choose a clear photo or PDF for each document, then send all three together.
         </Typography>
 
@@ -105,7 +116,14 @@ export function DocumentUploadForm({ documents }: DocumentUploadFormProps) {
           {submit.isPending ? 'Sending…' : 'Send documents'}
         </Button>
         {!complete && !submit.isPending ? (
-          <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+          <Typography
+            variant="caption"
+            sx={{
+              color: 'text.secondary',
+              mt: 1,
+              display: 'block',
+            }}
+          >
             Still needed: {missing.map(documentLabel).join(', ')}.
           </Typography>
         ) : null}
@@ -150,14 +168,33 @@ function DocumentPicker({ type, file, onFile, existing, disabled }: DocumentPick
         p: 1.5,
       }}
     >
-      <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
+      <Stack
+        direction="row"
+        spacing={1}
+        sx={{
+          justifyContent: 'space-between',
+          alignItems: 'flex-start',
+        }}
+      >
         <Box sx={{ minWidth: 0 }}>
           <Typography variant="subtitle2">{label}</Typography>
-          <Typography variant="caption" color="text.secondary" component="p">
+          <Typography
+            variant="caption"
+            component="p"
+            sx={{
+              color: 'text.secondary',
+            }}
+          >
             {documentHint(type)}
           </Typography>
           {existing?.submitted && !file ? (
-            <Typography variant="caption" color="text.secondary" component="p">
+            <Typography
+              variant="caption"
+              component="p"
+              sx={{
+                color: 'text.secondary',
+              }}
+            >
               Sent earlier
               {existing.uploadedAt ? ` on ${formatDateTime(existing.uploadedAt)}` : ''}
             </Typography>
@@ -169,7 +206,14 @@ function DocumentPicker({ type, file, onFile, existing, disabled }: DocumentPick
       </Stack>
 
       {file ? (
-        <Stack direction="row" alignItems="center" spacing={1} sx={{ mt: 1 }}>
+        <Stack
+          direction="row"
+          spacing={1}
+          sx={{
+            alignItems: 'center',
+            mt: 1,
+          }}
+        >
           <DescriptionRoundedIcon fontSize="small" color="action" aria-hidden />
           <Typography variant="body2" noWrap sx={{ flexGrow: 1, minWidth: 0 }} title={file.name}>
             {file.name}

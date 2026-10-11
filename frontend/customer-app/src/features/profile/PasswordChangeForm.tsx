@@ -112,7 +112,13 @@ export function PasswordChangeForm({
         {...register('confirmPassword')}
       />
 
-      <Stack direction="row" spacing={1.5} justifyContent="flex-end">
+      <Stack
+        direction="row"
+        spacing={1.5}
+        sx={{
+          justifyContent: 'flex-end',
+        }}
+      >
         <Button variant="text" onClick={onCancel} disabled={change.isPending}>
           Cancel
         </Button>

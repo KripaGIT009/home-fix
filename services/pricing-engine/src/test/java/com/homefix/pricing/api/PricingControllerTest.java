@@ -19,11 +19,12 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.MediaType;
+import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import com.homefix.pricing.api.dto.OverrideRequestDto;
 import com.homefix.pricing.domain.Money;
 import com.homefix.pricing.domain.PriceBreakdown;
@@ -32,6 +33,7 @@ import com.homefix.pricing.service.PriceQuoteService;
 import com.homefix.pricing.service.PriceRequest;
 import com.homefix.pricing.service.PricingConfigService;
 import com.homefix.pricing.service.ProviderOverrideService;
+import com.homefix.shared.observability.json.HomefixJson;
 
 /**
  * Web-layer tests for {@link PricingController} using a standalone MockMvc so the estimate and
@@ -49,13 +51,15 @@ class PricingControllerTest {
     @Mock private PricingConfigService configService;
 
     private MockMvc mvc;
-    private final ObjectMapper json = new ObjectMapper().registerModule(new JavaTimeModule());
+    private final ObjectMapper json = new JsonMapper();
 
     @BeforeEach
     void setUp() {
         PricingController controller = new PricingController(quoteService, overrideService, configService);
         mvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new GlobalExceptionHandler())
+                // The service's JSON settings (a missing boolean is false, as in production).
+                .setMessageConverters(new JacksonJsonHttpMessageConverter(HomefixJson.builder().build()))
                 .build();
     }
 

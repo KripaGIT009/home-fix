@@ -1,6 +1,6 @@
 package com.homefix.gateway.support;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.homefix.gateway.filter.CorrelationIdGatewayFilter;
 import com.homefix.shared.observability.error.ErrorResponseDto;
 import org.springframework.core.io.buffer.DataBuffer;

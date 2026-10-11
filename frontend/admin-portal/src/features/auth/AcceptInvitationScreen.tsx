@@ -1,6 +1,6 @@
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Link as RouterLink, useNavigate, useParams } from 'react-router-dom';
+import { Link as RouterLink, useNavigate, useParams } from 'react-router';
 import { Alert, Box, Button, InputAdornment, Stack, TextField, Typography } from '@mui/material';
 import LinkOffRoundedIcon from '@mui/icons-material/LinkOffRounded';
 import { isApiError } from '@api/client';
@@ -43,11 +43,21 @@ export function AcceptInvitationScreen() {
   if (expired) {
     return (
       <StandalonePage title="This invitation can no longer be used">
-        <Stack spacing={2} alignItems="flex-start">
+        <Stack
+          spacing={2}
+          sx={{
+            alignItems: 'flex-start',
+          }}
+        >
           <Box sx={{ color: 'text.secondary' }}>
             <LinkOffRoundedIcon sx={{ fontSize: 48 }} aria-hidden />
           </Box>
-          <Typography variant="body2" color="text.secondary">
+          <Typography
+            variant="body2"
+            sx={{
+              color: 'text.secondary',
+            }}
+          >
             The link has expired, was already used, or was revoked. Invitations last 7 days and work
             once. Ask the admin who invited you to send a new one.
           </Typography>
@@ -89,28 +99,69 @@ export function AcceptInvitationScreen() {
                 bgcolor: 'action.hover',
               }}
             >
-              <Typography variant="body2" color="text.secondary">
+              <Typography
+                variant="body2"
+                sx={{
+                  color: 'text.secondary',
+                }}
+              >
                 Email
               </Typography>
-              <Typography variant="body2" fontWeight={600} sx={{ wordBreak: 'break-all' }}>
+              <Typography
+                variant="body2"
+                sx={{
+                  fontWeight: 600,
+                  wordBreak: 'break-all',
+                }}
+              >
                 {invitation.email}
               </Typography>
-              <Typography variant="body2" color="text.secondary">
+              <Typography
+                variant="body2"
+                sx={{
+                  color: 'text.secondary',
+                }}
+              >
                 Role
               </Typography>
-              <Typography variant="body2" fontWeight={600}>
+              <Typography
+                variant="body2"
+                sx={{
+                  fontWeight: 600,
+                }}
+              >
                 {ROLE_LABELS[invitation.role]}
               </Typography>
-              <Typography variant="body2" color="text.secondary">
+              <Typography
+                variant="body2"
+                sx={{
+                  color: 'text.secondary',
+                }}
+              >
                 Invited by
               </Typography>
-              <Typography variant="body2" fontWeight={600}>
+              <Typography
+                variant="body2"
+                sx={{
+                  fontWeight: 600,
+                }}
+              >
                 {invitation.invitedByName ?? 'A HomeFix admin'}
               </Typography>
-              <Typography variant="body2" color="text.secondary">
+              <Typography
+                variant="body2"
+                sx={{
+                  color: 'text.secondary',
+                }}
+              >
                 Expires
               </Typography>
-              <Typography variant="body2" fontWeight={600}>
+              <Typography
+                variant="body2"
+                sx={{
+                  fontWeight: 600,
+                }}
+              >
                 {formatDateTime(invitation.expiresAt)}
               </Typography>
             </Box>
@@ -123,7 +174,7 @@ export function AcceptInvitationScreen() {
                 onSubmit={(values) =>
                   accept.mutate(
                     { token, email: invitation.email, payload: { password: values.password } },
-                    { onSuccess: () => navigate('/', { replace: true }) },
+                    { onSuccess: () => void navigate('/', { replace: true }) },
                   )
                 }
               />
@@ -142,7 +193,7 @@ export function AcceptInvitationScreen() {
                         password: values.password,
                       },
                     },
-                    { onSuccess: () => navigate('/', { replace: true }) },
+                    { onSuccess: () => void navigate('/', { replace: true }) },
                   )
                 }
               />
@@ -194,7 +245,12 @@ function ExistingAccountForm({ invitation, isPending, error, onSubmit }: Existin
       onSubmit={(event) => void handleSubmit(onSubmit)(event)}
       noValidate
     >
-      <Typography variant="body2" color="text.secondary">
+      <Typography
+        variant="body2"
+        sx={{
+          color: 'text.secondary',
+        }}
+      >
         {invitation.email} already has a HomeFix account. Enter its password to add the role to it.
       </Typography>
       {message ? <Alert severity="error">{message}</Alert> : null}
@@ -258,8 +314,10 @@ function NewAccountForm({ isPending, error, onSubmit }: NewAccountFormProps) {
           fullWidth
           error={Boolean(errors.displayName)}
           helperText={errors.displayName?.message ?? 'Shown to colleagues in the console.'}
-          inputProps={{ 'aria-label': 'Your name' }}
           {...register('displayName')}
+          slotProps={{
+            htmlInput: { 'aria-label': 'Your name' },
+          }}
         />
       </LabelledField>
 
@@ -271,21 +329,29 @@ function NewAccountForm({ isPending, error, onSubmit }: NewAccountFormProps) {
           placeholder="98765 43210"
           error={Boolean(errors.mobileNumber ?? mobileError)}
           helperText={errors.mobileNumber?.message ?? mobileError ?? ' '}
-          InputProps={{
-            startAdornment: (
-              <InputAdornment position="start">
-                <Typography
-                  variant="body1"
-                  fontWeight={600}
-                  sx={{ pr: 1.25, mr: 1.25, borderRight: 1, borderColor: 'divider' }}
-                >
-                  +91
-                </Typography>
-              </InputAdornment>
-            ),
-          }}
-          inputProps={{ inputMode: 'tel', 'aria-label': 'Mobile number' }}
           {...register('mobileNumber')}
+          slotProps={{
+            input: {
+              startAdornment: (
+                <InputAdornment position="start">
+                  <Typography
+                    variant="body1"
+                    sx={{
+                      fontWeight: 600,
+                      pr: 1.25,
+                      mr: 1.25,
+                      borderRight: 1,
+                      borderColor: 'divider',
+                    }}
+                  >
+                    +91
+                  </Typography>
+                </InputAdornment>
+              ),
+            },
+
+            htmlInput: { inputMode: 'tel', 'aria-label': 'Mobile number' },
+          }}
         />
       </LabelledField>
 

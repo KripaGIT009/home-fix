@@ -25,7 +25,14 @@ export function ResendCodeRow({
 
   return (
     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-      <Typography variant="body2" color="text.secondary" fontWeight={600} aria-live="polite">
+      <Typography
+        variant="body2"
+        aria-live="polite"
+        sx={{
+          color: 'text.secondary',
+          fontWeight: 600,
+        }}
+      >
         {coolingDown ? `New code in ${formatDuration(secondsLeft)}` : "Didn't get the code?"}
       </Typography>
       <Button

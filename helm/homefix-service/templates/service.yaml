@@ -12,5 +12,12 @@ spec:
       targetPort: http
       protocol: TCP
       name: {{ .Values.service.portName }}
+    {{- range .Values.extraPorts }}
+    # A further service hosted by this deployable, on the port it has in compose.
+    - port: {{ .port }}
+      targetPort: {{ .name }}
+      protocol: TCP
+      name: {{ .name }}
+    {{- end }}
   selector:
     {{- include "homefix-service.selectorLabels" . | nindent 4 }}

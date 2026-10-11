@@ -6,7 +6,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.TestTemplate;
 import org.junit.jupiter.api.extension.ExtendWith;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import com.homefix.notification.consumer.LifecycleEventPayload;
 import com.homefix.notification.domain.NotificationEventType;
 import com.homefix.notification.domain.RecipientPolicy;
@@ -37,7 +38,7 @@ import au.com.dius.pact.provider.junitsupport.loader.PactFolder;
 @ExtendWith(PactVerificationInvocationContextProvider.class)
 class NotificationServiceProviderPactTest {
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper = new JsonMapper();
 
     @BeforeEach
     void before(PactVerificationContext context) {

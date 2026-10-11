@@ -1,4 +1,4 @@
-import { createBrowserRouter } from 'react-router-dom';
+import { createBrowserRouter } from 'react-router';
 import { PlaceholderScreen } from '@components/PlaceholderScreen';
 import { HomeRedirect } from '@components/HomeRedirect';
 import { RequireAuth } from '@components/RequireAuth';

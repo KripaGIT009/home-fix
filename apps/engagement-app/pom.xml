@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.homefix</groupId>
+        <artifactId>homefix-parent</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+        <relativePath>../../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>engagement-app</artifactId>
+    <packaging>jar</packaging>
+    <name>HomeFix Engagement application</name>
+    <description>
+        Deployable: Engagement and operations: notifications, complaints, reviews, the admin back end, reporting and the outbox relay. Each service runs in its own Spring context inside this one
+        JVM (see homefix-service-host).
+    </description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.homefix.shared</groupId>
+            <artifactId>homefix-service-host</artifactId>
+            <version>${homefix.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.homefix</groupId>
+            <artifactId>outbox-processor</artifactId>
+            <version>${homefix.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.homefix</groupId>
+            <artifactId>notification-service</artifactId>
+            <version>${homefix.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.homefix</groupId>
+            <artifactId>complaint-service</artifactId>
+            <version>${homefix.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.homefix</groupId>
+            <artifactId>rating-review-service</artifactId>
+            <version>${homefix.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.homefix</groupId>
+            <artifactId>admin-service</artifactId>
+            <version>${homefix.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.homefix</groupId>
+            <artifactId>reporting-service</artifactId>
+            <version>${homefix.version}</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <mainClass>com.homefix.app.EngagementApplication</mainClass>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

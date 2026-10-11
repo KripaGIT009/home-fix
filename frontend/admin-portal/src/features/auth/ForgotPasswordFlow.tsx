@@ -109,15 +109,18 @@ export function ForgotPasswordFlow({
               emailForm.formState.errors.email?.message ??
               'We will email you a code to set a new password.'
             }
-            InputProps={{
-              startAdornment: (
-                <InputAdornment position="start">
-                  <MailOutlineRoundedIcon fontSize="small" sx={{ color: 'text.secondary' }} />
-                </InputAdornment>
-              ),
-            }}
-            inputProps={{ 'aria-label': 'Email', autoCapitalize: 'none', spellCheck: false }}
             {...emailForm.register('email')}
+            slotProps={{
+              input: {
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <MailOutlineRoundedIcon fontSize="small" sx={{ color: 'text.secondary' }} />
+                  </InputAdornment>
+                ),
+              },
+
+              htmlInput: { 'aria-label': 'Email', autoCapitalize: 'none', spellCheck: false },
+            }}
           />
         </LabelledField>
 
@@ -165,13 +168,15 @@ export function ForgotPasswordFlow({
           placeholder={'0'.repeat(OTP_LENGTH)}
           error={Boolean(errors.code)}
           helperText={errors.code?.message ?? ' '}
-          inputProps={{
-            inputMode: 'numeric',
-            maxLength: OTP_LENGTH,
-            'aria-label': 'Reset code',
-            style: { fontSize: '1.25rem', fontWeight: 700, letterSpacing: '0.4em' },
-          }}
           {...resetForm.register('code')}
+          slotProps={{
+            htmlInput: {
+              inputMode: 'numeric',
+              maxLength: OTP_LENGTH,
+              'aria-label': 'Reset code',
+              style: { fontSize: '1.25rem', fontWeight: 700, letterSpacing: '0.4em' },
+            },
+          }}
         />
       </LabelledField>
 
@@ -198,8 +203,10 @@ export function ForgotPasswordFlow({
         <Typography
           variant="body2"
           color={isExpired ? 'error.main' : 'text.secondary'}
-          fontWeight={600}
           aria-live="polite"
+          sx={{
+            fontWeight: 600,
+          }}
         >
           {isExpired ? 'Code expired' : `Expires in ${formatDuration(expiry.secondsLeft)}`}
         </Typography>

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import {
   Alert,
   Card,
@@ -41,9 +41,21 @@ export function WorkProfileCard() {
   return (
     <Card>
       <CardContent sx={{ pb: 0 }}>
-        <Stack direction="row" spacing={1} alignItems="center">
+        <Stack
+          direction="row"
+          spacing={1}
+          sx={{
+            alignItems: 'center',
+          }}
+        >
           <WorkRoundedIcon color="primary" aria-hidden />
-          <Typography variant="subtitle1" fontWeight={700} component="h2">
+          <Typography
+            variant="subtitle1"
+            component="h2"
+            sx={{
+              fontWeight: 700,
+            }}
+          >
             Work profile
           </Typography>
         </Stack>
@@ -55,7 +67,7 @@ export function WorkProfileCard() {
         onRetry={() => void profile.refetch()}
       >
         {profile.data !== undefined ? (
-          <WorkProfileRows profile={profile.data} onOpen={(route) => navigate(route)} />
+          <WorkProfileRows profile={profile.data} onOpen={(route) => void navigate(route)} />
         ) : null}
       </QueryStateView>
     </Card>
@@ -161,8 +173,10 @@ function WorkProfileRow({
       <ListItemText
         primary={label}
         secondary={caption}
-        primaryTypographyProps={{ variant: 'subtitle1', fontWeight: 600 }}
-        secondaryTypographyProps={{ variant: 'caption' }}
+        slotProps={{
+          primary: { variant: 'subtitle1', sx: { fontWeight: 600 } },
+          secondary: { variant: 'caption' },
+        }}
       />
       <ChevronRightRoundedIcon sx={{ color: 'text.secondary' }} />
     </ListItemButton>

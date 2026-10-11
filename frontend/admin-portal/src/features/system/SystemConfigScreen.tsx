@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Alert,
   Box,
@@ -61,14 +61,21 @@ function SystemConfigContent() {
   );
 }
 
+function valuesOf(settings: SystemSetting[]): Record<string, string> {
+  return Object.fromEntries(settings.map((s) => [s.key, s.value]));
+}
+
 function ConfigForm({ settings }: { settings: SystemSetting[] }) {
   const update = useUpdateSystemConfig();
-  const [values, setValues] = useState<Record<string, string>>({});
+  const [values, setValues] = useState<Record<string, string>>(() => valuesOf(settings));
   const [saved, setSaved] = useState(false);
 
-  useEffect(() => {
-    setValues(Object.fromEntries(settings.map((s) => [s.key, s.value])));
-  }, [settings]);
+  // New server values: start again from them (reset during render, not in an effect).
+  const [syncedFrom, setSyncedFrom] = useState(settings);
+  if (syncedFrom !== settings) {
+    setSyncedFrom(settings);
+    setValues(valuesOf(settings));
+  }
 
   const dirty = useMemo(
     () => settings.some((s) => (values[s.key] ?? s.value) !== s.value),
@@ -114,7 +121,12 @@ function ConfigForm({ settings }: { settings: SystemSetting[] }) {
               />
             )}
             {setting.description ? (
-              <Typography variant="caption" color="text.secondary">
+              <Typography
+                variant="caption"
+                sx={{
+                  color: 'text.secondary',
+                }}
+              >
                 {setting.description}
               </Typography>
             ) : null}

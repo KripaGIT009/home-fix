@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  jobs-app logging. The services in this JVM share one logging system, so the service name on each
+  line is the deployable's; the logger name (com.homefix.<service>...) says which service wrote it.
+-->
+<configuration>
+    <property name="SERVICE_NAME" value="jobs-app"/>
+    <include resource="logback-json-base.xml"/>
+    <root level="INFO">
+        <appender-ref ref="JSON_STDOUT"/>
+    </root>
+</configuration>

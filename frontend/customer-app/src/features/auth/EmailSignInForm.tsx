@@ -126,7 +126,7 @@ export function EmailSignInForm({
         type="email"
         autoComplete="email"
         placeholder="you@example.com"
-        inputProps={{ inputMode: 'email', autoCapitalize: 'none', spellCheck: false }}
+        slotProps={{ htmlInput: { inputMode: 'email', autoCapitalize: 'none', spellCheck: false } }}
         error={Boolean(errors.email)}
         helperText={errors.email?.message}
         {...register('email')}
@@ -147,8 +147,10 @@ export function EmailSignInForm({
             type="button"
             variant="body2"
             underline="hover"
-            fontWeight={600}
             onClick={() => onForgotPassword(getValues('email').trim())}
+            sx={{
+              fontWeight: 600,
+            }}
           >
             Forgot password?
           </Link>
@@ -166,16 +168,24 @@ export function EmailSignInForm({
         {login.isPending ? 'Signing in…' : 'Sign in'}
       </Button>
 
-      <Typography variant="body2" color="text.secondary" align="center">
+      <Typography
+        variant="body2"
+        align="center"
+        sx={{
+          color: 'text.secondary',
+        }}
+      >
         New here?{' '}
         <Link
           component="button"
           type="button"
           variant="body2"
           underline="hover"
-          fontWeight={700}
           onClick={onCreateAccount}
-          sx={{ verticalAlign: 'baseline' }}
+          sx={{
+            fontWeight: 700,
+            verticalAlign: 'baseline',
+          }}
         >
           Create account
         </Link>

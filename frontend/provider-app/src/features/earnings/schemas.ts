@@ -12,7 +12,7 @@ import { z } from 'zod';
 export function buildSettlementSchema(availableBalance: number) {
   return z.object({
     amount: z.coerce
-      .number({ invalid_type_error: 'Enter an amount' })
+      .number({ error: 'Enter an amount' })
       .min(1, 'Amount must be at least 1.00')
       .max(
         availableBalance,
@@ -23,3 +23,5 @@ export function buildSettlementSchema(availableBalance: number) {
 }
 
 export type SettlementFormValues = z.infer<ReturnType<typeof buildSettlementSchema>>;
+/** What the inputs hold before coercion (react-hook-form's field values). */
+export type SettlementFormInput = z.input<ReturnType<typeof buildSettlementSchema>>;

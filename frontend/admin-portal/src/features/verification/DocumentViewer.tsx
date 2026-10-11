@@ -40,7 +40,14 @@ export function DocumentViewer({ documents }: DocumentViewerProps) {
 
   if (documents.length === 0) {
     return (
-      <Typography variant="body2" color="text.secondary" sx={{ py: 4, textAlign: 'center' }}>
+      <Typography
+        variant="body2"
+        sx={{
+          color: 'text.secondary',
+          py: 4,
+          textAlign: 'center',
+        }}
+      >
         No documents were submitted.
       </Typography>
     );
@@ -82,7 +89,14 @@ export function DocumentViewer({ documents }: DocumentViewerProps) {
         }}
       >
         {!url ? (
-          <Typography variant="body2" color="text.secondary" sx={{ p: 3, textAlign: 'center' }}>
+          <Typography
+            variant="body2"
+            sx={{
+              color: 'text.secondary',
+              p: 3,
+              textAlign: 'center',
+            }}
+          >
             Preview isn&apos;t available for this document.
           </Typography>
         ) : isPdf(current.contentType) ? (
@@ -111,7 +125,12 @@ export function DocumentViewer({ documents }: DocumentViewerProps) {
         )}
       </Box>
       {current.fileName ? (
-        <Typography variant="caption" color="text.secondary">
+        <Typography
+          variant="caption"
+          sx={{
+            color: 'text.secondary',
+          }}
+        >
           {url ? (
             <Link href={url} target="_blank" rel="noopener noreferrer">
               {current.fileName}

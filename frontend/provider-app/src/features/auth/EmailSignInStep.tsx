@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Alert, AlertTitle, Box, Button, Link, Stack, TextField, Typography } from '@mui/material';
@@ -65,7 +65,7 @@ export function EmailSignInStep({ defaultEmail = '', from }: EmailSignInStepProp
 
   const openCodeScreen = (email: string, resendInSeconds: number) => {
     const state: EmailCodeLocationState = { email, resendInSeconds, ...(from ? { from } : {}) };
-    navigate(AUTH_ROUTES.verifyEmail, { state });
+    void navigate(AUTH_ROUTES.verifyEmail, { state });
   };
 
   // The password was right but the sign-up code was never entered: send a new
@@ -89,7 +89,7 @@ export function EmailSignInStep({ defaultEmail = '', from }: EmailSignInStepProp
 
   const openForgotPassword = () => {
     const state: ForgotPasswordLocationState = { email: getValues('email').trim() };
-    navigate(AUTH_ROUTES.forgotPassword, { state });
+    void navigate(AUTH_ROUTES.forgotPassword, { state });
   };
 
   const isLocked = login.error?.code === EMAIL_AUTH_ERRORS.accountLocked && lockTimer.isRunning;
@@ -122,8 +122,10 @@ export function EmailSignInStep({ defaultEmail = '', from }: EmailSignInStepProp
           placeholder="you@example.com"
           error={Boolean(errors.email)}
           helperText={errors.email?.message}
-          inputProps={{ inputMode: 'email', 'aria-label': 'Email' }}
           {...register('email')}
+          slotProps={{
+            htmlInput: { inputMode: 'email', 'aria-label': 'Email' },
+          }}
         />
       </Box>
 
@@ -144,8 +146,10 @@ export function EmailSignInStep({ defaultEmail = '', from }: EmailSignInStepProp
             type="button"
             variant="body2"
             underline="hover"
-            fontWeight={600}
             onClick={openForgotPassword}
+            sx={{
+              fontWeight: 600,
+            }}
           >
             Forgot password?
           </Link>

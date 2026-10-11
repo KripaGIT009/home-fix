@@ -5,10 +5,13 @@ import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.UUID;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.DeserializationFeature;
+
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
+
 import com.homefix.payment.domain.PaymentTransaction;
 import com.homefix.payment.domain.TransactionStatus;
 
@@ -68,8 +71,9 @@ public record SignedCallbackPayload(
     private static final int MAX_GATEWAY_ID_LENGTH = 32;
 
     /** Exact decimals: a float amount must not be rounded through {@code double} before comparison. */
-    private static final ObjectMapper MAPPER = new ObjectMapper()
-            .enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
+    private static final ObjectMapper MAPPER = JsonMapper.builder()
+            .enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
+            .build();
 
     /**
      * Parses and validates a signed payload. Call only after the signature has been verified.
@@ -81,7 +85,7 @@ public record SignedCallbackPayload(
         JsonNode root;
         try {
             root = payload == null ? null : MAPPER.readTree(payload);
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             throw PaymentException.invalidCallbackPayload("Callback payload is not valid JSON");
         }
         if (root == null || !root.isObject()) {
@@ -97,8 +101,8 @@ public record SignedCallbackPayload(
 
         String failureReason = null;
         JsonNode reason = root.get("failureReason");
-        if (outcome == Outcome.FAILED && reason != null && reason.isTextual()) {
-            String text = reason.asText();
+        if (outcome == Outcome.FAILED && reason != null && reason.isString()) {
+            String text = reason.asString();
             failureReason = text.length() > PaymentTransaction.FAILURE_REASON_MAX_LENGTH
                     ? text.substring(0, PaymentTransaction.FAILURE_REASON_MAX_LENGTH)
                     : text;
@@ -109,11 +113,11 @@ public record SignedCallbackPayload(
 
     private static String requiredText(JsonNode root, String field, int maxLength) {
         JsonNode node = root.get(field);
-        if (node == null || !node.isTextual() || node.asText().isBlank()) {
+        if (node == null || !node.isString() || node.asString().isBlank()) {
             throw PaymentException.invalidCallbackPayload(
                     "Callback payload field '" + field + "' is required and must be a non-blank string");
         }
-        String value = node.asText();
+        String value = node.asString();
         if (value.length() > maxLength) {
             throw PaymentException.invalidCallbackPayload(
                     "Callback payload field '" + field + "' exceeds " + maxLength + " characters");
@@ -144,9 +148,9 @@ public record SignedCallbackPayload(
         BigDecimal amount = null;
         if (node != null && node.isNumber()) {
             amount = node.decimalValue();
-        } else if (node != null && node.isTextual()) {
+        } else if (node != null && node.isString()) {
             try {
-                amount = new BigDecimal(node.asText().trim());
+                amount = new BigDecimal(node.asString().trim());
             } catch (NumberFormatException e) {
                 amount = null;
             }

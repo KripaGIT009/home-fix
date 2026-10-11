@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { Box, Stack, Typography } from '@mui/material';
 import { keyframes } from '@mui/material/styles';
 import { BrandLogo } from '@components/BrandLogo';
@@ -29,7 +29,7 @@ export function SplashScreen() {
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      navigate(isAuthenticated ? '/home' : '/login', { replace: true });
+      void navigate(isAuthenticated ? '/home' : '/login', { replace: true });
     }, SPLASH_DURATION_MS);
     return () => clearTimeout(timer);
   }, [navigate, isAuthenticated]);
@@ -50,9 +50,11 @@ export function SplashScreen() {
     >
       <Stack
         spacing={3}
-        alignItems="center"
-        textAlign="center"
-        sx={{ animation: `${rise} .5s ease-out both` }}
+        sx={{
+          alignItems: 'center',
+          textAlign: 'center',
+          animation: `${rise} .5s ease-out both`,
+        }}
       >
         <BrandLogo size={72} inverted markOnly />
         <Box>

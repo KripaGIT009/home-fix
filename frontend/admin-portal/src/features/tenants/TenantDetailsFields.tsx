@@ -10,7 +10,6 @@ import {
   Stack,
   TextField,
   Typography,
-  type TextFieldProps,
 } from '@mui/material';
 import MyLocationRoundedIcon from '@mui/icons-material/MyLocationRounded';
 import OpenInNewRoundedIcon from '@mui/icons-material/OpenInNewRounded';
@@ -123,7 +122,7 @@ export function TenantDetailsFields({
 
   return (
     <Grid container spacing={2}>
-      <Grid item xs={12} sm={nameAside ? 8 : 12}>
+      <Grid size={{ xs: 12, sm: nameAside ? 8 : 12 }}>
         <TextField
           label="Agency name"
           fullWidth
@@ -133,12 +132,8 @@ export function TenantDetailsFields({
           helperText={errors.name?.message}
         />
       </Grid>
-      {nameAside ? (
-        <Grid item xs={12} sm={4}>
-          {nameAside}
-        </Grid>
-      ) : null}
-      <Grid item xs={12} sm={6}>
+      {nameAside ? <Grid size={{ xs: 12, sm: 4 }}>{nameAside}</Grid> : null}
+      <Grid size={{ xs: 12, sm: 6 }}>
         <TextField
           label="Contact phone"
           fullWidth
@@ -149,7 +144,7 @@ export function TenantDetailsFields({
           helperText={errors.contactPhone?.message ?? (contactRequired ? ' ' : 'Optional')}
         />
       </Grid>
-      <Grid item xs={12} sm={6}>
+      <Grid size={{ xs: 12, sm: 6 }}>
         <TextField
           label="Contact email"
           type="email"
@@ -161,14 +156,19 @@ export function TenantDetailsFields({
         />
       </Grid>
 
-      <Grid item xs={12}>
+      <Grid size={{ xs: 12 }}>
         <Typography variant="subtitle1">Service area</Typography>
-        <Typography variant="body2" color="text.secondary">
+        <Typography
+          variant="body2"
+          sx={{
+            color: 'text.secondary',
+          }}
+        >
           A circle around the agency&apos;s base. Bookings inside it, in the categories below, are
           offered to the agency when no provider accepts them automatically.
         </Typography>
       </Grid>
-      <Grid item xs={12} sm={4}>
+      <Grid size={{ xs: 12, sm: 4 }}>
         <TextField
           label="Base latitude"
           fullWidth
@@ -180,7 +180,7 @@ export function TenantDetailsFields({
           helperText={errors.baseLatitude?.message ?? '−90 to 90'}
         />
       </Grid>
-      <Grid item xs={12} sm={4}>
+      <Grid size={{ xs: 12, sm: 4 }}>
         <TextField
           label="Base longitude"
           fullWidth
@@ -192,7 +192,7 @@ export function TenantDetailsFields({
           helperText={errors.baseLongitude?.message ?? '−180 to 180'}
         />
       </Grid>
-      <Grid item xs={12} sm={4}>
+      <Grid size={{ xs: 12, sm: 4 }}>
         <TextField
           label="Radius (km)"
           fullWidth
@@ -203,8 +203,16 @@ export function TenantDetailsFields({
           helperText={errors.serviceRadiusKm?.message ?? '1 to 100 km'}
         />
       </Grid>
-      <Grid item xs={12}>
-        <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap" useFlexGap>
+      <Grid size={{ xs: 12 }}>
+        <Stack
+          direction="row"
+          spacing={2}
+          useFlexGap
+          sx={{
+            alignItems: 'center',
+            flexWrap: 'wrap',
+          }}
+        >
           <Button
             size="small"
             variant="outlined"
@@ -233,7 +241,7 @@ export function TenantDetailsFields({
         ) : null}
       </Grid>
 
-      <Grid item xs={12}>
+      <Grid size={{ xs: 12 }}>
         <Controller
           control={control}
           name="categoryIds"
@@ -246,10 +254,10 @@ export function TenantDetailsFields({
               onChange={(_, value) => field.onChange(value)}
               onBlur={field.onBlur}
               getOptionLabel={(id) => categoryById.get(id)?.name ?? id}
-              renderTags={(value, getTagProps) =>
+              renderValue={(value, getItemProps) =>
                 value.map((id, index) => {
                   const inactive = !activeIds.has(id);
-                  const { key, ...tagProps } = getTagProps({ index });
+                  const { key, ...tagProps } = getItemProps({ index });
                   return (
                     <Chip
                       key={key}
@@ -262,10 +270,8 @@ export function TenantDetailsFields({
                 })
               }
               renderInput={(params) => (
-                // MUI types the render params with optional props that
-                // exactOptionalPropertyTypes refuses to spread as-is.
                 <TextField
-                  {...(params as TextFieldProps)}
+                  {...params}
                   label="Categories covered"
                   required
                   error={Boolean(errors.categoryIds)}

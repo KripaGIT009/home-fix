@@ -20,15 +20,17 @@ assigns them.
 
 ## Stack
 
-- **React 18 + TypeScript** (strict mode)
-- **Vite** build/dev server
+- **Node.js 24** to build (`"engines": {"node": ">=24"}`; the Docker build uses `node:24-alpine`)
+- **React 19 + TypeScript 6** (strict mode)
+- **Vite 8** build/dev server (Rolldown)
 - **TanStack Query** — server state (polling drives offers, assignments and payment status)
 - **Zustand** — client state (auth)
-- **React Router** — navigation
-- **Material UI** — components/theme (mobile-first)
-- **React Hook Form + Zod** — forms and validation
+- **React Router 8** — navigation
+- **Material UI 9** — components/theme (mobile-first)
+- **React Hook Form + Zod 4** — forms and validation
 - **Axios** — HTTP client with JWT Bearer + `X-Correlation-ID` injection
-- **Capacitor 7** — Android and iOS shells; `@capacitor/geolocation` for native location
+- **ESLint 10** (flat config, `eslint.config.js`) with typescript-eslint, eslint-react, react-hooks 7 and jsx-a11y-x
+- **Capacitor 8** — Android and iOS shells; `@capacitor/geolocation` for native location
 
 ## Screens
 
@@ -157,7 +159,7 @@ docker compose -f docker-compose.core.yml up -d --build --wait
 
 The `provider-app` image (`Dockerfile`) builds the bundle with the default
 `/api` base and serves it from nginx on <http://localhost:5174>. `nginx.conf`
-proxies `/api/auth/*` to `auth-service:8081` and everything else under `/api/`
+proxies `/api/auth/*` to `identity-app:8081` (auth-service) and everything else under `/api/`
 to `api-gateway:8080`. The build copies the app directory, so keep native
 (absolute) URLs out of a local `.env` when building the image.
 

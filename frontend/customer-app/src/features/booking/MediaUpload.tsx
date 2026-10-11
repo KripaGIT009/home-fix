@@ -73,7 +73,12 @@ export function MediaUpload({ files, onChange }: MediaUploadProps) {
     <Stack spacing={1}>
       <Box>
         <Typography variant="subtitle2">Photos or videos (optional)</Typography>
-        <Typography variant="caption" color="text.secondary">
+        <Typography
+          variant="caption"
+          sx={{
+            color: 'text.secondary',
+          }}
+        >
           Up to {MAX_MEDIA_FILES} files. {ACCEPTED_MEDIA_LABEL}, max {MAX_MEDIA_FILE_MB} MB each.
         </Typography>
       </Box>

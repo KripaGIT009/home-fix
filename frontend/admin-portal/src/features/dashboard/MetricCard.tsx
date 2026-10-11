@@ -32,7 +32,14 @@ export function MetricCard({ label, value, icon, hint, tone = 'neutral' }: Metri
   return (
     <Card sx={{ height: '100%' }}>
       <CardContent>
-        <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mb: 1.5 }}>
+        <Stack
+          direction="row"
+          spacing={1.5}
+          sx={{
+            alignItems: 'center',
+            mb: 1.5,
+          }}
+        >
           <Box
             aria-hidden
             sx={{
@@ -48,15 +55,32 @@ export function MetricCard({ label, value, icon, hint, tone = 'neutral' }: Metri
           >
             {icon}
           </Box>
-          <Typography variant="body2" color="text.secondary" lineHeight={1.25}>
+          <Typography
+            variant="body2"
+            sx={{
+              color: 'text.secondary',
+              lineHeight: 1.25,
+            }}
+          >
             {label}
           </Typography>
         </Stack>
-        <Typography variant="h4" component="p" fontWeight={800}>
+        <Typography
+          variant="h4"
+          component="p"
+          sx={{
+            fontWeight: 800,
+          }}
+        >
           {value}
         </Typography>
         {hint ? (
-          <Typography variant="caption" color="text.secondary">
+          <Typography
+            variant="caption"
+            sx={{
+              color: 'text.secondary',
+            }}
+          >
             {hint}
           </Typography>
         ) : null}

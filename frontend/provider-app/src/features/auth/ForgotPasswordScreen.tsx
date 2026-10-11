@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Alert, Box, Button, Stack, TextField, Typography } from '@mui/material';
@@ -82,7 +82,7 @@ export function ForgotPasswordScreen() {
       ...(email ? { email } : {}),
       ...(step === 'done' ? { notice: 'Password changed. Sign in with your new password.' } : {}),
     };
-    navigate(AUTH_ROUTES.login, { state });
+    void navigate(AUTH_ROUTES.login, { state });
   };
 
   const heading = HEADINGS[step];
@@ -124,7 +124,13 @@ export function ForgotPasswordScreen() {
           }}
         />
       ) : (
-        <Stack spacing={2} alignItems="center" textAlign="center">
+        <Stack
+          spacing={2}
+          sx={{
+            alignItems: 'center',
+            textAlign: 'center',
+          }}
+        >
           <CheckCircleRoundedIcon color="success" sx={{ fontSize: 56 }} aria-hidden />
           <Typography variant="body1">
             Your password has been changed and you have been signed out on every device.
@@ -194,8 +200,10 @@ function EmailStep({
           placeholder="you@example.com"
           error={Boolean(errors.email)}
           helperText={errors.email?.message}
-          inputProps={{ inputMode: 'email', 'aria-label': 'Email' }}
           {...register('email')}
+          slotProps={{
+            htmlInput: { inputMode: 'email', 'aria-label': 'Email' },
+          }}
         />
       </Box>
 

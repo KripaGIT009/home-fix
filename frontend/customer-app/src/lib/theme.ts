@@ -173,23 +173,35 @@ export const theme = createTheme({
           fontWeight: 650,
           borderRadius: radius.md,
           '&.Mui-focusVisible': { boxShadow: shadows.focus },
+          variants: [
+            {
+              props: { variant: 'contained', color: 'primary' },
+              style: {
+                backgroundColor: brand.accent,
+                '&:hover': { backgroundColor: brand.accentDark },
+              },
+            },
+            // Before the primary entry, which overrides its border (variants apply in order).
+            {
+              props: { variant: 'outlined' },
+              style: {
+                borderColor: brand.lineStrong,
+                backgroundColor: brand.paper,
+                '&:hover': { borderColor: brand.subtle, backgroundColor: brand.paper },
+              },
+            },
+            {
+              props: { variant: 'outlined', color: 'primary' },
+              style: {
+                borderColor: brand.accentLine,
+                '&:hover': { borderColor: brand.accent, backgroundColor: brand.accentSoft },
+              },
+            },
+          ],
         },
         sizeLarge: { padding: '13px 22px', fontSize: '1rem' },
         sizeMedium: { padding: '9px 18px', fontSize: '0.9375rem' },
         sizeSmall: { padding: '6px 12px', fontSize: '0.8125rem' },
-        containedPrimary: {
-          backgroundColor: brand.accent,
-          '&:hover': { backgroundColor: brand.accentDark },
-        },
-        outlined: {
-          borderColor: brand.lineStrong,
-          backgroundColor: brand.paper,
-          '&:hover': { borderColor: brand.subtle, backgroundColor: brand.paper },
-        },
-        outlinedPrimary: {
-          borderColor: brand.accentLine,
-          '&:hover': { borderColor: brand.accent, backgroundColor: brand.accentSoft },
-        },
         text: { '&:hover': { backgroundColor: alpha(brand.accent, 0.06) } },
       },
     },
@@ -278,13 +290,31 @@ export const theme = createTheme({
 
     MuiAlert: {
       styleOverrides: {
-        root: { borderRadius: radius.md, fontSize: '0.875rem', alignItems: 'flex-start' },
+        root: {
+          borderRadius: radius.md,
+          fontSize: '0.875rem',
+          alignItems: 'flex-start',
+          variants: [
+            {
+              props: { variant: 'standard', severity: 'error' },
+              style: { backgroundColor: brand.redSoft, color: brand.redDark },
+            },
+            {
+              props: { variant: 'standard', severity: 'success' },
+              style: { backgroundColor: brand.greenSoft, color: '#05603A' },
+            },
+            {
+              props: { variant: 'standard', severity: 'warning' },
+              style: { backgroundColor: brand.warmSoft, color: brand.warmDark },
+            },
+            {
+              props: { variant: 'standard', severity: 'info' },
+              style: { backgroundColor: brand.accentSoft, color: brand.accentDeep },
+            },
+          ],
+        },
         icon: { paddingTop: 9 },
         message: { paddingTop: 9 },
-        standardError: { backgroundColor: brand.redSoft, color: brand.redDark },
-        standardSuccess: { backgroundColor: brand.greenSoft, color: '#05603A' },
-        standardWarning: { backgroundColor: brand.warmSoft, color: brand.warmDark },
-        standardInfo: { backgroundColor: brand.accentSoft, color: brand.accentDeep },
       },
     },
 

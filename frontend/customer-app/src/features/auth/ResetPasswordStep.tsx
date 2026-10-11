@@ -125,20 +125,32 @@ export function ResetPasswordStep({
             id={CODE_ERROR_ID}
             role="alert"
             variant="body2"
-            color="error.main"
-            fontWeight={600}
-            sx={{ mt: 1 }}
+            sx={{
+              color: 'error.main',
+              fontWeight: 600,
+              mt: 1,
+            }}
           >
             {codeError}
           </Typography>
         ) : null}
         <Stack
           direction="row"
-          justifyContent="space-between"
-          alignItems="center"
-          sx={{ mt: 1, minHeight: 36 }}
+          sx={{
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            mt: 1,
+            minHeight: 36,
+          }}
         >
-          <Typography variant="body2" color="text.secondary" fontWeight={600} aria-live="polite">
+          <Typography
+            variant="body2"
+            aria-live="polite"
+            sx={{
+              color: 'text.secondary',
+              fontWeight: 600,
+            }}
+          >
             {resendSecondsLeft > 0
               ? `New code available in ${formatDuration(resendSecondsLeft)}`
               : 'Didn’t get it? Check your spam folder.'}

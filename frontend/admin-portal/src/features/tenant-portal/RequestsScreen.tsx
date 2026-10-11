@@ -19,7 +19,7 @@ import {
 } from '@mui/material';
 import RefreshRoundedIcon from '@mui/icons-material/RefreshRounded';
 import ScheduleRoundedIcon from '@mui/icons-material/ScheduleRounded';
-import { Link as RouterLink } from 'react-router-dom';
+import { Link as RouterLink } from 'react-router';
 import { ModuleScreen } from '@components/ModuleScreen';
 import { QueryStateView } from '@components/QueryStateView';
 import { DataTable, type Column } from '@components/DataTable';
@@ -82,11 +82,27 @@ export function RequestsScreen() {
       header: 'Request',
       render: (row) => (
         <Stack spacing={0.5} sx={{ minWidth: 150 }}>
-          <Typography variant="body2" fontWeight={600}>
+          <Typography
+            variant="body2"
+            sx={{
+              fontWeight: 600,
+            }}
+          >
             {row.serviceName ?? 'Service'}
           </Typography>
-          <Stack direction="row" spacing={0.75} alignItems="center">
-            <Typography variant="caption" color="text.secondary">
+          <Stack
+            direction="row"
+            spacing={0.75}
+            sx={{
+              alignItems: 'center',
+            }}
+          >
+            <Typography
+              variant="caption"
+              sx={{
+                color: 'text.secondary',
+              }}
+            >
               {row.reference}
             </Typography>
             {row.isEmergency ? (
@@ -142,9 +158,21 @@ export function RequestsScreen() {
       title="Requests"
       description={`Requests in ${tenantName ?? 'your agency'}'s area that no provider accepted automatically. The first partner to assign wins.`}
       actions={
-        <Stack direction="row" spacing={1} alignItems="center">
+        <Stack
+          direction="row"
+          spacing={1}
+          sx={{
+            alignItems: 'center',
+          }}
+        >
           {queueQuery.dataUpdatedAt ? (
-            <Typography variant="caption" color="text.secondary" aria-live="polite">
+            <Typography
+              variant="caption"
+              aria-live="polite"
+              sx={{
+                color: 'text.secondary',
+              }}
+            >
               Updated {TIME_FORMAT.format(queueQuery.dataUpdatedAt)}
             </Typography>
           ) : null}
@@ -174,7 +202,7 @@ export function RequestsScreen() {
       ) : null}
 
       <Grid container spacing={2}>
-        <Grid item xs={12} xl={9}>
+        <Grid size={{ xs: 12, xl: 9 }}>
           <QueryStateView
             isLoading={queueQuery.isLoading}
             isError={queueQuery.isError}
@@ -201,7 +229,7 @@ export function RequestsScreen() {
             )}
           </QueryStateView>
         </Grid>
-        <Grid item xs={12} xl={3}>
+        <Grid size={{ xs: 12, xl: 3 }}>
           <TeamNowCard />
         </Grid>
       </Grid>
@@ -250,13 +278,25 @@ function TeamNowCard() {
   return (
     <Card>
       <CardContent>
-        <Stack direction="row" justifyContent="space-between" alignItems="baseline">
+        <Stack
+          direction="row"
+          sx={{
+            justifyContent: 'space-between',
+            alignItems: 'baseline',
+          }}
+        >
           <Typography variant="subtitle1">Your team now</Typography>
           <Link component={RouterLink} to="/tenant/team" variant="body2">
             Manage
           </Link>
         </Stack>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+        <Typography
+          variant="body2"
+          sx={{
+            color: 'text.secondary',
+            mb: 1.5,
+          }}
+        >
           {teamQuery.data
             ? `${availableCount} of ${team.length} available and assignable`
             : 'Availability and verification of your providers'}
@@ -290,14 +330,29 @@ function TeamNowCard() {
                 key={provider.providerId}
                 direction="row"
                 spacing={1}
-                alignItems="center"
-                justifyContent="space-between"
+                sx={{
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                }}
               >
                 <Box sx={{ minWidth: 0 }}>
-                  <Typography variant="body2" fontWeight={600} noWrap>
+                  <Typography
+                    variant="body2"
+                    noWrap
+                    sx={{
+                      fontWeight: 600,
+                    }}
+                  >
                     {provider.displayName ?? 'Provider'}
                   </Typography>
-                  <Typography variant="caption" color="text.secondary" noWrap component="div">
+                  <Typography
+                    variant="caption"
+                    noWrap
+                    component="div"
+                    sx={{
+                      color: 'text.secondary',
+                    }}
+                  >
                     {provider.assignable
                       ? (provider.primarySkill ?? 'Verified')
                       : 'Not assignable yet'}
@@ -316,7 +371,14 @@ function TeamNowCard() {
 /** A compact availability marker for the narrow team panel. */
 function AvailabilityDot({ availableNow }: { availableNow: boolean }) {
   return (
-    <Stack direction="row" spacing={0.75} alignItems="center" sx={{ flexShrink: 0 }}>
+    <Stack
+      direction="row"
+      spacing={0.75}
+      sx={{
+        alignItems: 'center',
+        flexShrink: 0,
+      }}
+    >
       <Box
         aria-hidden
         sx={{
@@ -363,11 +425,29 @@ function RequestCard({
   return (
     <Card>
       <CardContent>
-        <Stack direction="row" spacing={1} justifyContent="space-between" alignItems="flex-start">
+        <Stack
+          direction="row"
+          spacing={1}
+          sx={{
+            justifyContent: 'space-between',
+            alignItems: 'flex-start',
+          }}
+        >
           <Box sx={{ minWidth: 0 }}>
             <Typography variant="subtitle1">{booking.serviceName ?? 'Service'}</Typography>
-            <Stack direction="row" spacing={0.75} alignItems="center">
-              <Typography variant="caption" color="text.secondary">
+            <Stack
+              direction="row"
+              spacing={0.75}
+              sx={{
+                alignItems: 'center',
+              }}
+            >
+              <Typography
+                variant="caption"
+                sx={{
+                  color: 'text.secondary',
+                }}
+              >
                 {booking.reference}
               </Typography>
               {booking.isEmergency ? (
@@ -380,13 +460,29 @@ function RequestCard({
         <Box sx={{ my: 1.5 }}>
           <ServiceAddress booking={booking} />
         </Box>
-        <Stack direction="row" justifyContent="space-between" sx={{ mb: 1.5 }}>
-          <Typography variant="body2" color="text.secondary">
+        <Stack
+          direction="row"
+          sx={{
+            justifyContent: 'space-between',
+            mb: 1.5,
+          }}
+        >
+          <Typography
+            variant="body2"
+            sx={{
+              color: 'text.secondary',
+            }}
+          >
             {booking.scheduledAt
               ? `Wanted ${formatShortDateTime(booking.scheduledAt)}`
               : 'Wanted as soon as possible'}
           </Typography>
-          <Typography variant="body2" fontWeight={700}>
+          <Typography
+            variant="body2"
+            sx={{
+              fontWeight: 700,
+            }}
+          >
             {formatCurrency(booking.amount, booking.currency)}
           </Typography>
         </Stack>

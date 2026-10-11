@@ -40,7 +40,12 @@ export function EmailPasswordSection() {
         <Typography id="email-password-heading" variant="h5" component="h2">
           Email & password
         </Typography>
-        <Typography variant="body2" color="text.secondary">
+        <Typography
+          variant="body2"
+          sx={{
+            color: 'text.secondary',
+          }}
+        >
           Sign in with your email and a password as well as your mobile number.
         </Typography>
       </Box>
@@ -149,13 +154,30 @@ function CredentialRow({
 }) {
   return (
     <Box sx={{ px: { xs: 2, md: 3 }, py: 2 }}>
-      <Stack direction="row" spacing={2} alignItems="center">
+      <Stack
+        direction="row"
+        spacing={2}
+        sx={{
+          alignItems: 'center',
+        }}
+      >
         <IconTile size={40}>{icon}</IconTile>
         <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-          <Typography variant="subtitle1" fontWeight={700}>
+          <Typography
+            variant="subtitle1"
+            sx={{
+              fontWeight: 700,
+            }}
+          >
             {label}
           </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>
+          <Typography
+            variant="body2"
+            sx={{
+              color: 'text.secondary',
+              overflowWrap: 'anywhere',
+            }}
+          >
             {value}
           </Typography>
         </Box>
