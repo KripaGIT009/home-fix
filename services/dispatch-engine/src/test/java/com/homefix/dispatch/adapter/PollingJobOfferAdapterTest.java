@@ -14,8 +14,10 @@ import java.util.function.UnaryOperator;
 
 import com.homefix.dispatch.domain.DispatchRequest;
 import com.homefix.dispatch.domain.JobOffer;
+import com.homefix.dispatch.domain.OfferRound;
 import com.homefix.dispatch.domain.OfferStatus;
 import com.homefix.dispatch.port.JobOfferPort.OfferOutcome;
+import com.homefix.dispatch.port.JobOfferPort.WaveOutcome;
 import com.homefix.dispatch.port.JobOfferStore;
 import com.homefix.dispatch.service.JobOfferService;
 import com.homefix.dispatch.service.fake.InMemoryJobOfferStore;
@@ -27,11 +29,11 @@ import org.junit.jupiter.api.Test;
 
 /**
  * {@link PollingJobOfferAdapter} driven on a hand-moved clock (Requirements 8.5-8.7). The sleeper
- * advances the clock instead of blocking, and can run a "provider" action mid-wait, so each test
- * is deterministic: the offer is recorded and pushed, the adapter polls until the provider answers
- * or the window closes, and the closing compare-and-set decides between a last-instant answer and
- * the timeout. Every storage or push failure degrades to "no answer", never to an exception on the
- * dispatch thread.
+ * advances the clock instead of blocking, and can run "provider" actions mid-wait, so each test is
+ * deterministic: a wave of offers is recorded and pushed, the adapter polls until someone accepts,
+ * everyone has answered, or the window closes, and the closing compare-and-set decides between
+ * last-instant answers and the timeout. Every storage or push failure degrades to "no answer",
+ * never to an exception on the dispatch thread.
  */
 class PollingJobOfferAdapterTest {
 
@@ -43,11 +45,13 @@ class PollingJobOfferAdapterTest {
     private JobOfferService offers;
     private RecordingNotification notification;
     private final List<Duration> sleeps = new ArrayList<>();
-    /** Runs at each sleep, before the clock moves; tests use it to act as the provider. */
+    /** Runs at each sleep, before the clock moves; tests use it to act as the providers. */
     private Runnable duringSleep = () -> { };
 
     private final UUID bookingId = UUID.randomUUID();
     private final UUID provider = UUID.randomUUID();
+    private final UUID second = UUID.randomUUID();
+    private final UUID third = UUID.randomUUID();
 
     @BeforeEach
     void setUp() {
@@ -75,9 +79,20 @@ class PollingJobOfferAdapterTest {
         return adapter(Runnable::run);
     }
 
-    private Optional<OfferStatus> stored() {
-        return offers.statusOf(bookingId, provider);
+    private DispatchRequest request() {
+        return new DispatchRequest(bookingId, UUID.randomUUID(), 12.9, 77.6, UUID.randomUUID(),
+                List.of("plumbing"), true, clock.instant(), "HFX-2026-0000007", null);
     }
+
+    private WaveOutcome offer(Duration window, UUID... providers) {
+        return adapter().offer(request(), List.of(providers), window);
+    }
+
+    private Optional<OfferStatus> stored(UUID providerId) {
+        return offers.statusOf(bookingId, providerId);
+    }
+
+    // ---- one provider --------------------------------------------------------------------------
 
     @Test
     void providerAcceptsDuringTheWindow_isAccepted() {
@@ -87,29 +102,34 @@ class PollingJobOfferAdapterTest {
             }
         };
 
-        OfferOutcome outcome = adapter().offer(bookingId, provider, WINDOW);
+        WaveOutcome outcome = offer(WINDOW, provider);
 
-        assertThat(outcome).isEqualTo(OfferOutcome.ACCEPTED);
+        assertThat(outcome.acceptedBy()).isEqualTo(provider);
+        assertThat(outcome.outcomeOf(provider)).isEqualTo(OfferOutcome.ACCEPTED);
         assertThat(sleeps).hasSize(3).allMatch(POLL::equals);
         assertThat(notification.offerPushes()).containsExactly(provider);
     }
 
     @Test
-    void providerDeclines_isRejected() {
+    void providerDeclines_isRejectedWithoutWaitingOutTheWindow() {
         duringSleep = () -> offers.decide(bookingId, provider, OfferStatus.DECLINED);
 
-        assertThat(adapter().offer(bookingId, provider, WINDOW)).isEqualTo(OfferOutcome.REJECTED);
+        WaveOutcome outcome = offer(WINDOW, provider);
+
+        assertThat(outcome.acceptedBy()).isNull();
+        assertThat(outcome.outcomeOf(provider)).isEqualTo(OfferOutcome.REJECTED);
         assertThat(sleeps).hasSize(1);
     }
 
     @Test
     void noAnswer_pollsUntilTheWindowClosesThenExpiresTheOffer() {
-        OfferOutcome outcome = adapter().offer(bookingId, provider, Duration.ofMillis(1_200));
+        WaveOutcome outcome = offer(Duration.ofMillis(1_200), provider);
 
-        assertThat(outcome).isEqualTo(OfferOutcome.TIMED_OUT);
+        assertThat(outcome.acceptedBy()).isNull();
+        assertThat(outcome.outcomeOf(provider)).isEqualTo(OfferOutcome.TIMED_OUT);
         // The last sleep is trimmed to the time left, so the wait never overshoots the window.
         assertThat(sleeps).containsExactly(POLL, POLL, Duration.ofMillis(200));
-        assertThat(stored()).contains(OfferStatus.EXPIRED);
+        assertThat(stored(provider)).contains(OfferStatus.EXPIRED);
     }
 
     @Test
@@ -122,45 +142,112 @@ class PollingJobOfferAdapterTest {
             }
         };
 
-        assertThat(adapter().offer(bookingId, provider, Duration.ofMillis(1_000)))
-                .isEqualTo(OfferOutcome.ACCEPTED);
-        assertThat(stored()).contains(OfferStatus.ACCEPTED);
+        assertThat(offer(Duration.ofMillis(1_000), provider).acceptedBy()).isEqualTo(provider);
+        assertThat(stored(provider)).contains(OfferStatus.ACCEPTED);
+    }
+
+    // ---- a wave --------------------------------------------------------------------------------
+
+    @Test
+    void wave_isOfferedToEveryProviderAtOnce() {
+        offer(Duration.ofMillis(500), provider, second, third);
+
+        assertThat(notification.offerPushes()).containsExactlyInAnyOrder(provider, second, third);
+        assertThat(stored(provider)).contains(OfferStatus.EXPIRED);
+        assertThat(stored(second)).contains(OfferStatus.EXPIRED);
+        assertThat(stored(third)).contains(OfferStatus.EXPIRED);
     }
 
     @Test
-    void withdrawnOffer_isNoAnswer() {
-        duringSleep = () -> offers.withdraw(bookingId);
+    void wave_firstAcceptTakesTheJobAndTheOthersAreWithdrawn() {
+        duringSleep = () -> {
+            if (sleeps.size() == 2) {
+                offers.decide(bookingId, third, OfferStatus.ACCEPTED);
+                offers.decide(bookingId, second, OfferStatus.ACCEPTED);
+            }
+        };
 
-        assertThat(adapter().offer(bookingId, provider, WINDOW)).isEqualTo(OfferOutcome.TIMED_OUT);
-        assertThat(sleeps).hasSize(1);
-        assertThat(stored()).contains(OfferStatus.WITHDRAWN);
+        WaveOutcome outcome = offer(WINDOW, provider, second, third);
+
+        assertThat(outcome.acceptedBy()).isEqualTo(third);
+        assertThat(outcome.outcomeOf(third)).isEqualTo(OfferOutcome.ACCEPTED);
+        assertThat(outcome.outcomeOf(provider)).isEqualTo(OfferOutcome.TIMED_OUT);
+        assertThat(outcome.outcomeOf(second)).isEqualTo(OfferOutcome.TIMED_OUT);
+        assertThat(stored(provider)).contains(OfferStatus.WITHDRAWN);
+        assertThat(stored(second)).contains(OfferStatus.WITHDRAWN);
+        assertThat(sleeps).hasSize(2);
     }
 
     @Test
-    void offerGoneFromStorage_isNoAnswerWithoutWaitingOutTheWindow() {
-        duringSleep = () -> store.delegate.evict(bookingId);
+    void wave_endsAsSoonAsEveryoneHasDeclined() {
+        duringSleep = () -> {
+            offers.decide(bookingId, provider, OfferStatus.DECLINED);
+            if (sleeps.size() == 2) {
+                offers.decide(bookingId, second, OfferStatus.DECLINED);
+            }
+        };
 
-        assertThat(adapter().offer(bookingId, provider, WINDOW)).isEqualTo(OfferOutcome.TIMED_OUT);
-        assertThat(sleeps).hasSize(1);
+        WaveOutcome outcome = offer(WINDOW, provider, second);
+
+        assertThat(outcome.acceptedBy()).isNull();
+        assertThat(outcome.outcomeOf(provider)).isEqualTo(OfferOutcome.REJECTED);
+        assertThat(outcome.outcomeOf(second)).isEqualTo(OfferOutcome.REJECTED);
+        assertThat(sleeps).hasSize(2);
     }
 
     @Test
-    void offerFromRequest_recordsTheDisplayFields() {
-        DispatchRequest request = new DispatchRequest(bookingId, UUID.randomUUID(), 12.9, 77.6,
-                UUID.randomUUID(), List.of("plumbing"), true, clock.instant(), "HFX-2026-0000007", null);
+    void wave_mixesDeclinesWithTimeoutsWhenTheWindowCloses() {
+        duringSleep = () -> offers.decide(bookingId, provider, OfferStatus.DECLINED);
+
+        WaveOutcome outcome = offer(Duration.ofMillis(1_000), provider, second);
+
+        assertThat(outcome.outcomeOf(provider)).isEqualTo(OfferOutcome.REJECTED);
+        assertThat(outcome.outcomeOf(second)).isEqualTo(OfferOutcome.TIMED_OUT);
+        assertThat(stored(second)).contains(OfferStatus.EXPIRED);
+    }
+
+    @Test
+    void wave_recordsTheDisplayFieldsOnEveryOffer() {
         duringSleep = () -> offers.decide(bookingId, provider, OfferStatus.ACCEPTED);
 
-        assertThat(adapter().offer(request, provider, WINDOW)).isEqualTo(OfferOutcome.ACCEPTED);
-        JobOffer offer = store.find(bookingId).orElseThrow();
-        assertThat(offer.reference()).isEqualTo("HFX-2026-0000007");
-        assertThat(offer.emergency()).isTrue();
+        offer(WINDOW, provider, second);
+
+        assertThat(store.find(bookingId).orElseThrow().offers()).allSatisfy(o -> {
+            assertThat(o.reference()).isEqualTo("HFX-2026-0000007");
+            assertThat(o.emergency()).isTrue();
+        });
+    }
+
+    // ---- interruptions and failures ------------------------------------------------------------
+
+    @Test
+    void withdrawnOffers_areNoAnswer() {
+        duringSleep = () -> offers.withdraw(bookingId);
+
+        WaveOutcome outcome = offer(WINDOW, provider, second);
+
+        assertThat(outcome.acceptedBy()).isNull();
+        assertThat(outcome.outcomes()).containsValues(OfferOutcome.TIMED_OUT);
+        assertThat(sleeps).hasSize(1);
+        assertThat(stored(provider)).contains(OfferStatus.WITHDRAWN);
     }
 
     @Test
-    void offerThatCannotBeRecorded_isNoAnswerAndNobodyIsPushed() {
-        store.failSave = true;
+    void offersGoneFromStorage_areNoAnswerWithoutWaitingOutTheWindow() {
+        duringSleep = () -> store.delegate.evict(bookingId);
 
-        assertThat(adapter().offer(bookingId, provider, WINDOW)).isEqualTo(OfferOutcome.TIMED_OUT);
+        assertThat(offer(WINDOW, provider).acceptedBy()).isNull();
+        assertThat(sleeps).hasSize(1);
+    }
+
+    @Test
+    void offersThatCannotBeRecorded_areNoAnswerAndNobodyIsPushed() {
+        store.failOpen = true;
+
+        WaveOutcome outcome = offer(WINDOW, provider, second);
+
+        assertThat(outcome.acceptedBy()).isNull();
+        assertThat(outcome.outcomeOf(second)).isEqualTo(OfferOutcome.TIMED_OUT);
         assertThat(sleeps).isEmpty();
         assertThat(notification.offerPushes()).isEmpty();
     }
@@ -174,7 +261,7 @@ class PollingJobOfferAdapterTest {
                     clock.advance(duration);
                 });
 
-        assertThat(adapter.offer(bookingId, provider, WINDOW)).isEqualTo(OfferOutcome.ACCEPTED);
+        assertThat(adapter.offer(request(), List.of(provider), WINDOW).acceptedBy()).isEqualTo(provider);
         assertThat(failing.attempts).isEqualTo(1);
     }
 
@@ -182,28 +269,31 @@ class PollingJobOfferAdapterTest {
     void rejectedPushExecutor_leavesTheOfferStanding() {
         duringSleep = () -> offers.decide(bookingId, provider, OfferStatus.ACCEPTED);
 
-        OfferOutcome outcome = adapter(task -> {
+        WaveOutcome outcome = adapter(task -> {
             throw new RejectedExecutionException("shut down");
-        }).offer(bookingId, provider, WINDOW);
+        }).offer(request(), List.of(provider), WINDOW);
 
-        assertThat(outcome).isEqualTo(OfferOutcome.ACCEPTED);
+        assertThat(outcome.acceptedBy()).isEqualTo(provider);
         assertThat(notification.offerPushes()).isEmpty();
     }
 
     @Test
-    void pushRunsOnTheSuppliedExecutorNotTheDispatchThread() {
+    void pushesRunOnTheSuppliedExecutorNotTheDispatchThread() {
         List<Runnable> queued = new ArrayList<>();
-        duringSleep = () -> offers.decide(bookingId, provider, OfferStatus.DECLINED);
+        duringSleep = () -> {
+            offers.decide(bookingId, provider, OfferStatus.DECLINED);
+            offers.decide(bookingId, second, OfferStatus.DECLINED);
+        };
 
-        adapter(queued::add).offer(bookingId, provider, WINDOW);
+        adapter(queued::add).offer(request(), List.of(provider, second), WINDOW);
 
         assertThat(notification.offerPushes()).isEmpty();
         queued.forEach(Runnable::run);
-        assertThat(notification.offerPushes()).containsExactly(provider);
+        assertThat(notification.offerPushes()).containsExactly(provider, second);
     }
 
     @Test
-    void unreadableStatus_keepsWaitingAndTheCloseStillDecides() {
+    void unreadableOffers_keepWaitingAndTheCloseStillDecides() {
         duringSleep = () -> {
             store.failFind = sleeps.size() < 2;
             if (sleeps.size() == 1) {
@@ -211,28 +301,33 @@ class PollingJobOfferAdapterTest {
             }
         };
 
-        assertThat(adapter().offer(bookingId, provider, WINDOW)).isEqualTo(OfferOutcome.ACCEPTED);
+        assertThat(offer(WINDOW, provider).acceptedBy()).isEqualTo(provider);
         assertThat(sleeps).hasSize(2);
     }
 
     @Test
-    void interruptedWait_closesTheOfferAndKeepsTheInterruptFlag() {
+    void interruptedWait_closesTheOffersAndKeepsTheInterruptFlag() {
         PollingJobOfferAdapter adapter = new PollingJobOfferAdapter(offers, notification, Runnable::run,
                 clock, POLL, duration -> {
                     throw new InterruptedException("shutting down");
                 });
 
-        assertThat(adapter.offer(bookingId, provider, WINDOW)).isEqualTo(OfferOutcome.TIMED_OUT);
+        WaveOutcome outcome = adapter.offer(request(), List.of(provider, second), WINDOW);
+
+        assertThat(outcome.acceptedBy()).isNull();
         assertThat(Thread.currentThread().isInterrupted()).isTrue();
-        assertThat(stored()).contains(OfferStatus.EXPIRED);
+        assertThat(stored(provider)).contains(OfferStatus.EXPIRED);
+        assertThat(stored(second)).contains(OfferStatus.EXPIRED);
     }
 
     @Test
     void closeThatFails_isNoAnswer() {
         duringSleep = () -> store.failUpdate = true;
 
-        assertThat(adapter().offer(bookingId, provider, Duration.ofMillis(500)))
-                .isEqualTo(OfferOutcome.TIMED_OUT);
+        WaveOutcome outcome = offer(Duration.ofMillis(500), provider);
+
+        assertThat(outcome.acceptedBy()).isNull();
+        assertThat(outcome.outcomeOf(provider)).isEqualTo(OfferOutcome.TIMED_OUT);
     }
 
     @Test
@@ -247,8 +342,10 @@ class PollingJobOfferAdapterTest {
     /** Delegating store whose operations can be made to fail, as a Redis outage would. */
     private static final class FlakyStore implements JobOfferStore {
         final InMemoryJobOfferStore delegate;
-        volatile boolean failSave;
+        /** Fails writes that carry a TTL: opening a wave. */
+        volatile boolean failOpen;
         volatile boolean failFind;
+        /** Fails writes without a TTL: decisions, expiry and withdrawal. */
         volatile boolean failUpdate;
 
         FlakyStore(InMemoryJobOfferStore delegate) {
@@ -256,15 +353,7 @@ class PollingJobOfferAdapterTest {
         }
 
         @Override
-        public void save(JobOffer offer, Duration ttl) {
-            if (failSave) {
-                throw new IllegalStateException("redis down");
-            }
-            delegate.save(offer, ttl);
-        }
-
-        @Override
-        public Optional<JobOffer> find(UUID bookingId) {
+        public Optional<OfferRound> find(UUID bookingId) {
             if (failFind) {
                 throw new IllegalStateException("redis down");
             }
@@ -277,11 +366,11 @@ class PollingJobOfferAdapterTest {
         }
 
         @Override
-        public Optional<Change> update(UUID bookingId, UnaryOperator<JobOffer> transition) {
-            if (failUpdate) {
+        public Change update(UUID bookingId, UnaryOperator<OfferRound> transition, Duration ttl) {
+            if ((ttl != null && failOpen) || (ttl == null && failUpdate)) {
                 throw new IllegalStateException("redis down");
             }
-            return delegate.update(bookingId, transition);
+            return delegate.update(bookingId, transition, ttl);
         }
     }
 

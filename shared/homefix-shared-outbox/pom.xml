@@ -5,6 +5,13 @@
                              https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
+    <parent>
+        <groupId>com.homefix</groupId>
+        <artifactId>homefix-parent</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+        <relativePath>../../pom.xml</relativePath>
+    </parent>
+
     <groupId>com.homefix.shared</groupId>
     <artifactId>homefix-shared-outbox</artifactId>
     <version>1.0.0-SNAPSHOT</version>
@@ -17,32 +24,6 @@
         event IDs to skip redeliveries, and a dead-letter-queue forwarder shared across all
         HomeFix microservices.
     </description>
-
-    <properties>
-        <java.version>21</java.version>
-        <maven.compiler.source>21</maven.compiler.source>
-        <maven.compiler.target>21</maven.compiler.target>
-        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-
-        <!-- Dependency versions -->
-        <spring-boot.version>3.2.5</spring-boot.version>
-        <spring-kafka.version>3.1.4</spring-kafka.version>
-        <junit.version>5.10.2</junit.version>
-        <mockito.version>5.11.0</mockito.version>
-        <jacoco.version>0.8.12</jacoco.version>
-    </properties>
-
-    <dependencyManagement>
-        <dependencies>
-            <dependency>
-                <groupId>org.springframework.boot</groupId>
-                <artifactId>spring-boot-dependencies</artifactId>
-                <version>${spring-boot.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-        </dependencies>
-    </dependencyManagement>
 
     <dependencies>
         <!-- Core Spring (ConfigurationProperties, autoconfiguration) -->
@@ -68,19 +49,14 @@
 
         <!-- Spring Kafka producer/consumer utilities -->
         <dependency>
-            <groupId>org.springframework.kafka</groupId>
-            <artifactId>spring-kafka</artifactId>
-            <version>${spring-kafka.version}</version>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-kafka</artifactId>
         </dependency>
 
         <!-- Jackson for event payload (de)serialisation -->
         <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
+            <groupId>tools.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>com.fasterxml.jackson.datatype</groupId>
-            <artifactId>jackson-datatype-jsr310</artifactId>
         </dependency>
 
         <!-- SLF4J / MDC -->
@@ -98,7 +74,6 @@
         <dependency>
             <groupId>org.springframework.kafka</groupId>
             <artifactId>spring-kafka-test</artifactId>
-            <version>${spring-kafka.version}</version>
             <scope>test</scope>
         </dependency>
         <!-- In-memory DB to exercise the transactional outbox write atomicity -->
@@ -107,46 +82,22 @@
             <artifactId>h2</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa-test</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
         <plugins>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.13.0</version>
-                <configuration>
-                    <release>21</release>
-                    <!-- Retain parameter names in the bytecode. Spring resolves an unnamed
-                         @PathVariable/@RequestParam by reflecting on the parameter name, which
-                         javac drops without this; these services import the Spring Boot BOM but
-                         do not inherit spring-boot-starter-parent, which is what would otherwise
-                         set it. Without it such a handler fails at request time with a 500. -->
-                    <parameters>true</parameters>
-                </configuration>
-            </plugin>
-
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-surefire-plugin</artifactId>
-                <version>3.2.5</version>
-            </plugin>
 
             <!-- JaCoCo coverage enforcement at ≥ 80 % line coverage -->
             <plugin>
+                <!-- Prepare/report come from the parent; this module also gates line coverage. -->
                 <groupId>org.jacoco</groupId>
                 <artifactId>jacoco-maven-plugin</artifactId>
-                <version>${jacoco.version}</version>
                 <executions>
-                    <execution>
-                        <id>prepare-agent</id>
-                        <goals><goal>prepare-agent</goal></goals>
-                    </execution>
-                    <execution>
-                        <id>report</id>
-                        <phase>verify</phase>
-                        <goals><goal>report</goal></goals>
-                    </execution>
                     <execution>
                         <id>check</id>
                         <phase>verify</phase>

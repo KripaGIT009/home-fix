@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import {
@@ -47,12 +47,17 @@ export function BankAccountCard() {
   const account = settlementInfo.data?.bankAccounts[0];
   const linkedHere = location.hash === `#${BANK_ACCOUNT_ANCHOR}`;
 
-  // Arriving from the settlement form's link: bring the card into view, and
-  // open the form straight away when there is no account yet.
+  // Arriving from the settlement form's link: open the form straight away when
+  // there is no account yet (once, during render), and bring the card into view.
+  const needsAccount = linkedHere && settlementInfo.data?.bankAccounts.length === 0;
+  const [openedForLink, setOpenedForLink] = useState(false);
+  if (needsAccount && !openedForLink) {
+    setOpenedForLink(true);
+    setEditing(true);
+  }
   useEffect(() => {
     if (!linkedHere || !settlementInfo.data) return;
     cardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    if (settlementInfo.data.bankAccounts.length === 0) setEditing(true);
   }, [linkedHere, settlementInfo.data]);
 
   const {
@@ -85,9 +90,22 @@ export function BankAccountCard() {
   return (
     <Card ref={cardRef} id={BANK_ACCOUNT_ANCHOR} sx={{ scrollMarginTop: 80 }}>
       <CardContent>
-        <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1.5 }}>
+        <Stack
+          direction="row"
+          spacing={1}
+          sx={{
+            alignItems: 'center',
+            mb: 1.5,
+          }}
+        >
           <AccountBalanceRoundedIcon color="primary" aria-hidden />
-          <Typography variant="subtitle1" fontWeight={700} component="h2">
+          <Typography
+            variant="subtitle1"
+            component="h2"
+            sx={{
+              fontWeight: 700,
+            }}
+          >
             Bank account
           </Typography>
         </Stack>
@@ -102,22 +120,32 @@ export function BankAccountCard() {
             <Box>
               <Stack
                 direction="row"
-                justifyContent="space-between"
-                alignItems="center"
                 spacing={1}
-                flexWrap="wrap"
                 useFlexGap
+                sx={{
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                }}
               >
                 <Box sx={{ minWidth: 0 }}>
                   <Typography
                     variant="body1"
-                    fontWeight={600}
-                    sx={{ fontVariantNumeric: 'tabular-nums' }}
+                    sx={{
+                      fontWeight: 600,
+                      fontVariantNumeric: 'tabular-nums',
+                    }}
                   >
                     {account.label}
                   </Typography>
                   {account.holderName ? (
-                    <Typography variant="body2" color="text.secondary" noWrap>
+                    <Typography
+                      variant="body2"
+                      noWrap
+                      sx={{
+                        color: 'text.secondary',
+                      }}
+                    >
                       {account.holderName}
                     </Typography>
                   ) : null}
@@ -138,14 +166,25 @@ export function BankAccountCard() {
                   />
                 )}
               </Stack>
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+              <Typography
+                variant="body2"
+                sx={{
+                  color: 'text.secondary',
+                  mt: 1,
+                }}
+              >
                 {account.verified
                   ? 'Settlements you request are paid into this account.'
                   : 'HomeFix checks new accounts before paying into them. You can request settlements once this account is verified.'}
               </Typography>
             </Box>
           ) : (
-            <Typography variant="body2" color="text.secondary">
+            <Typography
+              variant="body2"
+              sx={{
+                color: 'text.secondary',
+              }}
+            >
               Add the bank account your settlements should be paid into. HomeFix verifies it before
               the first payout.
             </Typography>
@@ -187,22 +226,26 @@ export function BankAccountCard() {
                 fullWidth
                 size="small"
                 autoComplete="off"
-                inputProps={{ inputMode: 'numeric', maxLength: 24 }}
                 error={Boolean(errors.accountNumber)}
                 helperText={errors.accountNumber?.message ?? '9 to 18 digits'}
                 {...register('accountNumber')}
+                slotProps={{
+                  htmlInput: { inputMode: 'numeric', maxLength: 24 },
+                }}
               />
               <TextField
                 label="Confirm account number"
                 fullWidth
                 size="small"
                 autoComplete="off"
-                inputProps={{ inputMode: 'numeric', maxLength: 24 }}
                 error={Boolean(errors.confirmAccountNumber)}
                 helperText={
                   errors.confirmAccountNumber?.message ?? 'Type it again to rule out typos'
                 }
                 {...register('confirmAccountNumber')}
+                slotProps={{
+                  htmlInput: { inputMode: 'numeric', maxLength: 24 },
+                }}
               />
               <Controller
                 control={control}
@@ -213,13 +256,15 @@ export function BankAccountCard() {
                     fullWidth
                     size="small"
                     autoComplete="off"
-                    inputProps={{ maxLength: 11, autoCapitalize: 'characters' }}
                     error={Boolean(errors.ifsc)}
                     helperText={
                       errors.ifsc?.message ?? 'Printed on your cheque book, e.g. HDFC0001234'
                     }
                     {...field}
                     onChange={(event) => field.onChange(event.target.value.toUpperCase())}
+                    slotProps={{
+                      htmlInput: { maxLength: 11, autoCapitalize: 'characters' },
+                    }}
                   />
                 )}
               />

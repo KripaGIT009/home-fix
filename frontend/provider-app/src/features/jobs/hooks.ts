@@ -306,18 +306,15 @@ export type LocationShareState = 'off' | 'starting' | 'sharing' | 'denied' | 'un
  * failed post is dropped, since the next fix supersedes it.
  */
 export function useShareLocation(bookingId: string, active: boolean): LocationShareState {
-  const [state, setState] = useState<LocationShareState>('off');
+  // What the current watch has reported; null until its first fix or failure.
+  const [reported, setReported] = useState<LocationShareState | null>(null);
   const lastSentAt = useRef(0);
 
   useEffect(() => {
-    if (!active) {
-      setState('off');
-      return;
-    }
-    setState('starting');
-    return watchDevicePosition({
+    if (!active) return;
+    const stop = watchDevicePosition({
       onPosition: (latitude, longitude) => {
-        setState('sharing');
+        setReported('sharing');
         const now = Date.now();
         if (now - lastSentAt.current < LOCATION_SHARE_INTERVAL_MS) return;
         lastSentAt.current = now;
@@ -325,9 +322,14 @@ export function useShareLocation(bookingId: string, active: boolean): LocationSh
           // Dropped: the next fix is posted in a few seconds.
         });
       },
-      onFailure: setState,
+      onFailure: setReported,
     });
+    return () => {
+      stop();
+      setReported(null);
+    };
   }, [bookingId, active]);
 
-  return state;
+  if (!active) return 'off';
+  return reported ?? 'starting';
 }

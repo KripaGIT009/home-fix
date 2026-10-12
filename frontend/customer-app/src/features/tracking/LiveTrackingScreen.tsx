@@ -1,5 +1,5 @@
 import { useMemo, type ReactNode } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router';
 import {
   Alert,
   Avatar,
@@ -99,18 +99,23 @@ export function LiveTrackingScreen() {
   const phase = status ? trackingPhase(status) : undefined;
   const showLive = phase === 'enRoute' || (!status && live.snapshot !== undefined);
 
-  const goChat = () => navigate(`/bookings/${bookingId}/chat`);
-  const goDetails = () => navigate(`/bookings/${bookingId}`);
-  const bookAgain = () => navigate(subcategoryId ? `/book/${subcategoryId}` : '/home');
+  const goChat = () => void navigate(`/bookings/${bookingId}/chat`);
+  const goDetails = () => void navigate(`/bookings/${bookingId}`);
+  const bookAgain = () => void navigate(subcategoryId ? `/book/${subcategoryId}` : '/home');
 
   const provider: Provider | undefined = live.snapshot?.provider ?? detail?.provider;
 
   let body: ReactNode;
   if (notFound) {
-    body = <BookingNotFound onBack={() => navigate('/history')} />;
+    body = <BookingNotFound onBack={() => void navigate('/history')} />;
   } else if (!status && detailQuery.isLoading) {
     body = (
-      <Stack alignItems="center" sx={{ py: 10 }}>
+      <Stack
+        sx={{
+          alignItems: 'center',
+          py: 10,
+        }}
+      >
         <CircularProgress aria-label="Loading your booking" />
       </Stack>
     );
@@ -149,8 +154,8 @@ export function LiveTrackingScreen() {
               provider={provider}
               onBookAgain={bookAgain}
               onDetails={goDetails}
-              onHelp={() => navigate('/help')}
-              onHome={() => navigate('/home')}
+              onHelp={() => void navigate('/help')}
+              onHome={() => void navigate('/home')}
             />
           ) : null}
           {provider &&
@@ -187,7 +192,7 @@ export function LiveTrackingScreen() {
                   variant="text"
                   fullWidth
                   startIcon={<SupportAgentRoundedIcon />}
-                  onClick={() => navigate('/help')}
+                  onClick={() => void navigate('/help')}
                 >
                   Get help
                 </Button>
@@ -229,24 +234,43 @@ function BookingHeader({
   emergency: boolean;
 }) {
   return (
-    <Stack direction="row" spacing={1.5} alignItems="center" justifyContent="space-between">
+    <Stack
+      direction="row"
+      spacing={1.5}
+      sx={{
+        alignItems: 'center',
+        justifyContent: 'space-between',
+      }}
+    >
       <Box sx={{ minWidth: 0 }}>
         <Typography variant="h4" component="h2" noWrap>
           {name ?? 'Your booking'}
         </Typography>
         {reference ? (
-          <Typography variant="body2" color="text.secondary">
+          <Typography
+            variant="body2"
+            sx={{
+              color: 'text.secondary',
+            }}
+          >
             Ref {reference}
           </Typography>
         ) : null}
       </Box>
-      <Stack direction="row" spacing={1} alignItems="center" sx={{ flexShrink: 0 }}>
+      <Stack
+        direction="row"
+        spacing={1}
+        sx={{
+          alignItems: 'center',
+          flexShrink: 0,
+        }}
+      >
         {emergency ? (
           <Stack
             direction="row"
             spacing={0.25}
-            alignItems="center"
             sx={{
+              alignItems: 'center',
               px: 1,
               py: 0.25,
               borderRadius: `${radius.pill}px`,
@@ -255,7 +279,12 @@ function BookingHeader({
             }}
           >
             <BoltRoundedIcon sx={{ fontSize: 14 }} aria-hidden />
-            <Typography variant="caption" fontWeight={700}>
+            <Typography
+              variant="caption"
+              sx={{
+                fontWeight: 700,
+              }}
+            >
               Emergency
             </Typography>
           </Stack>
@@ -538,8 +567,10 @@ function LivePanel({
         <Stack
           direction="row"
           spacing={1}
-          alignItems="center"
-          justifyContent={{ xs: 'center', sm: 'flex-start' }}
+          sx={{
+            alignItems: 'center',
+            justifyContent: { xs: 'center', sm: 'flex-start' },
+          }}
         >
           {live.isError ? null : <CircularProgress size={14} aria-hidden />}
           <span>
@@ -570,7 +601,12 @@ function LivePanel({
             <AccessTimeRoundedIcon />
           </IconTile>
           <Box sx={{ flexGrow: 1 }}>
-            <Typography variant="body2" color="text.secondary">
+            <Typography
+              variant="body2"
+              sx={{
+                color: 'text.secondary',
+              }}
+            >
               {etaMinutes === undefined ? 'Live location' : 'Estimated arrival'}
             </Typography>
             <Typography variant="h3" component="p">
@@ -597,9 +633,9 @@ function ConnectionIndicator({ connected }: { connected: boolean }) {
     <Stack
       direction="row"
       spacing={0.75}
-      alignItems="center"
       role="status"
       sx={{
+        alignItems: 'center',
         px: 1.25,
         py: 0.5,
         borderRadius: `${radius.pill}px`,
@@ -617,7 +653,12 @@ function ConnectionIndicator({ connected }: { connected: boolean }) {
           bgcolor: connected ? 'success.main' : brand.subtle,
         }}
       />
-      <Typography variant="caption" fontWeight={700}>
+      <Typography
+        variant="caption"
+        sx={{
+          fontWeight: 700,
+        }}
+      >
         {connected ? 'Live' : 'Reconnecting…'}
       </Typography>
     </Stack>
@@ -635,7 +676,13 @@ function ProviderCard({ provider }: { provider: Provider }) {
   return (
     <Card>
       <CardContent>
-        <Stack direction="row" spacing={2} alignItems="center">
+        <Stack
+          direction="row"
+          spacing={2}
+          sx={{
+            alignItems: 'center',
+          }}
+        >
           <Badge
             overlap="circular"
             anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
@@ -656,21 +703,56 @@ function ProviderCard({ provider }: { provider: Provider }) {
             </Avatar>
           </Badge>
           <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-            <Typography variant="caption" color="text.secondary" display="block">
+            <Typography
+              variant="caption"
+              sx={{
+                color: 'text.secondary',
+                display: 'block',
+              }}
+            >
               Your professional
             </Typography>
-            <Typography variant="subtitle1" fontWeight={700} noWrap>
+            <Typography
+              variant="subtitle1"
+              noWrap
+              sx={{
+                fontWeight: 700,
+              }}
+            >
               {provider.displayName}
             </Typography>
-            <Stack direction="row" spacing={1} alignItems="center">
-              <Stack direction="row" spacing={0.25} alignItems="center">
+            <Stack
+              direction="row"
+              spacing={1}
+              sx={{
+                alignItems: 'center',
+              }}
+            >
+              <Stack
+                direction="row"
+                spacing={0.25}
+                sx={{
+                  alignItems: 'center',
+                }}
+              >
                 <StarRounded sx={{ fontSize: 17, color: brand.warm }} aria-hidden />
-                <Typography variant="body2" fontWeight={700}>
+                <Typography
+                  variant="body2"
+                  sx={{
+                    fontWeight: 700,
+                  }}
+                >
                   {provider.rating.toFixed(1)}
                 </Typography>
               </Stack>
               {provider.verified ? (
-                <Typography variant="body2" color="success.main" fontWeight={600}>
+                <Typography
+                  variant="body2"
+                  sx={{
+                    color: 'success.main',
+                    fontWeight: 600,
+                  }}
+                >
                   Verified
                 </Typography>
               ) : null}

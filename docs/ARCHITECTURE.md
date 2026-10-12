@@ -34,10 +34,11 @@ graph TB
 
     subgraph External
         SMS["SMS gateway<br/>(stub)"]
-        PAY["Razorpay / Stripe<br/>(stub)"]
+        PAY["Razorpay Checkout<br/>Stripe (stub)"]
+        MAIL["Email provider<br/>(none yet: dev mail log)"]
         OIDC["Google / Apple OIDC"]
         S3["Object storage<br/>(stub)"]
-        KYC["Background check<br/>(stub)"]
+        KYC["Background check<br/>(admin-recorded)"]
     end
 
     C --> CA
@@ -54,9 +55,10 @@ graph TB
     SVC --> OIDC
     SVC --> S3
     SVC --> KYC
+    SVC --> MAIL
 ```
 
-Every external integration except Google and Apple OIDC is currently a logging or in-memory stub. See review section 10, item 2. Locally, payments are settled by a payment simulator that only Compose enables (section 5.5).
+Google and Apple OIDC and Razorpay (orders, Checkout confirmation, webhook, refunds; test mode locally) are real integrations. Everything else is a logging or in-memory stub. See review section 10, item 2. Email has no provider yet: locally every email is written to `docker/dev-mail/dev-mail.log`, elsewhere it is only logged by subject (section 5.9). No background-check vendor is integrated: an admin runs the check and records its result in the Verification Queue (section 5.6). Locally, payments are settled by a payment simulator that only Compose enables unless `PAYMENT_DEFAULT_GATEWAY=razorpay` (section 5.5).
 
 ---
 
@@ -72,45 +74,39 @@ graph TB
 
     GW["api-gateway :8080<br/>Spring Cloud Gateway"]
 
-    subgraph Identity
+    subgraph IDA["identity-app (one JVM)"]
         AUTH["auth-service :8081"]
-    end
-
-    subgraph Profiles
         CUST["customer-service :8082"]
         PROV["provider-service :8083"]
         VER["verification-service :8094"]
     end
 
-    subgraph Booking["Booking domain"]
+    subgraph JOBA["jobs-app (one JVM)"]
         BOOK["booking-service :8084"]
         CAT["catalog-service :8085"]
         PRICE["pricing-engine :8086"]
         DISP["dispatch-engine :8087"]
         LOC["location-service :8092"]
-    end
-
-    subgraph Money
-        PAYS["payment-service :8088"]
-        INV["invoice-service :8089"]
+        CHAT["chat-service :8093"]
         PROMO["promotion-service :8098"]
     end
 
-    subgraph Engagement
-        NOTIF["notification-service :8090"]
-        CHAT["chat-service :8093"]
-        CMPL["complaint-service :8091"]
-        RATE["rating-review-service :8097"]
+    subgraph MONA["money-app (one JVM)"]
+        PAYS["payment-service :8088"]
+        INV["invoice-service :8089"]
     end
 
-    subgraph Ops
+    subgraph ENGA["engagement-app (one JVM)"]
+        NOTIF["notification-service :8090"]
+        CMPL["complaint-service :8091"]
         ADM["admin-service :8095"]
         REP["reporting-service :8096"]
+        RATE["rating-review-service :8097"]
         OUT["outbox-processor :8099"]
     end
 
     subgraph Data
-        PG[("PostgreSQL<br/>17 service schemas<br/>+ shared outbox")]
+        PG[("PostgreSQL<br/>17 service schemas<br/>+ outbox + config")]
         RD[("Redis")]
         KF[["Kafka"]]
     end
@@ -149,6 +145,8 @@ graph TB
     OUT --> KF
     KF --> BOOK & DISP & NOTIF & INV & CHAT & RATE & LOC
 ```
+
+Each box is a service with its own port, `<service>.yml`, database schema and Spring context; the four `*-app` groups are the deployables that host them, one JVM each (`apps/`, `shared/homefix-service-host`). Calls between two services in the same deployable still go over HTTP to the other service's port, exactly as when they ran apart, so any service can be moved to a deployable of its own without code changes.
 
 Arrows labelled `internal` go to `/internal/**` endpoints. They carry no end-user token: the caller acts on its own behalf and presents the shared service credential (`X-Internal-Api-Key`) instead. Dispatch's calls to notification-service (`/internal/notifications/**`) still answer 4xx because notification-service has no such endpoints; they are best effort, and providers see offers by polling dispatch instead.
 
@@ -206,10 +204,13 @@ The role filter used to be the larger problem. It passes through when no rule ma
 
 ```mermaid
 flowchart TD
-    START(["Customer opens app"]) --> OTP["Enter mobile number"]
+    START(["Customer opens app"]) --> HOW{"Sign in with"}
+    HOW -->|mobile| OTP["Enter mobile number"]
+    HOW -->|email| PWD["Email + password<br/>or sign up with an emailed code"]
     OTP --> VERIFY{"OTP correct?"}
     VERIFY -->|"5 wrong attempts"| LOCK["Locked 30 min"]
     VERIFY -->|yes| HOME["Browse catalog"]
+    PWD --> HOME
 
     HOME --> PICK["Pick subcategory"]
     PICK --> MODE{"Emergency?"}
@@ -224,10 +225,10 @@ flowchart TD
     VAL --> CREATE["Create booking"]
 
     CREATE --> SEARCH["SEARCHING_PROVIDER<br/>dispatch-engine matches"]
-    SEARCH --> OFFER{"Provider accepts<br/>within window?"}
+    SEARCH --> OFFER{"One of the providers offered<br/>(3 at once) accepts?"}
     OFFER -->|"no, all exhausted"| EXPAND["Expand radius"]
     EXPAND --> OFFER
-    OFFER -->|"no candidates left"| TENANT{"A Tenant covers<br/>area + category?"}
+    OFFER -->|"none in 5 min,<br/>or no candidates left"| TENANT{"A Tenant covers<br/>area + category?"}
     TENANT -->|no| FAILED["SEARCHING_FAILED"]
     TENANT -->|yes| QUEUE["AWAITING_ASSIGNMENT<br/>Tenant admin assigns"]
     QUEUE -->|"deadline, 60 min"| FAILED
@@ -254,6 +255,28 @@ flowchart TD
     REFUND -->|yes| END
     REFUND -->|no| ESC["Escalate / dispute"]
 ```
+
+### 4.1 The booking, step by step
+
+The same journey as numbered steps, with the call or event behind each. Every app call goes through nginx and the API gateway, except `/api/auth/**`, which nginx sends straight to auth-service.
+
+| # | Step | Who | Call or event | Booking status after |
+|---|------|-----|---------------|----------------------|
+| 1 | Sign in with an OTP or email and password | Customer | `POST /auth/register/otp`, then `/auth/register/verify` (or `/auth/login/password`) | — |
+| 2 | Browse the catalog and get an itemised price | Customer | `GET /catalog/categories`, `POST /pricing/estimate` (coupon validated by promotion-service) | — |
+| 3 | Book, then confirm the estimate | Customer | `POST /bookings`, `POST /bookings/{ref}/confirmation`; `BookingCreated` written to the outbox | `SEARCHING_PROVIDER` |
+| 4 | Find eligible providers and score them | dispatch-engine | consumes `BookingCreated`; `GET /internal/providers/eligible` (skill tag, radius, APPROVED, available) | `SEARCHING_PROVIDER` |
+| 5 | Offer the job to the best three at once, 60 s each | dispatch-engine → providers | one Redis hash per booking; the provider app polls `GET /dispatch/offers` every 5 s | `SEARCHING_PROVIDER` |
+| 6 | First provider accepts; the other offers are withdrawn | Provider | `POST /dispatch/offers/{bookingId}/accept`; a late accept gets 409 `OFFER_TAKEN`; `ProviderAccepted` | `PROVIDER_ACCEPTED` |
+| 6a | Nobody accepts within 5 minutes | dispatch-engine → booking | `POST /internal/bookings/{id}/searching-failed`: a covering agency assigns from the Tenant Portal, otherwise the search fails | `AWAITING_ASSIGNMENT` or `SEARCHING_FAILED` |
+| 7 | Provider sets off and shares a live position | Provider | `POST /bookings/{id}/on-the-way`, `POST /locations/{id}`; the customer follows the stream | `PROVIDER_ON_THE_WAY` |
+| 8 | Provider arrives, uploads a before-photo, starts | Provider | `POST /bookings/{id}/arrived`, `/photos`, `/start` | `JOB_STARTED` |
+| 9 | Work, optional parts quote, completion | Provider, customer | `/pause`, `/resume`, `/parts` (customer approves the quote), `/complete` with an after-photo | `JOB_COMPLETED` |
+| 10 | Customer pays; Razorpay confirms twice | Customer | `POST /payments` (amount from booking-service), Checkout, `POST /payments/{id}/razorpay/verify`, signed webhook | `PAYMENT_PENDING` → `PAYMENT_COMPLETED` |
+| 11 | Settle: wallet credit, invoice, notices | payment, invoice, notification | `PaymentCompleted` consumed; one `JOB_CREDIT` earning per booking; PDF invoice | `PAYMENT_COMPLETED` |
+| 12 | Review within 7 days, or raise a complaint | Customer | `POST /reviews`, `POST /complaints` (SLA clock starts) | `PAYMENT_COMPLETED`, or `DISPUTED` |
+
+Sections 5.3 to 5.5 and 5.8 show steps 3 to 11 as sequence diagrams; section 9 details steps 4 to 6.
 
 ---
 
@@ -298,7 +321,9 @@ sequenceDiagram
     APP->>APP: access token in memory,<br/>refresh token in localStorage
 ```
 
-On a wrong code the attempt counter increments and the session locks for 30 minutes at 5 attempts. `role` comes from the request body but only `CUSTOMER` and `SERVICE_PROVIDER` are accepted (anything else is 400 `INVALID_ROLE`); staff and `TENANT_ADMIN` roles are granted out of band. A `SUSPENDED` or `DEACTIVATED` account (`user_account.status`) cannot sign in or refresh, and introspection reports its tokens inactive.
+On a wrong code the attempt counter increments and the session locks for 30 minutes at 5 attempts. `role` comes from the request body but only `CUSTOMER` and `SERVICE_PROVIDER` are accepted (anything else is 400 `INVALID_ROLE`); staff roles come only from a staff invitation (section 5.9) and `TENANT_ADMIN` only from Tenant administration or an approved agency application. A `SUSPENDED`, `DEACTIVATED` or `PENDING_VERIFICATION` account (`user_account.status`) cannot sign in or refresh, and introspection reports its tokens inactive.
+
+OTP proves the number. If the number belongs to an account whose mobile was only *given* at email sign-up (`mobile_verified_at` null), the OTP holder is never signed in to that account: an unverified sign-up holding it is removed, an active email account gives the number up, and the OTP holder gets an account of their own.
 
 ### 5.2 Token refresh with replay detection
 
@@ -369,18 +394,15 @@ sequenceDiagram
     DISP->>PROV: GET /internal/providers/eligible<br/>(APPROVED, skill tag, radius, available)
     PROV-->>DISP: scored candidates
 
-    loop each candidate, best score first
-        DISP->>RD: SET NX PX lock:provider
-        alt lock held by another booking's offer (provider busy)
-            note over DISP: skip for now but keep in the pool:<br/>retried after the free candidates, for up to one offer window
-        else lock acquired
-            DISP->>RD: store offer (window 60 s)
-            PAPP->>DISP: GET /dispatch/offers via gateway (polled every 5 s)
-            alt accept
-                PAPP->>DISP: POST /dispatch/offers/{bookingId}/accept<br/>(compare-and-set in Redis)
-            else decline or window expires
-                DISP->>PG: outbox ProviderRejected, drop provider, next
-            end
+    loop waves of the best-scored offer-batch-size providers (default 3), until agency-fallback-minutes (default 5)
+        DISP->>RD: SET NX PX lock:provider for each provider in the wave
+        note over DISP: a provider whose lock is held by another booking's offer is busy:<br/>kept in the pool for a later wave (waited on for up to one offer window)
+        DISP->>RD: store the wave's offers in one hash (window 60 s, never past the fallback time)
+        PAPP->>DISP: GET /dispatch/offers via gateway (polled every 5 s)
+        alt first provider accepts
+            PAPP->>DISP: POST /dispatch/offers/{bookingId}/accept<br/>(compare-and-set: accepts and withdraws the others' offers)
+        else everyone declines or the window expires
+            DISP->>PG: outbox ProviderRejected per provider, drop them, next wave
         end
     end
 
@@ -389,9 +411,9 @@ sequenceDiagram
     DISP->>PG: INSERT outbox_event (ProviderAccepted)
 ```
 
-If no candidate accepts within the configured radius cycles, dispatch calls `POST /internal/bookings/{id}/searching-failed`, and booking-service either routes the booking to the covering Tenants (`AWAITING_ASSIGNMENT`, section 5.8) or fails it (`SEARCHING_FAILED`, announced as `BookingCancelled`). Dispatch sends its own "no provider" notices only in the second case.
+If no candidate accepts within `agency-fallback-minutes` (default 5), or the configured radius cycles run out sooner, dispatch calls `POST /internal/bookings/{id}/searching-failed`, and booking-service either routes the booking to the covering Tenants (`AWAITING_ASSIGNMENT`, section 5.8) or fails it (`SEARCHING_FAILED`, announced as `BookingCancelled`). Dispatch sends its own "no provider" notices only in the second case.
 
-Offers live only in Redis: the provider app reads and answers them through the gateway (`/dispatch/offers/**`, SERVICE_PROVIDER only, matched to the JWT subject), and a late or double answer is refused by the compare-and-set. A `BookingCancelled` stops an in-flight search and withdraws the pending offer. Two gaps remain: a dispatch failure after `BookingCreated` is acknowledged (outage, restart mid-search) leaves the booking in `SEARCHING_PROVIDER` with no sweeper, and the `provider-accepted` call and the `ProviderAccepted` row are a dual write. See review sections 16.1, 17.1 and 17.5.
+Offers live only in Redis: the provider app reads and answers them through the gateway (`/dispatch/offers/**`, SERVICE_PROVIDER only, matched to the JWT subject), and a late or double answer is refused by the compare-and-set. All of a booking's offers live in one Redis hash, so the first accept and the withdrawal of everyone else's offer are one atomic write; a provider who accepts a moment later gets 409 `OFFER_TAKEN`. A `BookingCancelled` stops an in-flight search and withdraws the pending offers. Two gaps remain: a dispatch failure after `BookingCreated` is acknowledged (outage, restart mid-search) leaves the booking in `SEARCHING_PROVIDER` with no sweeper, and the `provider-accepted` call and the `ProviderAccepted` row are a dual write. See review sections 16.1, 17.1 and 17.5.
 
 ### 5.4 Job execution milestones
 
@@ -486,28 +508,31 @@ sequenceDiagram
 
 The client sends only the booking and the method; amount, provider and customer come from booking-service, so a tampered amount in the request is ignored. The PENDING row commits before the gateway is called, so a charge never happens without a record; a gateway error leaves it PENDING for the callback to settle. A FAILED payment can be retried as a new attempt (at most 10 per booking). A wallet credit that could not be confirmed keeps its marker and is re-sent by `WalletCreditSweeper` every minute once it is five minutes old, which is why provider-service must apply a booking's credit only once.
 
-The simulator gateway exists only when `PAYMENT_SIMULATOR_ENABLED=true` (Compose sets it, Helm never does) and logs a WARN at startup; otherwise `simulator` is an unknown gateway. With Razorpay or Stripe a payment stays PENDING until their signed webhook arrives. The booking-side handler never fails on a `PaymentCompleted` it cannot apply (cancelled, disputed, unknown booking): it logs a WARN and acknowledges. Settlement reversals still have no provider-service endpoint. See review section 17.6.
+The simulator gateway exists only when `PAYMENT_SIMULATOR_ENABLED=true` (Compose sets it, Helm never does) and logs a WARN at startup; otherwise `simulator` is an unknown gateway.
+
+**Razorpay** replaces steps 7-9 with Checkout. The charge creates a Razorpay *order* for the server-side amount in paise (the transaction id is its receipt) and stores the order id as the gateway reference. The customer app reads `GET /payments/{id}/razorpay/checkout` and opens Checkout on that order; on success it forwards Checkout's answer to `POST /payments/{id}/razorpay/verify`. payment-service checks the HMAC of `order_id|payment_id` with the key secret, that the order is this transaction's, and reads the payment back from Razorpay (capturing it if only authorized) before settling. Razorpay's webhook (`POST /payments/webhooks/razorpay`, public at the gateway, HMAC over the raw body) settles `payment.captured` / `order.paid` for a customer who closed the tab first. Both go through `PaymentService.settleVerifiedOutcome`, the same binding, replay handling and side effects as a signed callback, so the second confirmation is a no-op. A failed attempt inside Checkout does not fail the transaction: the customer can retry on the same order. Refunds go to the order's captured payment, de-duplicated by receipt. Without `RAZORPAY_KEY_ID`/`RAZORPAY_KEY_SECRET` the gateway refuses new payments with 503. Stripe is still a stub that stays PENDING until a signed callback. The booking-side handler never fails on a `PaymentCompleted` it cannot apply (cancelled, disputed, unknown booking): it logs a WARN and acknowledges. Settlement reversals still have no provider-service endpoint. See review section 17.6.
 
 ### 5.6 Provider onboarding and verification
 
 ```mermaid
 stateDiagram-v2
-    [*] --> DOCUMENTS_PENDING: provider registers
-    DOCUMENTS_PENDING --> DOCUMENTS_SUBMITTED: upload ID, address, skill certs
-    DOCUMENTS_SUBMITTED --> DOCUMENTS_VERIFIED: admin verifies documents
-    DOCUMENTS_SUBMITTED --> REJECTED: documents invalid
-    DOCUMENTS_VERIFIED --> BACKGROUND_CHECK_PENDING: initiate check
-    BACKGROUND_CHECK_PENDING --> BACKGROUND_CHECK_CLEARED: provider clear
-    BACKGROUND_CHECK_PENDING --> BACKGROUND_CHECK_FAILED: adverse finding
-    BACKGROUND_CHECK_CLEARED --> APPROVED: admin approves
-    BACKGROUND_CHECK_FAILED --> REJECTED
+    [*] --> PENDING: provider registers
+    PENDING --> DOCUMENT_SUBMITTED: upload ID, address, skill certificate
+    DOCUMENT_SUBMITTED --> DOCUMENT_VERIFIED: admin accepts documents<br/>(Document review tab)
+    DOCUMENT_SUBMITTED --> REJECTED: documents invalid
+    DOCUMENT_VERIFIED --> BACKGROUND_CHECK_PENDING: check started automatically
+    BACKGROUND_CHECK_PENDING --> BACKGROUND_CHECK_COMPLETED: admin records the result<br/>(Background check tab)
+    BACKGROUND_CHECK_COMPLETED --> APPROVED: passed
+    BACKGROUND_CHECK_COMPLETED --> REJECTED: failed, with a reason
     APPROVED --> SUSPENDED: admin suspends
     SUSPENDED --> APPROVED: reinstated
     REJECTED --> [*]
     APPROVED --> [*]: eligible for dispatch
 ```
 
-State names follow `VerificationStatus` in verification-service. Only `APPROVED` makes a provider eligible for job assignment. The document bytes are discarded by the storage stub. The upload and record-read endpoints assert that the caller is the provider named in the path, or staff. The eligibility check deliberately does not, because dispatch asks about other providers. See review sections 8.5 and 12.1.
+State names follow `VerificationStatus` in verification-service. Only `APPROVED` makes a provider eligible for job assignment.
+
+The Admin Portal's Verification Queue has a tab per admin step. **Document review** (`GET /admin/verification/queue`, `POST .../decision`) accepts or rejects the documents; accepting starts the background check. No background-check vendor is integrated (`LoggingBackgroundCheckAdapter` only logs a reference), so **Background check** (`GET /admin/verification/background-checks`) lists providers at `BACKGROUND_CHECK_PENDING` or `_COMPLETED`, and `POST .../background-check {outcome, result, reason}` records the result the admin obtained and moves the provider to `APPROVED` or `REJECTED` in one transaction. It refuses a provider at any other step, so it cannot reinstate a suspended one. The document bytes are discarded by the storage stub. The upload and record-read endpoints assert that the caller is the provider named in the path, or staff. The eligibility check deliberately does not, because dispatch asks about other providers. See review sections 8.5 and 12.1.
 
 ### 5.7 Complaint lifecycle with SLA
 
@@ -585,6 +610,40 @@ Tenant was a candidate, plus their Tenant's own jobs; anything else answers 404.
 accepting provider belongs to a Tenant records that Tenant (`booking.tenant_id`), whichever path
 matched it. Only the assigned provider can accept or decline (staff cannot answer for them); a
 decline clears the provider and returns the booking to the assigning Tenant's queue only.
+
+### 5.9 Email sign-up, password sign-in, staff invitations and agency applications
+
+Full design: `.kiro/specs/email-auth-and-signup/design.md`.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant APP as customer / provider app
+    participant AUTH as auth-service
+    participant RD as Redis
+    participant MAIL as EmailSenderPort<br/>(dev mail log locally)
+
+    APP->>AUTH: POST /auth/register/email {name, email, mobile, password, role}
+    note right of AUTH: throttle per address and IP first.<br/>Email already an account? email "you already<br/>have an account", change nothing, same 202.<br/>Mobile held by another account → 409 MOBILE_IN_USE
+    AUTH->>AUTH: user_account PENDING_VERIFICATION,<br/>bcrypt hash, mobile unverified
+    AUTH->>RD: SHA-256 of a 6-digit code (10 min, 5 tries)
+    AUTH->>MAIL: code email
+    AUTH-->>APP: 202 {status: CODE_SENT}
+    APP->>AUTH: POST /auth/register/email/verify {email, code}
+    AUTH->>RD: delete the code (only one request can)
+    AUTH->>AUTH: ACTIVE, email_verified_at
+    AUTH-->>APP: 200 TokenResponse (signed in)
+    APP->>AUTH: later: POST /auth/login/password {identifier: email or username, password}
+    AUTH-->>APP: 200 TokenResponse, 401 INVALID_CREDENTIALS,<br/>or 403 EMAIL_NOT_VERIFIED (right password, code never entered)
+```
+
+- **Enumeration safety.** Sign-up, resend and forgot-password answer the same for every address. Wrong email and wrong password are the same 401, with the per-identifier lockout of username sign-in.
+- **Reset.** `POST /auth/password/forgot` emails a code to an active, verified address; `POST /auth/password/reset` sets the password, revokes every refresh family of the account and lifts any lockout.
+- **Own credentials.** `/auth/me` reads them; an OTP account adds a verified email (code to the new address) and a password from its profile. Changing either needs the current password when one is set.
+- **Staff invitations** (`/admin/invitations`, routed to auth-service). A SUPER_ADMIN invites `ADMIN`, `FINANCE_ADMIN`, `DISPATCHER` or `SUPPORT_AGENT`; an ADMIN the last three. `SUPER_ADMIN` and `TENANT_ADMIN` are never invitable, and no public path grants a staff role. The emailed link `/invite/{token}` carries 32 random bytes; `auth.staff_invitation` stores only their SHA-256. It works once, for 7 days; re-inviting revokes the open one. Accepting creates the account with the email verified (an existing account proves itself with its password and gains the role).
+- **Agency applications** (`/tenant-applications`, provider-service). Any signed-in user applies once; the Tenant is `PENDING_APPROVAL`, covers no booking and grants nothing. A platform admin approves (the applicant is granted `TENANT_ADMIN` and recorded as admin, then the Tenant becomes `ACTIVE`) or rejects with a reason. provider-service asks auth-service, which owns email, to send the decision (`POST /internal/emails/agency-decision`). The applicant signs in again to reach the Tenant Portal.
+- **Housekeeping.** An hourly sweep removes sign-ups never verified within 24 hours; until then a stale one does not block its address or number.
+- **Email delivery.** `EmailSenderPort` with a `file` adapter (local Dev_Mail_Log, codes and links in plain text) and a `logging` adapter (default; subject only). No production provider is built yet.
 
 ## 6. Event topology
 
@@ -710,10 +769,14 @@ Every database-backed service runs Flyway from `src/main/resources/db/migration`
 | --- | --- | --- |
 | auth-service | V2 | `user_account.status` (ACTIVE, SUSPENDED, DEACTIVATED), index on `created_at` |
 | auth-service | V3 | `TENANT_ADMIN` added to the role check |
+| auth-service | V4 | `user_account.email` (unique on `lower(email)`), `email_verified_at`, `display_name`, `mobile_verified_at` (backfilled); status `PENDING_VERIFICATION`; table `staff_invitation` |
 | booking-service | V2 | index `(customer_id, created_at)` for history |
 | booking-service | V3 | `AWAITING_ASSIGNMENT` in the status checks; `booking.tenant_id`, `booking.queued_for_assignment_at`; table `booking_tenant_candidate` |
 | provider-service | V2 | unique index: one `JOB_CREDIT` earning per booking |
 | provider-service | V3 | tables `tenant`, `tenant_category`, `tenant_admin`; `provider_profile.tenant_id` |
+| provider-service | V4 | Tenant statuses `PENDING_APPROVAL`, `REJECTED`; `tenant.applicant_user_id`, `tenant.rejection_reason`; one open application per applicant |
+| payment-service | V2 | `payment_transaction.booking_reference`, `wallet_credit_failure`, late-capture columns |
+| payment-service | V3 | index on `payment_transaction.gateway_reference` (Razorpay webhook lookup) |
 | notification-service | V2, V3 | table `notification_template` (seeded with the built-in texts); Tenant-assignment templates |
 | complaint-service | V2 | `complaint.resolution_note` |
 | admin-service | V2, V3 | table `system_setting`; keyset index on `audit_log (logged_at, id)` |
@@ -728,10 +791,25 @@ erDiagram
         uuid id PK
         string mobile_number UK "nullable for social accounts"
         string username UK "seeded and staff accounts"
+        string email UK "lower case; email sign-up, profile or invitation"
+        timestamp email_verified_at
+        string display_name
+        timestamp mobile_verified_at "null = number given at email sign-up, never proven"
         string password_hash
-        string status "ACTIVE, SUSPENDED, DEACTIVATED"
+        string status "ACTIVE, SUSPENDED, DEACTIVATED, PENDING_VERIFICATION"
         boolean verified
         timestamp created_at
+    }
+    STAFF_INVITATION {
+        uuid id PK
+        string email "one open invitation per address"
+        string role "ADMIN, FINANCE_ADMIN, DISPATCHER, SUPPORT_AGENT"
+        string token_hash UK "SHA-256 of the emailed token"
+        uuid invited_by
+        timestamp expires_at "7 days"
+        timestamp accepted_at
+        uuid accepted_user_id
+        timestamp revoked_at
     }
     USER_ACCOUNT_ROLE {
         uuid user_id FK
@@ -797,9 +875,11 @@ erDiagram
     TENANT {
         uuid id PK
         string name
-        string status "ACTIVE, SUSPENDED"
+        string status "ACTIVE, SUSPENDED, PENDING_APPROVAL, REJECTED"
         string contact_phone
         string contact_email
+        uuid applicant_user_id "set for a self-registered agency"
+        string rejection_reason
         double base_latitude
         double base_longitude
         decimal service_radius_km "1-100"
@@ -1390,25 +1470,29 @@ flowchart TD
     H --> H4["idle time weight"]
     H1 & H2 & H3 & H4 --> I["Rank descending"]
 
-    I --> J["Next candidate"]
+    I --> J["Next wave: the best<br/>offer-batch-size candidates (default 3)"]
     J --> K["Acquire Redis lock<br/>SET NX PX per provider"]
-    K --> L{"Lock acquired?"}
-    L -->|"no: busy with another offer"| BUSY["Keep in pool; retry after the<br/>free candidates, up to one offer window"]
+    K --> L{"Any lock acquired?"}
+    L -->|"no: all busy with other offers"| BUSY["Keep in pool; wait up to<br/>one offer window"]
     BUSY --> J
-    L -->|yes| M["Offer in Redis, poll for the<br/>provider's answer (60 s window)"]
-    M --> N{"Accepted?"}
-    N -->|no| O["Release lock, ProviderRejected,<br/>drop from pool"]
-    O --> J
+    L -->|yes| M["Offer the wave at once in Redis;<br/>poll for answers (60 s window)"]
+    M --> N{"Someone accepted?"}
+    N -->|no| O["Release locks, ProviderRejected<br/>per provider, drop from pool"]
+    O --> T{"agency-fallback-minutes<br/>passed? (default 5)"}
+    T -->|no| J
+    T -->|yes| E
     J -->|"pool exhausted"| E
     N -->|yes| P["POST provider-accepted<br/>→ PROVIDER_ACCEPTED"]
     P --> Q["Publish ProviderAccepted"]
 ```
 
-Weights are validated with `BigDecimal` and must sum to one. They are stored in a process-local map, so admin changes (Admin Portal, Dispatch module) apply at runtime but are lost on restart and differ between replicas. Before every offer the search checks whether a `BookingCancelled` has arrived, and a 409 or 404 from booking-service ends the run quietly.
+Weights are validated with `BigDecimal` and must sum to one. They are stored in a process-local map, so admin changes (Admin Portal, Dispatch module) apply at runtime but are lost on restart and differ between replicas. Before every wave the search checks whether a `BookingCancelled` has arrived, and a 409 or 404 from booking-service ends the run quietly. The wave size (`offerBatchSize`, 1–10) and the agency hand-off time (`agencyFallbackMinutes`, 1–30) are tunable alongside the weights; no wave's window runs past the hand-off time.
 
 ---
 
 ## 10. Deployment
+
+Step-by-step runbooks for both targets, including a database reset and rollback, are in [DEPLOYMENT.md](DEPLOYMENT.md); this section describes what runs where.
 
 ### 10.1 Local (Docker Compose)
 
@@ -1419,31 +1503,65 @@ graph TB
         RD[("Redis-compatible :6379<br/>Memurai, or a redis container")]
         KF[["Kafka 4.1 KRaft, C:\kafka<br/>:9092 host, :9094 containers<br/>started by hand"]]
         subgraph net["Docker Compose: docker-compose.core.yml"]
-            S["20 service containers<br/>8080 – 8099, mem_limit 448m each"]
+            S["5 Java containers (20 services)<br/>identity-app 896m · jobs-app 1280m<br/>money-app 640m · engagement-app 1152m<br/>api-gateway 448m · ports 8080 – 8099"]
             W["3 nginx SPA containers<br/>5173, 5174, 5175"]
         end
         SMS["docker/dev-sms/dev-sms.log<br/>bind mount, OTP sink"]
+        MAIL["docker/dev-mail/dev-mail.log<br/>bind mount, email codes and invitation links"]
     end
 
     W --> S
     S -->|host.docker.internal| PG & RD & KF
     S --> SMS
+    S --> MAIL
 ```
 
 Postgres, Kafka and Redis are the ones installed on the machine, reached from the containers through `host.docker.internal` (override with `HOMEFIX_DB_HOST`, `HOMEFIX_REDIS_HOST`, `HOMEFIX_KAFKA_BOOTSTRAP_SERVERS`; `docker-compose.infra.yml` runs them as containers instead). Kafka does not start on its own after a reboot, and on native Windows it runs with retention and the log cleaner off because it cannot delete segments. Setup is in [LOCAL_ACCESS.md](LOCAL_ACCESS.md) section 1.
 
-Each service container has a `wget` readiness healthcheck with a 300 s start period and a bounded `on-failure` restart policy. Images are runtime-only: the fat jar must already exist under each service's `target/`. Every Java service has `mem_limit: 448m` and a `JAVA_TOOL_OPTIONS` heap percentage, because twenty unbounded JVMs exhaust the WSL VM.
+The 20 services run in five Java containers: the API gateway and the four deployables under `apps/`, each of which starts its services as separate Spring contexts in one JVM (`shared/homefix-service-host`), every service still on its own port. The deployables' healthcheck probes every hosted service's `/actuator/health/readiness` (180 s start period; the gateway keeps 300 s), with a bounded `on-failure` restart policy. Images are runtime-only (Java 25, `eclipse-temurin:25-jre-alpine`, layered with `-Djarmode=tools extract`): the jar must already exist under `apps/<deployable>/target/` or `services/api-gateway/target/`. Each container has a `mem_limit` sized for the services it hosts and `JAVA_TOOL_OPTIONS` with a heap percentage and the serial collector; five JVMs instead of twenty is most of the memory saving. A variable meant for one hosted service is prefixed with its name (`PRICING_ENGINE__LOGGING_LEVEL_ROOT`); unprefixed variables reach all of the deployable's services.
 
 Settings that differ from the code defaults locally:
 
 | Variable | Service | Local value | Why |
 | --- | --- | --- | --- |
-| `PAYMENT_SIMULATOR_ENABLED`, `PAYMENT_DEFAULT_GATEWAY` | payment-service | `true`, `simulator` | settles payments through the signed-callback path without a real gateway; **local only**, never set in Helm |
+| `PAYMENT_SIMULATOR_ENABLED`, `PAYMENT_DEFAULT_GATEWAY` | payment-service | `true`, `simulator` (or `razorpay` from `.env`) | settles payments through the signed-callback path without a real gateway; **local only**, never set in Helm |
+| `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` | payment-service | from `.env`, test-mode keys, optional | Razorpay Checkout; without them the `razorpay` gateway refuses new payments (503). Helm reads them from `payment-service-secrets` |
+| `EMAIL_PROVIDER`, `EMAIL_FILE_PATH` | auth-service | `file`, the dev mail log | sign-up and reset codes and invitation links go to `docker/dev-mail/dev-mail.log`; Helm keeps `logging` |
 | `PROVIDER_WALLET_CLIENT` | payment-service | `http` | credits provider-service's wallet (code default `logging` pays no one); Helm also sets `http` |
 | `TENANT_ASSIGNMENT_TIMEOUT` | booking-service | `PT60M` | how long a booking may wait for a Tenant assignment; same in Helm |
 | `KAFKA_BOOTSTRAP_SERVERS` | booking-service and the other consumers | `host.docker.internal:9094` | booking-service now consumes `PaymentCompleted` |
 | `INTERNAL_API_KEY` | every service with `/internal/**` callers or endpoints | from `.env` | shared service credential |
 | `DEV_SEED_ENABLED`, `DEV_SEED_PASSWORD` | auth-service | from `.env` (`true`, `HomeFix@2026`) | seeds the test accounts; Compose's own default is off |
+
+#### Settings in the database: `config.app_config`
+
+Platform settings that are the same for every deployable live in one Postgres table rather than in
+environment variables. Each row is a Spring property: `config_key` is the property name and
+`config_value` its value. Every service with a database loads the table at startup through
+`shared/homefix-shared-config`. A row overrides the service's YAML; an environment variable, system
+property or command-line argument still overrides the row. Rows marked `exposed_to_clients` are
+also served without sign-in on `GET /config/client` (catalog-service, routed by the gateway), which
+the web apps read. Never mark a secret.
+
+| `config_key` | Seeded value | Read by |
+| --- | --- | --- |
+| `homefix.apps.customer-app-url` | `http://localhost:5173` | web apps (`/config/client`) |
+| `homefix.apps.provider-app-url` | `http://localhost:5174` | customer-app's "Join as a professional" link |
+| `homefix.apps.admin-portal-url` | `http://localhost:5175` | auth-service's staff invitation links |
+
+The repeatable migration `db/app-config/R__homefix_app_config.sql` creates the table and seeds these
+rows; it never overwrites a row that already exists. There is no admin screen. Change a value with
+SQL, then restart the deployables that read it (the `/config/client` response changes without a
+restart, after its 5-minute cache). **Each environment other than local must set the URLs once**, or
+invitation links point at `localhost`:
+
+```sql
+UPDATE config.app_config SET config_value = 'https://admin.homefix.example', updated_at = now()
+ WHERE config_key = 'homefix.apps.admin-portal-url';
+```
+
+On a brand-new database the first start finds no table yet (Flyway creates it after the
+environment is prepared), so that one start uses the YAML defaults, which match the seeded rows.
 
 ### 10.2 AWS target (Terraform)
 
@@ -1478,11 +1596,13 @@ Terraform is the most complete infrastructure layer. Database migrations now exi
 
 ### 10.3 Namespace and chart layout
 
-All services share one Helm chart, `helm/homefix-service`, with one release per service (`homefix-<service>`) rendered from `values-<environment>.yaml` plus `helm/services/<service>.yaml`. Resources are named after the bare service, so in-cluster DNS matches Compose (`auth-service:8081`). The pipeline deploys into the namespace configured on each GitHub environment, while the Kubernetes manifests under `infra/k8s` still assume six domain namespaces. Reconciling these is step 12 of the roadmap.
+All five deployables share one Helm chart, `helm/homefix-service`, with one release per deployable (`homefix-<deployable>`) rendered from `values-<environment>.yaml` plus `helm/services/<deployable>.yaml`. A deployable that hosts several services exposes each one's port (`containerPort` plus `extraPorts`) on its Deployment and Service. Resources are named after the bare deployable, so in-cluster DNS matches Compose (`identity-app:8081`). The pipeline deploys into the namespace configured on each GitHub environment, while the Kubernetes manifests under `infra/k8s` still assume six domain namespaces. Reconciling these is step 12 of the roadmap.
 
 ---
 
 ## 11. Cross-cutting concerns
+
+The security architecture (trust boundaries, the checks a request passes, secrets, and the open findings) is in [SECURITY.md](SECURITY.md).
 
 ```mermaid
 graph LR
@@ -1508,8 +1628,9 @@ Resilience is meant to wrap every synchronous call through the shared `Resilient
 ## 12. Reading order for newcomers
 
 1. This document, then `.kiro/specs/homefix-platform/requirements.md` for the product rules.
-2. [LOCAL_ACCESS.md](LOCAL_ACCESS.md) to get the stack running and log in as each role.
+2. [DEPLOYMENT.md](DEPLOYMENT.md) and [LOCAL_ACCESS.md](LOCAL_ACCESS.md) to get the stack running and log in as each role.
 3. [API_CONTRACTS.md](API_CONTRACTS.md) when wiring a client or a new service.
 4. `shared/homefix-shared-security` and `shared/homefix-shared-outbox`, which every service depends on.
 5. `services/booking-service`, the richest domain model and the best example of the intended patterns.
-6. [../CODEBASE_REVIEW.md](../CODEBASE_REVIEW.md) before trusting any integration to work end to end.
+6. [SECURITY.md](SECURITY.md) before changing anything on the request path.
+7. [../CODEBASE_REVIEW.md](../CODEBASE_REVIEW.md) before trusting any integration to work end to end.

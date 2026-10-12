@@ -30,7 +30,9 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
+
 import com.homefix.payment.domain.PaymentMethod;
 import com.homefix.payment.domain.PaymentTransaction;
 import com.homefix.payment.domain.Settlement;
@@ -62,7 +64,7 @@ class PaymentControllerTest {
     private BookingPaymentService bookingPaymentService;
 
     private MockMvc mvc;
-    private final ObjectMapper json = new ObjectMapper();
+    private final ObjectMapper json = new JsonMapper();
 
     @BeforeEach
     void setUp() {

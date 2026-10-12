@@ -9,7 +9,7 @@ import type { Tenant, TenantAdmin, TenantMembers, TenantStatus, TeamProvider } f
  * acting admin (Requirement MT-1.3).
  *
  * Endpoints:
- * - GET    /admin/tenants                               — all Tenants with counts
+ * - GET    /admin/tenants[?status=]                     — all Tenants with counts
  * - POST   /admin/tenants                               — create
  * - PUT    /admin/tenants/{id}                          — edit, including status
  * - GET    /admin/tenants/{id}/members                  — admins and providers
@@ -17,6 +17,8 @@ import type { Tenant, TenantAdmin, TenantMembers, TenantStatus, TeamProvider } f
  * - DELETE /admin/tenants/{id}/admins/{userId}          — remove an administrator
  * - POST   /admin/tenants/{id}/providers {mobileNumber} — add a provider
  * - DELETE /admin/tenants/{id}/providers/{providerId}   — remove a provider
+ * - POST   /admin/tenants/{id}/approval                 — approve an agency application
+ * - POST   /admin/tenants/{id}/rejection {reason}       — reject it, with the reason
  */
 
 /** Body of `POST /admin/tenants`. */
@@ -35,8 +37,11 @@ export interface TenantUpdatePayload extends TenantPayload {
   status: TenantStatus;
 }
 
-export async function fetchTenants(): Promise<Tenant[]> {
-  const { data } = await apiClient.get<Tenant[]>('/admin/tenants');
+/** Every Tenant, or only those in one status (e.g. PENDING_APPROVAL). */
+export async function fetchTenants(status?: TenantStatus): Promise<Tenant[]> {
+  const { data } = await apiClient.get<Tenant[]>('/admin/tenants', {
+    params: status ? { status } : undefined,
+  });
   return data;
 }
 
@@ -75,4 +80,19 @@ export async function addTenantProvider(id: string, mobileNumber: string): Promi
 
 export async function removeTenantProvider(id: string, providerId: string): Promise<void> {
   await apiClient.delete(`/admin/tenants/${id}/providers/${providerId}`);
+}
+
+/**
+ * Approve an agency application: the Tenant becomes ACTIVE, the applicant its
+ * administrator, and the applicant is emailed (email-auth Requirement 5.4).
+ */
+export async function approveTenantApplication(id: string): Promise<Tenant> {
+  const { data } = await apiClient.post<Tenant>(`/admin/tenants/${id}/approval`);
+  return data;
+}
+
+/** Reject an agency application; the reason (1–500 characters) is emailed to the applicant. */
+export async function rejectTenantApplication(id: string, reason: string): Promise<Tenant> {
+  const { data } = await apiClient.post<Tenant>(`/admin/tenants/${id}/rejection`, { reason });
+  return data;
 }

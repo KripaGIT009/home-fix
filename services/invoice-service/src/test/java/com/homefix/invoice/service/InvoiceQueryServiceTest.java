@@ -1,6 +1,7 @@
 package com.homefix.invoice.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.math.BigDecimal;
 import java.time.Clock;
@@ -17,6 +18,7 @@ import com.homefix.invoice.domain.Invoice;
 import com.homefix.invoice.support.InMemoryInvoiceRepository;
 import com.homefix.invoice.support.TestPorts.RecordingStoragePort;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
 
 /**
  * Unit tests for {@link InvoiceQueryService}: 24-month customer-history retention floor
@@ -80,6 +82,20 @@ class InvoiceQueryServiceTest {
         assertThat(statement.grossEarnings()).isEqualByComparingTo("826.00");
         assertThat(statement.platformFees()).isEqualByComparingTo("165.20");
         assertThat(statement.netPayout()).isEqualByComparingTo("660.80");
+    }
+
+    /** An impossible month or year is the caller's mistake: 400, not the 500 it used to be. */
+    @Test
+    void invalidMonthOrYearIsAValidationError() {
+        UUID provider = UUID.randomUUID();
+        for (int[] period : new int[][] {{2024, 0}, {2024, 13}, {2024, -1}, {1999, 6}, {10000, 6}}) {
+            assertThatThrownBy(() -> service.providerMonthlyStatement(provider, period[0], period[1]))
+                    .as("year %d month %d", period[0], period[1])
+                    .isInstanceOfSatisfying(InvoiceException.class, e -> {
+                        assertThat(e.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+                        assertThat(e.getErrorCode()).isEqualTo("VALIDATION_ERROR");
+                    });
+        }
     }
 
     private Invoice save(UUID customer, Instant generatedAt, String number) {

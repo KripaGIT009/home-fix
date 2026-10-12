@@ -3,6 +3,7 @@ package com.homefix.dispatch.adapter;
 import com.homefix.dispatch.config.DispatchClientProperties;
 import com.homefix.dispatch.domain.DispatchRequest;
 import com.homefix.dispatch.domain.ProviderCandidate;
+import com.homefix.dispatch.domain.ProviderSearchUnavailableException;
 import com.homefix.dispatch.domain.ScoreComponents;
 import com.homefix.dispatch.port.ProviderQueryPort;
 import com.homefix.shared.resilience.ResilienceFactory;
@@ -28,15 +29,20 @@ import java.util.UUID;
  * <p>The query is on the critical dispatch path, so it runs under the shared resilience stack
  * (Requirement 24): a 5 s per-call timeout (24.3), retry with exponential backoff for transient
  * failures (24.2), and a circuit breaker (24.1). When the {@code provider-service} breaker is open
- * — or every retry fails — the call degrades to an empty candidate list and a WARN log naming the
- * dependency is emitted (24.4); the dispatch loop then treats the booking as having no available
- * providers rather than blocking the emergency path on a failing dependency.
+ * — or every retry fails, or the call is refused — a WARN log naming the dependency is emitted
+ * (24.4) and {@link ProviderSearchUnavailableException} is raised.
+ *
+ * <p>Only a 200 is an answer about the market. The fallback used to return an empty candidate
+ * list, so an outage looked exactly like "nobody nearby": the dispatch loop walked every radius,
+ * found no one, and failed the booking as "no provider available". A refused credential did the
+ * same to every booking, silently. The dispatch loop now tells the two apart and treats an
+ * unavailable search as an outage rather than as a verdict (see {@code DispatchService}).
  *
  * <p>{@code /internal/providers/eligible} is service-to-service only: every call presents the
  * shared {@code X-Internal-Api-Key}, the same {@code homefix.dispatch.internal-api-key} this service
- * sends to the Booking and Customer Services. Without it the Provider Service answers 401, which
- * would degrade every search to "no providers" and fail every booking; so a missing key fails
- * startup instead, and a refused key is logged as a configuration error rather than retried.
+ * sends to the Booking and Customer Services. A missing key fails startup; a refused one (401/403)
+ * is a deployment error, so it is logged at ERROR and not retried here — retrying the same key
+ * cannot help — and surfaces as {@link ProviderSearchUnavailableException} like any other outage.
  *
  * <p>Active only when no other {@link ProviderQueryPort} bean is present (tests supply a fake).
  */
@@ -71,9 +77,10 @@ public class HttpProviderQueryAdapter implements ProviderQueryPort {
                     setReadTimeout((int) Duration.ofSeconds(5).toMillis());
                 }})
                 .build();
-        // Degrade to "no eligible providers" when the dependency is unavailable (Requirement 24.4).
+        // An unavailable dependency is not an empty market: report it (Requirement 24.4).
         this.resilientCall = ResilientCall.forDependency(
-                resilienceFactory, DEPENDENCY, TimeoutProfile.CRITICAL_PATH, cause -> List.of());
+                resilienceFactory, DEPENDENCY, TimeoutProfile.CRITICAL_PATH,
+                HttpProviderQueryAdapter::unavailable);
     }
 
     @Override
@@ -115,6 +122,12 @@ public class HttpProviderQueryAdapter implements ProviderQueryPort {
             }
             return candidates;
         });
+    }
+
+    /** Fallback: every failure, the open breaker included, means the market is unknown. */
+    private static List<ProviderCandidate> unavailable(Throwable cause) {
+        throw new ProviderSearchUnavailableException(
+                "Provider Service eligible-provider query unavailable: " + cause, cause);
     }
 
     /** Response shape from the Provider Service internal endpoint. */

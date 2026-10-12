@@ -9,10 +9,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
+import tools.jackson.core.JacksonException;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * Local-only payment gateway, id {@value #GATEWAY_ID} (Requirement 12.1, 12.5). It accepts every
@@ -43,7 +44,7 @@ public class SimulatorGatewayAdapter extends AbstractHmacGatewayAdapter implemen
     /** Used only when the simulator is enabled without {@code PAYMENT_SIMULATOR_SECRET}. */
     static final String DEV_DEFAULT_SECRET = "local-payment-simulator-secret";
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final ObjectMapper MAPPER = new JsonMapper();
 
     public SimulatorGatewayAdapter(
             @Value("${homefix.payment.gateways.simulator.secret:}") String signingSecret) {
@@ -75,7 +76,7 @@ public class SimulatorGatewayAdapter extends AbstractHmacGatewayAdapter implemen
         String payload;
         try {
             payload = MAPPER.writeValueAsString(body);
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             throw new IllegalStateException("Unable to serialise the simulator callback", e);
         }
         return new SignedSettlement(payload, sign(payload));

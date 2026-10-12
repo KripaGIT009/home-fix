@@ -5,32 +5,38 @@ follow the professional to the door, approve price changes, pay, and look back
 at past bookings. It runs in the browser and ships as Android and iOS apps
 from the same code (Capacitor, see [Mobile builds](#mobile-builds-android-and-ios)).
 
-Anyone can sign in with a mobile number (OTP) or, when configured, Google.
+Anyone can sign in with a mobile number (OTP), with email and password, or, when
+configured, Google. A new customer can sign up with an email verified by an emailed
+code, and reset a forgotten password.
 A new number is registered as a `CUSTOMER`; the Auth Service decides what each
 call may do, the app itself does not gate screens by role.
 
 ## Stack
 
-- **React 18 + TypeScript** (strict mode)
-- **Vite** build/dev server
+- **Node.js 24** to build (`"engines": {"node": ">=24"}`; the Docker build uses `node:24-alpine`)
+- **React 19 + TypeScript 6** (strict mode)
+- **Vite 8** build/dev server (Rolldown)
 - **TanStack Query** — server state
 - **Zustand** — client state (auth, active booking)
-- **React Router** — navigation
-- **Material UI** — components/theme (mobile-first, with a desktop layout)
-- **React Hook Form + Zod** — forms and validation
+- **React Router 8** — navigation
+- **Material UI 9** — components/theme (mobile-first, with a desktop layout)
+- **React Hook Form + Zod 4** — forms and validation
 - **Axios** — HTTP client with JWT Bearer + `X-Correlation-ID` injection
-- **Capacitor 7** — Android and iOS shells
+- **ESLint 10** (flat config, `eslint.config.js`) with typescript-eslint, eslint-react, react-hooks 7 and jsx-a11y-x
+- **Capacitor 8** — Android and iOS shells
 
 ## Screens
 
-All routes except Splash and Login require a signed-in session (`RequireAuth`).
+All routes except Splash, Login, Sign-up and Forgot password require a signed-in session (`RequireAuth`).
 The bottom tab bar (mobile) and the top navigation (desktop) carry Home,
 Bookings, Help and Profile.
 
 | Route | Screen | What it does |
 | --- | --- | --- |
 | `/` | Splash | Brand splash, then Home or Login depending on the session |
-| `/login` | Login | Mobile number + OTP with resend countdown and lockout handling; Google sign-in when `VITE_GOOGLE_CLIENT_ID` is set |
+| `/login` | Login | **Mobile number** tab (OTP with resend countdown and lockout handling) and **Email** tab (email + password, "Forgot password?", "Create account"); Google sign-in under both when `VITE_GOOGLE_CLIENT_ID` is set |
+| `/signup`, `/signup/verify` | Email sign-up | Name, email, mobile and password, then the 6-digit code emailed to the address (locally in `docker/dev-mail/dev-mail.log`) |
+| `/forgot-password` | Password reset | Email, then the emailed code and a new password; every session of the account ends |
 | `/home` | Home (storefront) | See [below](#home-storefront) |
 | `/categories/:categoryId` | Subcategory | The category's services as rows with "from" price, typical duration and 24×7 flag; desktop adds a jump rail and a sticky promise card |
 | `/book/:subcategoryId` | Service request | Where (saved address, manual entry or "use my current location"), when (≥ 2 h ahead, ≤ 90 days), what (description, emergency toggle, up to 10 photos/videos — JPEG/PNG/MP4/MOV, ≤ 50 MB each; a **Take a photo** button in the native apps) |
@@ -40,7 +46,7 @@ Bookings, Help and Profile.
 | `/bookings/:bookingId/chat` | Chat | Booking chat over WebSocket; no phone numbers exchanged, read-only once the channel closes |
 | `/bookings/:bookingId` | Booking detail | Progress timeline, links to tracking and chat while active, pay a completed job, download the invoice PDF |
 | `/history` | Service history | Paginated bookings with status chip, date and amount |
-| `/profile` | Profile | Signed-in identity and links into the rest of the app |
+| `/profile` | Profile | Signed-in identity, an **Email & password** card (add and verify an email, set or change the password) and links into the rest of the app |
 | `/help` | Help & support | Inline answers on pricing, verification, cancellation and payment, plus routes to a booking or the 24×7 path |
 
 ### Home (storefront)
@@ -107,10 +113,10 @@ Vite bakes these into the bundle at build time. See `.env.example`.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `VITE_API_BASE_URL` | `/api` | Base for API calls. Relative in the browser (proxied); **absolute in native builds** |
-| `VITE_AUTH_BASE_URL` | `VITE_API_BASE_URL` | Base for Auth Service calls (OTP, social login, refresh, logout). Native builds point it at the Auth Service itself |
+| `VITE_AUTH_BASE_URL` | `VITE_API_BASE_URL` | Base for Auth Service calls (OTP, email sign-up and sign-in, password reset, `/auth/me`, social login, refresh, logout). Native builds point it at the Auth Service itself |
 | `VITE_REALTIME_BASE_URL` | `VITE_API_BASE_URL` | Base for the location SSE stream and chat WebSocket |
 | `VITE_GOOGLE_CLIENT_ID` | empty | Enables Google sign-in; must equal the Auth Service's `GOOGLE_CLIENT_ID` |
-| `VITE_PROVIDER_APP_URL` | `http://localhost:5174` | Where the footer's "Join as a professional" link points (the Provider App) |
+| `VITE_PROVIDER_APP_URL` | `http://localhost:5174` | Fallback for the footer's "Join as a professional" link; the live value is `homefix.apps.provider-app-url` in the backend's `config.app_config` table, read from `GET /config/client` |
 | `VITE_API_GATEWAY_URL` | `http://localhost:8080` | Dev-server proxy target only |
 | `VITE_AUTH_SERVICE_URL` | `http://localhost:8081` | Dev-server proxy target only |
 
@@ -159,7 +165,7 @@ docker compose -f docker-compose.core.yml up -d --build --wait
 
 The `customer-app` image (`Dockerfile`) builds the bundle with the default
 `/api` base and serves it from nginx on <http://localhost:5173>. `nginx.conf`
-proxies `/api/auth/*` to `auth-service:8081` and everything else under `/api/`
+proxies `/api/auth/*` to `identity-app:8081` (auth-service) and everything else under `/api/`
 to `api-gateway:8080`, with WebSocket/SSE support, long-lived caching for
 `/assets/` and no caching for `index.html`. The build copies the app directory,
 so keep native (absolute) URLs out of a local `.env` when building the image.
@@ -198,7 +204,7 @@ src/
   components/   # Shared UI (AppShell, guards, search, timeline, state views)
   config/       # Typed env access + native-build URL guard
   features/
-    auth/       # Splash, Login/OTP, Google sign-in, lockout
+    auth/       # Splash, Login (OTP + email), sign-up, reset, Google sign-in, lockout
     catalog/    # Storefront home, rails, carousel, subcategory screen
     booking/    # Service request, media upload, price estimate
     tracking/   # Available professionals, live tracking, map, chat

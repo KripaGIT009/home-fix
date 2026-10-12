@@ -212,4 +212,14 @@ class AdminUserServiceTest {
                 .isInstanceOf(UserNotFoundException.class);
         verify(userRepository, never()).save(any());
     }
+
+    @Test
+    void staffCannotSetAnAccountToPendingVerification() {
+        UserAccount account = stubAccount(Role.CUSTOMER);
+
+        assertThatThrownBy(() -> service.changeStatus(account.getId(), AccountStatus.PENDING_VERIFICATION, SUPER_ADMIN))
+                .isInstanceOf(AdminUserException.class)
+                .extracting("errorCode").isEqualTo("STATUS_NOT_SETTABLE");
+        verify(userRepository, never()).save(any());
+    }
 }

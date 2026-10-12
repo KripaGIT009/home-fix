@@ -36,15 +36,29 @@ export function DashboardScreen() {
     <AppShell title="Dashboard">
       <Stack
         direction="row"
-        justifyContent="space-between"
-        alignItems="center"
         spacing={2}
-        sx={{ mb: 3 }}
+        sx={{
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          mb: 3,
+        }}
       >
-        <Typography variant="h5" component="h2" fontWeight={700}>
+        <Typography
+          variant="h5"
+          component="h2"
+          sx={{
+            fontWeight: 700,
+          }}
+        >
           Platform overview
         </Typography>
-        <Typography variant="caption" color="text.secondary" aria-live="polite">
+        <Typography
+          variant="caption"
+          aria-live="polite"
+          sx={{
+            color: 'text.secondary',
+          }}
+        >
           Auto-refreshes every {Math.round(DASHBOARD_REFRESH_MS / 1000)}s
         </Typography>
       </Stack>
@@ -108,7 +122,7 @@ function MetricsGrid({ metrics }: { metrics: DashboardMetrics }) {
   return (
     <Grid container spacing={2}>
       {tiles.map((tile) => (
-        <Grid key={tile.label} item xs={12} sm={6} md={4} lg={3}>
+        <Grid key={tile.label} size={{ xs: 12, sm: 6, md: 4, lg: 3 }}>
           <MetricCard
             label={tile.label}
             value={tile.value}

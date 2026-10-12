@@ -32,6 +32,10 @@ export interface DispatchConfig {
   maxExpansionCycles: number;
   /** Job-offer acceptance timeout in seconds (default 60). */
   offerTimeoutSeconds: number;
+  /** How many providers each wave offers the job to at once; first to accept wins (default 3). */
+  offerBatchSize: number;
+  /** Minutes without an acceptance before the booking goes to the partner agencies (default 5). */
+  agencyFallbackMinutes: number;
 }
 
 /** GET /admin/dispatch/config — current dispatch configuration. */

@@ -293,6 +293,57 @@ Every address may be null. `mobileNumber` is null for a social-login account tha
 | 401 | `INVALID_PRINCIPAL` | Admin endpoint with a non-UUID subject |
 | 502 | `SMS_DELIVERY_FAILED` | Gateway failed; no pending session was created |
 
+#### Email sign-up, email sign-in, password reset, credentials and invitations
+
+Full design: `.kiro/specs/email-auth-and-signup/design.md`. Codes are 6 digits, live 10 minutes and
+allow 5 wrong attempts; one address gets at most one code a minute and five an hour, and sign-up, reset
+and invitation acceptance are limited per client IP (429 `TOO_MANY_REQUESTS` with `Retry-After`).
+Passwords: 8–72 characters with a letter and a digit (400 `WEAK_PASSWORD`). `TokenResponse` is the body
+every sign-in returns (above).
+
+**Public** (no token)
+
+| Method & path | Body | Answer |
+|---|---|---|
+| `POST /auth/register/email` | `{displayName (2-80), email, mobileNumber (E.164), password, role}` — `CUSTOMER` (default) or `SERVICE_PROVIDER` | 202 `{status:"CODE_SENT", expiresInSeconds}`, the same for a new, pending or registered address (a registered one is emailed "you already have an account" instead of a code); 409 `MOBILE_IN_USE`; 400 `INVALID_ROLE` for any other role |
+| `POST /auth/register/email/verify` | `{email, code}` | 200 `TokenResponse`; 400 `INVALID_CODE`; 410 `CODE_EXPIRED` |
+| `POST /auth/register/email/resend` | `{email}` | 202 as above, a code only if a sign-up is waiting |
+| `POST /auth/login/password` | `{identifier, password}` — email or username; `username` still accepted | 200 `TokenResponse`; 401 `INVALID_CREDENTIALS`; 403 `EMAIL_NOT_VERIFIED` (right password, code never entered) / `ACCOUNT_DISABLED`; 429 `ACCOUNT_LOCKED` |
+| `POST /auth/password/forgot` | `{email}` | 202 as above, always |
+| `POST /auth/password/reset` | `{email, code, newPassword}` | 204, every refresh session of the account revoked and any lockout lifted; 400 `INVALID_CODE`; 410 `CODE_EXPIRED` |
+| `GET /auth/invitations/{token}` | — | `{email, role, invitedByName, expiresAt, existingAccount}`; 410 `INVITATION_EXPIRED` for an unknown, used, revoked or expired link |
+| `POST /auth/invitations/{token}/acceptance` | new account `{displayName, mobileNumber, password}`; existing account `{password}` (its own) | 200 `TokenResponse` with the invited role; 401 `INVALID_CREDENTIALS`; 409 `MOBILE_IN_USE` / `PASSWORD_NOT_SET`; 410 |
+
+**Signed in** (any role; the account is always the token's subject)
+
+| Method & path | Body | Answer |
+|---|---|---|
+| `GET /auth/me` | — | `{userId, displayName, email, emailVerified, mobileNumber, username, hasPassword, roles[]}` (`email` null unless verified) |
+| `POST /auth/me/email` | `{email, currentPassword?}` (required when a password is set) | 202 code sent to the new address; 403 `CURRENT_PASSWORD_INCORRECT`; 409 `EMAIL_IN_USE` |
+| `POST /auth/me/email/verify` | `{code}` | 200, the `GET /auth/me` body with the new email |
+| `PUT /auth/me/password` | `{currentPassword?, newPassword}` | 204; 400 `EMAIL_REQUIRED` (no email or username to sign in with); 403 `CURRENT_PASSWORD_INCORRECT` |
+
+**Staff invitations** (ADMIN, SUPER_ADMIN; gateway route `/admin/invitations/**` → auth-service)
+
+| Method & path | Body | Answer |
+|---|---|---|
+| `GET /admin/invitations` | — | `Invitation[]` still usable, newest first |
+| `POST /admin/invitations` | `{email, role}` — `ADMIN` (SUPER_ADMIN only), `FINANCE_ADMIN`, `DISPATCHER`, `SUPPORT_AGENT` | 201 `Invitation`; re-inviting an address revokes its open invitation; 400 `INVALID_ROLE` (never `SUPER_ADMIN` or `TENANT_ADMIN`); 403 `SUPER_ADMIN_REQUIRED` |
+| `DELETE /admin/invitations/{id}` | — | 204; 404 `INVITATION_NOT_FOUND` |
+
+`Invitation = {id, email, role, invitedBy, invitedByName, createdAt, expiresAt}`. Only the SHA-256 of the
+link's token is stored.
+
+**Internal** (`X-Internal-Api-Key`)
+
+| Method & path | Body | Answer |
+|---|---|---|
+| `POST /internal/emails/agency-decision` | `{userId, tenantName, approved, reason?}` | 202 (provider-service asks; auth-service owns email delivery) |
+
+`GET /internal/users/{userId}/contact` now returns the account's `emailAddress` once it is verified.
+Admin user rows (`GET /admin/users`) carry `email` and `displayName`, and `status` may be
+`PENDING_VERIFICATION` (an email sign-up whose code was never entered; removed after 24 hours).
+
 ---
 
 ### customer-service
@@ -662,6 +713,8 @@ Port 8094 locally. Provider paths under `/verifications/{providerId}`, admin pat
 | GET | `/admin/verification/queue` | ADMIN, SUPER_ADMIN | Providers in `DOCUMENT_SUBMITTED`, oldest submission first, at most 200 |
 | GET | `/admin/verification/{providerId}/documents` | ADMIN, SUPER_ADMIN | A provider's submitted documents |
 | POST | `/admin/verification/{providerId}/decision` | ADMIN, SUPER_ADMIN | Approve or reject the documents, 204 |
+| GET | `/admin/verification/background-checks` | ADMIN, SUPER_ADMIN | Providers in `BACKGROUND_CHECK_PENDING` or `BACKGROUND_CHECK_COMPLETED`, oldest check first, at most 200 |
+| POST | `/admin/verification/{providerId}/background-check` | ADMIN, SUPER_ADMIN | Record the check's result and approve or reject in one step, 204 |
 | POST | `/internal/verifications/approved` | service credential | Which of the given providers are `APPROVED` |
 | POST | `/internal/verifications/statuses` | service credential | Current status per provider |
 | POST | `/internal/verifications/{providerId}/suspend` | service credential | Suspend on an admin's behalf, for provider-service |
@@ -712,6 +765,10 @@ Eligibility returns 204 when `APPROVED`, otherwise 403 `PROVIDER_NOT_APPROVED` w
 - `mobileNumber` is always null.
 
 **GET /admin/verification/{providerId}/documents** returns `[{id, type, contentType, url, fileName}]`. `type` is a label such as "Government ID", and `url` and `fileName` are always null. It gives 404 `VERIFICATION_NOT_FOUND` for an unknown provider.
+
+**GET /admin/verification/background-checks** returns `[{providerId, displayName, primarySkill, status, startedAt, result, documentCount}]`.
+
+**POST /admin/verification/{providerId}/background-check** takes `{"outcome": "PASSED" | "FAILED", "result": "...", "reason": "..."}`: `result` is required (at most 2000) and kept on the record; `reason` (at most 1000) is required for `FAILED` and sent to the provider. `PASSED` moves the provider to `APPROVED`, `FAILED` to `REJECTED`, recording `BACKGROUND_CHECK_COMPLETED` first when needed. 409 `INVALID_STATE_TRANSITION` for a provider not at this step (a suspended provider is reinstated with `/approve`, not here). No background-check vendor is integrated, so this is how a check completes.
 
 **POST /admin/verification/{providerId}/decision** takes `{"decision": "APPROVE" | "REJECT", "reason": "..."}` (`reason` at most 1000, required for `REJECT`). The acting admin is the JWT subject.
 
@@ -1019,11 +1076,12 @@ The full transition table is in [ARCHITECTURE.md](ARCHITECTURE.md) section 8.1. 
 
 ### catalog-service
 
-Port 8085. `/catalog` is the public read surface; `/admin/catalog` is CRUD. Only `GET /catalog/**` is permitted anonymously; `CatalogRbacConfig` gates every `/admin/**` method (GET, POST, PUT, DELETE) to ADMIN, SUPER_ADMIN.
+Port 8085. `/catalog` is the public read surface; `/admin/catalog` is CRUD; `/config/client` serves the web apps' settings. Only `GET /catalog/**` and `GET /config/client` are permitted anonymously; `CatalogRbacConfig` gates every `/admin/**` method (GET, POST, PUT, DELETE) to ADMIN, SUPER_ADMIN.
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
 | GET | `/catalog/categories` | public | Active categories with active subcategories, cached |
+| GET | `/config/client` | public | The `config.app_config` rows marked `exposed_to_clients`, as key to value |
 | GET | `/admin/catalog/categories` | ADMIN, SUPER_ADMIN | List all, including inactive |
 | POST | `/admin/catalog/categories` | ADMIN, SUPER_ADMIN | Create a category, 201 |
 | PUT | `/admin/catalog/categories/{categoryId}` | ADMIN, SUPER_ADMIN | Update a category |
@@ -1060,6 +1118,20 @@ Port 8085. `/catalog` is the public read surface; `/admin/catalog` is CRUD. Only
     ]
   }
 ]
+```
+
+**GET /config/client** (`shared/homefix-shared-config`, enabled in this service only) returns the
+platform settings the web apps may read: the rows of `config.app_config` whose
+`exposed_to_clients` is true, keyed by Spring property name, read from the table on each request
+and sent with `Cache-Control: max-age=300, public`. Rows are changed with SQL; see
+ARCHITECTURE.md, "Settings in the database".
+
+```json
+{
+  "homefix.apps.admin-portal-url": "http://localhost:5175",
+  "homefix.apps.customer-app-url": "http://localhost:5173",
+  "homefix.apps.provider-app-url": "http://localhost:5174"
+}
 ```
 
 **Category create and update**
@@ -1928,7 +2000,7 @@ Port 8087. The gateway routes `/dispatch/offers/**` (providers answering offers)
 }
 ```
 
-`status` is `PENDING`, `ACCEPTED`, `DECLINED`, `EXPIRED` or `WITHDRAWN` (the booking was cancelled). Answering an expired offer gives 409 `OFFER_EXPIRED`, and answering a decided one gives 409 `OFFER_ALREADY_DECIDED`. The offer is not pushed: providers poll `GET /dispatch/offers`, because the notification call it would make has no endpoint (see below).
+`status` is `PENDING`, `ACCEPTED`, `DECLINED`, `EXPIRED` or `WITHDRAWN` (another provider accepted first, or the booking was cancelled). A booking is offered to several providers at once (`offerBatchSize`, default 3); the first accept wins and withdraws the others. Answering an expired offer gives 409 `OFFER_EXPIRED`, accepting a job another provider already took gives 409 `OFFER_TAKEN`, and answering a decided one gives 409 `OFFER_ALREADY_DECIDED`. The offer is not pushed: providers poll `GET /dispatch/offers`, because the notification call it would make has no endpoint (see below).
 
 **Weights.**
 
@@ -1944,13 +2016,15 @@ Port 8087. The gateway routes `/dispatch/offers/**` (providers answering offers)
 
 All five are `@NotNull` and must sum to exactly 1.0, checked with `BigDecimal` before the store is touched, so a rejected update leaves the existing weights intact. The same shape is the response.
 
-**Config.** It takes and returns `{weights: {distance, availability, rating, skill, performance}, initialRadiusKm, radiusIncrementKm, maxExpansionCycles, offerTimeoutSeconds}`. Every field is `@NotNull`. The rules are:
+**Config.** It takes and returns `{weights: {distance, availability, rating, skill, performance}, initialRadiusKm, radiusIncrementKm, maxExpansionCycles, offerTimeoutSeconds, offerBatchSize, agencyFallbackMinutes}`. Every field is `@NotNull` except the last two: a request that omits them keeps their current values. The rules are:
 
 - the weights sum to 1.0;
 - `initialRadiusKm` > 0;
 - `radiusIncrementKm` ≥ 0;
 - `maxExpansionCycles` 0 to 10;
-- `offerTimeoutSeconds` 15 to 600.
+- `offerTimeoutSeconds` 15 to 600;
+- `offerBatchSize` 1 to 10 (providers offered at once; default 3);
+- `agencyFallbackMinutes` 1 to 30 (minutes before an unaccepted booking goes to the agencies; default 5).
 
 A PUT changes nothing unless every value passes. Weights and settings are held in process memory, so changes are lost on restart and differ between replicas.
 
@@ -1958,7 +2032,7 @@ This service has no `@ControllerAdvice`. Each controller has a local handler tha
 
 - weights and config: 400 `INVALID_DISPATCH_WEIGHTS`;
 - config only: 400 `INVALID_DISPATCH_SETTINGS` and 400 `VALIDATION_ERROR`;
-- offers: 401 `UNAUTHENTICATED` / `INVALID_PRINCIPAL`, 404 `OFFER_NOT_FOUND`, 409 `OFFER_EXPIRED`, 409 `OFFER_ALREADY_DECIDED`.
+- offers: 401 `UNAUTHENTICATED` / `INVALID_PRINCIPAL`, 404 `OFFER_NOT_FOUND`, 409 `OFFER_EXPIRED`, 409 `OFFER_TAKEN`, 409 `OFFER_ALREADY_DECIDED`.
 
 A `@NotNull` violation on the weights endpoint still returns Spring's default body.
 
@@ -2204,9 +2278,22 @@ admin, or suspending a Tenant, can take up to a minute to reach `/tenant/booking
 | `DELETE /admin/tenants/{id}/admins/{userId}` | — | 204 (revokes the role and ends the user's refresh sessions; access tokens keep the role until they expire) |
 | `POST /admin/tenants/{id}/providers` | `{mobileNumber}` | 201 `TeamProvider` (a provider already on the team is answered unchanged) |
 | `DELETE /admin/tenants/{id}/providers/{providerId}` | — | 204 |
+| `GET /admin/tenants?status=PENDING_APPROVAL` | — | `Tenant[]` with that status (any status works) |
+| `POST /admin/tenants/{id}/approval` | — | `Tenant` (`ACTIVE`; the applicant becomes its admin and is emailed); 409 `APPLICATION_NOT_PENDING` |
+| `POST /admin/tenants/{id}/rejection` | `{reason}` (1–500) | `Tenant` (`REJECTED`; the applicant is emailed the reason); 400 `REASON_REQUIRED`; 409 `APPLICATION_NOT_PENDING` |
+
+**Agency applications** (any signed-in user; gateway route `/tenant-applications/**` → provider-service)
+
+| Method & path | Body | Answer |
+|---|---|---|
+| `POST /tenant-applications` | the Tenant body | 201 `{tenantId, name, status:"PENDING_APPROVAL", rejectionReason, createdAt}`; 409 `APPLICATION_EXISTS` (one pending or active application per user, or already an admin) |
+| `GET /tenant-applications/me` | — | the caller's latest application; 404 `APPLICATION_NOT_FOUND` |
+
+A `PENDING_APPROVAL` or `REJECTED` Tenant covers no booking and grants no `TENANT_ADMIN`; its status changes
+only by approval or rejection (`PUT` and adding admins answer 409 `APPLICATION_NOT_DECIDED`).
 
 `Tenant = {id, name, status, contactPhone, contactEmail, baseLatitude, baseLongitude, serviceRadiusKm,
-categoryIds[], providerCount, adminCount, createdAt, updatedAt}`. The Tenant body has no bean validation;
+categoryIds[], providerCount, adminCount, createdAt, updatedAt, applicantUserId, rejectionReason}`. The Tenant body has no bean validation;
 the service checks it and answers named 400 codes:
 
 - name 2–120 characters after trimming (`INVALID_TENANT_NAME`);
@@ -2578,7 +2665,7 @@ Producer (dispatch-engine, one per declined or unanswered offer):
 
 - `reason` is `REJECTED` (the provider declined) or `TIMED_OUT` (no answer within the offer window). The job-offer adapter also reports a failure to record the offer as `TIMED_OUT`.
 - Written to the outbox in its own transaction, because a rejection changes no other dispatch-engine state. The write is best-effort: if it fails, the failure is logged and the search moves on to the next candidate.
-- Nothing is published for an accepted offer, an offer withdrawn because the booking was cancelled, or a provider busy with another booking's offer (retried within one offer window). A provider declining a Tenant assignment publishes nothing either.
+- Published per provider only when nobody in their wave accepted. Nothing is published for an accepted offer, for the other providers in a wave someone accepted (their offers are withdrawn), an offer withdrawn because the booking was cancelled, or a provider busy with another booking's offer (retried within one offer window). A provider declining a Tenant assignment publishes nothing either.
 - notification-service reads `bookingId`, `customerId` and `providerId`. Under its recipient policy the customer is the recipient.
 
 #### PaymentCompleted

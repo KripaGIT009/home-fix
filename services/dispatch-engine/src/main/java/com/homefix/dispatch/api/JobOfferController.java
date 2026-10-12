@@ -27,7 +27,8 @@ import org.springframework.web.bind.annotation.RestController;
  *   <li>{@code GET  /dispatch/offers/{bookingId}} — one offer, in any status.</li>
  *   <li>{@code POST /dispatch/offers/{bookingId}/accept} and {@code /decline} — the decision;
  *       200 with the decided offer, 409 {@code OFFER_EXPIRED} after the window, 409
- *       {@code OFFER_ALREADY_DECIDED} for a second decision.</li>
+ *       {@code OFFER_TAKEN} when another provider offered the same booking accepted it first, and
+ *       409 {@code OFFER_ALREADY_DECIDED} for a second decision.</li>
  * </ul>
  *
  * <p>The SERVICE_PROVIDER role gate is the shared {@code RbacEnforcementFilter}'s (see
@@ -84,6 +85,8 @@ public class JobOfferController {
             case NOT_FOUND -> throw notFound();
             case EXPIRED -> throw new OfferApiException(HttpStatus.CONFLICT, "OFFER_EXPIRED",
                     "This job offer has expired");
+            case TAKEN -> throw new OfferApiException(HttpStatus.CONFLICT, "OFFER_TAKEN",
+                    "Another provider accepted this job first");
             case ALREADY_DECIDED -> throw new OfferApiException(HttpStatus.CONFLICT,
                     "OFFER_ALREADY_DECIDED", "This job offer is already "
                     + result.offer().status().name().toLowerCase());

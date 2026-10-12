@@ -43,15 +43,17 @@ import com.homefix.provider.service.TenantViews.TenantView;
  * makes (coverage, Requirement MT-4.1; Tenant by admin, by provider and by id).
  *
  * <h2>Administrators span two services</h2>
- * The role lives in the Auth Service, the membership here, and no transaction covers both. The
- * order is chosen so a failure never leaves a membership without its role:
+ * The role lives in the Auth Service, the membership here, and no transaction covers both. Each
+ * order is chosen so that a failure leaves a state that grants nothing extra and that retrying
+ * the same operation repairs:
  * <ul>
  *   <li><b>Add</b>: grant {@code TENANT_ADMIN} first, then record the membership. If recording
  *       fails the grant is compensated (revoked) — but only when the user ends up administering no
  *       Tenant, so a concurrent add that won is never stripped of the role it legitimately got.</li>
- *   <li><b>Remove</b>: delete the membership first, then revoke. If the revoke fails the membership
- *       is restored and the Admin gets 503, so retrying the removal finishes it instead of leaving
- *       an orphaned role that the 404 of a second attempt could never clean up.</li>
+ *   <li><b>Remove</b>: revoke first, then delete the membership. A failed revoke changes nothing
+ *       (503, retry); a failed delete leaves a membership whose user no longer holds the role, which
+ *       opens no portal route and which a retried removal deletes. No compensating write is needed,
+ *       so no double failure can strand a role without a membership.</li>
  * </ul>
  * Neither path holds a database transaction across the HTTP call.
  *
@@ -138,6 +140,12 @@ public class TenantService {
         Tenant tenant = requireTenant(tenantId);
         TenantStatus previous = tenant.getStatus();
         TenantStatus status = command.status() == null ? previous : parseStatus(command.status());
+        if (!previous.isEditable() && status != previous) {
+            // An application is decided by approval or rejection, which also handle its administrator
+            // and the applicant's email (email-auth Requirement 5.4); an edit cannot skip that.
+            throw new ProviderException(HttpStatus.CONFLICT, "APPLICATION_NOT_DECIDED",
+                    "Approve or reject this agency application instead of changing its status");
+        }
         tenant.update(details, status, actor);
         Tenant saved;
         try {
@@ -170,11 +178,29 @@ public class TenantService {
      *         {@code ADMIN_OF_OTHER_TENANT} (Requirement MT-2.3), 503 {@code AUTH_UNAVAILABLE}
      */
     public AdminView addAdmin(UUID tenantId, String mobileNumber, UUID actor) {
-        requireTenant(tenantId);
+        if (!requireTenant(tenantId).getStatus().isEditable()) {
+            // A pending or rejected application grants nobody TENANT_ADMIN (email-auth Property EA4);
+            // approval makes the applicant its administrator.
+            throw new ProviderException(HttpStatus.CONFLICT, "APPLICATION_NOT_DECIDED",
+                    "Approve this agency application before adding administrators");
+        }
         String number = normaliseMobile(mobileNumber);
         AuthUser user = auth.findByMobile(number).orElseThrow(() -> new ProviderException(
                 HttpStatus.NOT_FOUND, "USER_NOT_FOUND", "No account is registered with that mobile number"));
-        UUID userId = user.userId();
+        return addAdminUser(tenantId, user.userId(), number, actor);
+    }
+
+    /**
+     * Makes {@code userId} an administrator of the Tenant: grant {@code TENANT_ADMIN}, then record
+     * the membership, compensating the grant if recording fails (see the class comment). Shared by
+     * {@link #addAdmin} and the approval of an agency application.
+     *
+     * @param mobileNumber shown in the answer only; may be null
+     * @throws ProviderException 409 {@code ADMIN_OF_OTHER_TENANT}, 404 {@code USER_NOT_FOUND}, 503
+     *         {@code AUTH_UNAVAILABLE}
+     */
+    AdminView addAdminUser(UUID tenantId, UUID userId, String mobileNumber, UUID actor) {
+        String number = mobileNumber;
         Optional<TenantAdmin> existing = admins.findById(userId);
         if (existing.isPresent() && !existing.get().getTenantId().equals(tenantId)) {
             throw adminOfOtherTenant();
@@ -206,23 +232,40 @@ public class TenantService {
     }
 
     /**
-     * Removes an administrator (Requirement MT-2.4): the membership first, then the role, which
-     * the Auth Service revokes together with the user's sessions.
+     * Removes an administrator (Requirement MT-2.4): the role first, which the Auth Service revokes
+     * together with the user's sessions, then the membership.
+     *
+     * <p>Why this order. Deleting the membership first needed a compensating write (restore the
+     * membership) when the revoke failed, and if that write failed too the user kept the role with no
+     * membership, which a retry could never clean up because it answered 404. Revoking first needs
+     * no compensation:
+     * <ul>
+     *   <li>revoke fails: nothing has changed, the Admin gets 503 and simply retries;</li>
+     *   <li>revoke succeeds, delete fails: the user keeps a membership but has lost the role and their
+     *       sessions, so once their current access token expires (it cannot be refreshed) they cannot
+     *       reach the Tenant Portal, every route of which requires {@code TENANT_ADMIN}; the
+     *       membership still shows in the admin list, the Admin got an error, and retrying the
+     *       removal finishes it, because the revoke is idempotent.</li>
+     * </ul>
+     * The membership is checked before anything is revoked, so a user who administers another Tenant
+     * (or none) is a 404 and keeps their role.
      *
      * @throws ProviderException 404 {@code TENANT_NOT_FOUND}, 404 {@code USER_NOT_FOUND} when the
-     *         user does not administer this Tenant, 503 {@code AUTH_UNAVAILABLE} (membership kept)
+     *         user does not administer this Tenant, 503 {@code AUTH_UNAVAILABLE} (nothing changed)
      */
     public void removeAdmin(UUID tenantId, UUID userId, UUID actor) {
         requireTenant(tenantId);
-        if (admins.deleteMembership(tenantId, userId) == 0) {
+        boolean administersThisTenant = admins.findById(userId)
+                .map(a -> a.getTenantId().equals(tenantId))
+                .orElse(false);
+        if (!administersThisTenant) {
             throw new ProviderException(HttpStatus.NOT_FOUND, "USER_NOT_FOUND",
                     "That user is not an administrator of this Tenant");
         }
-        try {
-            auth.revokeTenantAdmin(userId);
-        } catch (RuntimeException e) {
-            restoreMembership(tenantId, userId);
-            throw e;
+        auth.revokeTenantAdmin(userId);
+        if (admins.deleteMembership(tenantId, userId) == 0) {
+            // A concurrent removal deleted it between the check and here: same outcome.
+            log.info("Tenant {} admin {} was already removed concurrently", tenantId, userId);
         }
         log.info("Tenant {} admin {} removed by {}", tenantId, userId, actor);
     }
@@ -235,16 +278,6 @@ public class TenantService {
             log.error("Tenant {} admin {} was not recorded and the TENANT_ADMIN grant could not be revoked; "
                     + "the user holds the role without a Tenant until it is revoked", tenantId, userId,
                     revokeFailure);
-        }
-    }
-
-    private void restoreMembership(UUID tenantId, UUID userId) {
-        try {
-            admins.saveAndFlush(new TenantAdmin(tenantId, userId));
-            log.warn("Tenant {} admin {} kept: the TENANT_ADMIN role could not be revoked", tenantId, userId);
-        } catch (RuntimeException restoreFailure) {
-            log.error("Tenant {} admin {} removed but the TENANT_ADMIN role could not be revoked nor the "
-                    + "membership restored; revoke the role manually", tenantId, userId, restoreFailure);
         }
     }
 
@@ -374,11 +407,16 @@ public class TenantService {
     }
 
     private static TenantStatus parseStatus(String status) {
+        TenantStatus parsed;
         try {
-            return TenantStatus.valueOf(status.strip().toUpperCase(Locale.ROOT));
+            parsed = TenantStatus.valueOf(status.strip().toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException e) {
             throw invalid("INVALID_TENANT_STATUS", "status must be ACTIVE or SUSPENDED");
         }
+        if (!parsed.isEditable()) {
+            throw invalid("INVALID_TENANT_STATUS", "status must be ACTIVE or SUSPENDED");
+        }
+        return parsed;
     }
 
     /**

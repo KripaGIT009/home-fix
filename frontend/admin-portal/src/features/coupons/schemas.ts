@@ -35,3 +35,5 @@ export const couponSchema = z
   });
 
 export type CouponFormValues = z.infer<typeof couponSchema>;
+/** What the inputs hold before coercion (react-hook-form's field values). */
+export type CouponFormInput = z.input<typeof couponSchema>;

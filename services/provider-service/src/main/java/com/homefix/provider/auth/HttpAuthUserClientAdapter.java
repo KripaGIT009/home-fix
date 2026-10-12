@@ -1,7 +1,9 @@
 package com.homefix.provider.auth;
 
 import java.time.Duration;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -12,6 +14,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
+import org.springframework.http.MediaType;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -150,6 +153,31 @@ public class HttpAuthUserClientAdapter implements AuthUserClientPort {
                     }
                     return Boolean.TRUE;
                 }));
+    }
+
+    @Override
+    public void sendAgencyDecision(UUID userId, String tenantName, boolean approved, String reason) {
+        if (!configured) {
+            log.warn("Agency decision for user {} not emailed: the internal API key is not configured", userId);
+            return;
+        }
+        Map<String, Object> body = new HashMap<>();
+        body.put("userId", userId);
+        body.put("tenantName", tenantName);
+        body.put("approved", approved);
+        body.put("reason", reason);
+        try {
+            roleCall.execute(() -> restClient.post()
+                    .uri("/internal/emails/agency-decision")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(body)
+                    .exchange((request, response) -> {
+                        requireSuccess(response.getStatusCode(), "agency decision email");
+                        return Boolean.TRUE;
+                    }));
+        } catch (RuntimeException e) {
+            log.warn("Agency decision email for user {} could not be requested: {}", userId, e.getMessage());
+        }
     }
 
     @Override

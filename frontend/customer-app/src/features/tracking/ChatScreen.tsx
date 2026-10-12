@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams } from 'react-router';
 import { Alert, Box, IconButton, Stack, TextField, Typography } from '@mui/material';
 import SendRoundedIcon from '@mui/icons-material/SendRounded';
 import ChatBubbleOutlineRoundedIcon from '@mui/icons-material/ChatBubbleOutlineRounded';
@@ -94,8 +94,12 @@ export function ChatScreen() {
         <Stack
           direction="row"
           spacing={1}
-          alignItems="flex-end"
-          sx={{ pt: 1.5, borderTop: 1, borderColor: 'divider' }}
+          sx={{
+            alignItems: 'flex-end',
+            pt: 1.5,
+            borderTop: 1,
+            borderColor: 'divider',
+          }}
         >
           <TextField
             fullWidth
@@ -111,7 +115,9 @@ export function ChatScreen() {
               }
             }}
             disabled={!channelActive}
-            inputProps={{ 'aria-label': 'Message' }}
+            slotProps={{
+              htmlInput: { 'aria-label': 'Message' },
+            }}
           />
           <IconButton
             onClick={handleSend}
@@ -156,8 +162,13 @@ function MessageBubble({ message }: { message: ChatMessage }) {
       </Box>
       <Typography
         variant="caption"
-        color="text.secondary"
-        sx={{ display: 'block', textAlign: fromCustomer ? 'right' : 'left', mt: 0.25, px: 0.5 }}
+        sx={{
+          color: 'text.secondary',
+          display: 'block',
+          textAlign: fromCustomer ? 'right' : 'left',
+          mt: 0.25,
+          px: 0.5,
+        }}
       >
         {formatDateTime(message.sentAt)}
       </Typography>

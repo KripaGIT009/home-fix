@@ -19,11 +19,23 @@ export function teamProviderColumns(onRemove?: (provider: TeamProvider) => void)
       header: 'Provider',
       render: (row) => (
         <Stack spacing={0.25}>
-          <Typography variant="body2" fontWeight={600} noWrap>
+          <Typography
+            variant="body2"
+            noWrap
+            sx={{
+              fontWeight: 600,
+            }}
+          >
             {row.displayName ?? shortId(row.providerId)}
           </Typography>
           {row.mobileNumber ? (
-            <Typography variant="caption" color="text.secondary" noWrap>
+            <Typography
+              variant="caption"
+              noWrap
+              sx={{
+                color: 'text.secondary',
+              }}
+            >
               {formatMobileNumber(row.mobileNumber)}
             </Typography>
           ) : null}

@@ -9,6 +9,7 @@ import java.util.UUID;
 
 import com.homefix.dispatch.domain.DispatchRequest;
 import com.homefix.dispatch.domain.JobOffer;
+import com.homefix.dispatch.domain.OfferRound;
 import com.homefix.dispatch.domain.OfferStatus;
 import com.homefix.dispatch.service.JobOfferService.Decision;
 import com.homefix.dispatch.service.JobOfferService.Decision.Outcome;
@@ -18,10 +19,11 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * {@link JobOfferService} over the in-memory store (Requirements 8.5-8.7): the provider's decision
- * and the dispatch timeout race on one compare-and-set, so whichever lands first wins; a late
- * accept, someone else's decision and a second decision are all refused; cancellation withdraws a
- * pending offer and nothing else.
+ * {@link JobOfferService} over the in-memory store (Requirements 8.5-8.7). A booking is offered to a
+ * wave of providers at once; decisions and the wave's timeout race on one compare-and-set, so
+ * whichever lands first wins. The first accept takes the booking and withdraws everyone else's
+ * offer, and a second provider's accept is refused as TAKEN. A late accept, someone else's decision
+ * and a second decision are all refused; cancellation withdraws pending offers and nothing else.
  */
 class JobOfferServiceTest {
 
@@ -33,6 +35,8 @@ class JobOfferServiceTest {
 
     private final UUID bookingId = UUID.randomUUID();
     private final UUID provider = UUID.randomUUID();
+    private final UUID second = UUID.randomUUID();
+    private final UUID third = UUID.randomUUID();
     private final UUID stranger = UUID.randomUUID();
 
     @BeforeEach
@@ -42,57 +46,98 @@ class JobOfferServiceTest {
         service = new JobOfferService(store, clock);
     }
 
+    private DispatchRequest request(UUID booking) {
+        return new DispatchRequest(booking, UUID.randomUUID(), 12.9, 77.6, UUID.randomUUID(),
+                List.of("plumbing"), true, clock.instant(), "HFX-2026-0000042", null);
+    }
+
+    private List<JobOffer> open(UUID booking, Duration window, UUID... providers) {
+        return service.open(request(booking), List.of(providers), window);
+    }
+
     // ---- opening -------------------------------------------------------------------------------
 
     @Test
-    void open_storesAPendingOfferThatOutlivesItsWindowByTheGrace() {
-        JobOffer offer = service.open(bookingId, provider, WINDOW);
+    void open_storesOnePendingOfferPerProviderThatOutlivesTheWindowByTheGrace() {
+        List<JobOffer> wave = open(bookingId, WINDOW, provider, second, third);
 
-        assertThat(offer.status()).isEqualTo(OfferStatus.PENDING);
-        assertThat(offer.expiresAt()).isEqualTo(clock.instant().plus(WINDOW));
-        assertThat(store.find(bookingId)).contains(offer);
+        assertThat(wave).extracting(JobOffer::providerId).containsExactly(provider, second, third);
+        assertThat(wave).allSatisfy(o -> {
+            assertThat(o.status()).isEqualTo(OfferStatus.PENDING);
+            assertThat(o.expiresAt()).isEqualTo(clock.instant().plus(WINDOW));
+            assertThat(o.emergency()).isTrue();
+            assertThat(o.reference()).isEqualTo("HFX-2026-0000042");
+        });
+        assertThat(store.find(bookingId)).get().extracting(OfferRound::offers).asList().hasSize(3);
         assertThat(store.ttlOf(bookingId)).isEqualTo(WINDOW.plus(JobOfferService.RETENTION_GRACE));
     }
 
     @Test
-    void openFromRequest_keepsTheDisplayFields() {
-        DispatchRequest request = new DispatchRequest(bookingId, UUID.randomUUID(), 12.9, 77.6,
-                UUID.randomUUID(), List.of("plumbing"), true, clock.instant(), "HFX-2026-0000042", null);
+    void open_addsALaterWaveAlongsideTheEarlierOffers() {
+        open(bookingId, WINDOW, provider);
+        service.decide(bookingId, provider, OfferStatus.DECLINED);
 
-        JobOffer offer = service.open(request, provider, WINDOW);
+        open(bookingId, WINDOW, second, third);
 
-        assertThat(offer.emergency()).isTrue();
-        assertThat(offer.reference()).isEqualTo("HFX-2026-0000042");
-        assertThat(store.find(bookingId)).contains(offer);
+        assertThat(service.statusOf(bookingId, provider)).contains(OfferStatus.DECLINED);
+        assertThat(service.statusOf(bookingId, second)).contains(OfferStatus.PENDING);
+        assertThat(service.statusOf(bookingId, third)).contains(OfferStatus.PENDING);
+    }
+
+    @Test
+    void open_onceSomeoneAccepted_opensNothing() {
+        open(bookingId, WINDOW, provider);
+        service.decide(bookingId, provider, OfferStatus.ACCEPTED);
+
+        assertThat(open(bookingId, WINDOW, second)).isEmpty();
+        assertThat(service.statusOf(bookingId, second)).isEmpty();
     }
 
     // ---- provider decisions --------------------------------------------------------------------
 
     @Test
-    void pendingOffer_isAcceptedByItsProvider() {
-        service.open(bookingId, provider, WINDOW);
+    void firstAccept_takesTheBookingAndWithdrawsTheRestOfTheWave() {
+        open(bookingId, WINDOW, provider, second, third);
         clock.advance(Duration.ofSeconds(20));
 
-        Decision decision = service.decide(bookingId, provider, OfferStatus.ACCEPTED);
+        Decision decision = service.decide(bookingId, second, OfferStatus.ACCEPTED);
 
         assertThat(decision.outcome()).isEqualTo(Outcome.APPLIED);
         assertThat(decision.offer().status()).isEqualTo(OfferStatus.ACCEPTED);
-        assertThat(service.statusOf(bookingId, provider)).contains(OfferStatus.ACCEPTED);
+        assertThat(service.statusOf(bookingId, provider)).contains(OfferStatus.WITHDRAWN);
+        assertThat(service.statusOf(bookingId, third)).contains(OfferStatus.WITHDRAWN);
+        assertThat(service.pendingFor(provider)).isEmpty();
+        assertThat(service.pendingFor(third)).isEmpty();
     }
 
     @Test
-    void pendingOffer_isDeclinedByItsProvider() {
-        service.open(bookingId, provider, WINDOW);
+    void secondAccept_isRefusedAsTakenAndTheFirstStands() {
+        open(bookingId, WINDOW, provider, second);
+        service.decide(bookingId, provider, OfferStatus.ACCEPTED);
+
+        Decision late = service.decide(bookingId, second, OfferStatus.ACCEPTED);
+
+        assertThat(late.outcome()).isEqualTo(Outcome.TAKEN);
+        assertThat(late.offer().status()).isEqualTo(OfferStatus.WITHDRAWN);
+        assertThat(service.round(bookingId)).get()
+                .extracting(r -> r.accepted().orElseThrow().providerId()).isEqualTo(provider);
+    }
+
+    @Test
+    void aDecline_leavesTheOthersInTheWaveOpen() {
+        open(bookingId, WINDOW, provider, second);
 
         Decision decision = service.decide(bookingId, provider, OfferStatus.DECLINED);
 
         assertThat(decision.outcome()).isEqualTo(Outcome.APPLIED);
         assertThat(service.statusOf(bookingId, provider)).contains(OfferStatus.DECLINED);
+        assertThat(service.statusOf(bookingId, second)).contains(OfferStatus.PENDING);
+        assertThat(service.decide(bookingId, second, OfferStatus.ACCEPTED).outcome()).isEqualTo(Outcome.APPLIED);
     }
 
     @Test
     void lateAccept_beforeTheTimeoutRan_isRefusedAndExpiresTheOffer() {
-        service.open(bookingId, provider, WINDOW);
+        open(bookingId, WINDOW, provider);
         clock.advance(WINDOW);
 
         Decision decision = service.decide(bookingId, provider, OfferStatus.ACCEPTED);
@@ -100,14 +145,15 @@ class JobOfferServiceTest {
         assertThat(decision.outcome()).isEqualTo(Outcome.EXPIRED);
         assertThat(decision.offer().status()).isEqualTo(OfferStatus.EXPIRED);
         // The dispatch thread's close then sees EXPIRED, not an accept.
-        assertThat(service.expire(bookingId, provider)).isEqualTo(OfferStatus.EXPIRED);
+        assertThat(service.expire(bookingId, List.of(provider)).offerTo(provider))
+                .get().extracting(JobOffer::status).isEqualTo(OfferStatus.EXPIRED);
     }
 
     @Test
     void lateAccept_afterTheTimeoutRan_isRefused() {
-        service.open(bookingId, provider, WINDOW);
+        open(bookingId, WINDOW, provider);
         clock.advance(WINDOW);
-        assertThat(service.expire(bookingId, provider)).isEqualTo(OfferStatus.EXPIRED);
+        service.expire(bookingId, List.of(provider));
 
         Decision decision = service.decide(bookingId, provider, OfferStatus.ACCEPTED);
 
@@ -116,8 +162,8 @@ class JobOfferServiceTest {
     }
 
     @Test
-    void anotherProvidersDecision_isNotFoundAndLeavesTheOfferPending() {
-        service.open(bookingId, provider, WINDOW);
+    void aStrangersDecision_isNotFoundAndLeavesTheOffersPending() {
+        open(bookingId, WINDOW, provider);
 
         Decision decision = service.decide(bookingId, stranger, OfferStatus.ACCEPTED);
 
@@ -133,20 +179,20 @@ class JobOfferServiceTest {
     }
 
     @Test
-    void secondDecision_isRefusedAndTheFirstStands() {
-        service.open(bookingId, provider, WINDOW);
+    void secondDecisionBySameProvider_isRefusedAndTheFirstStands() {
+        open(bookingId, WINDOW, provider);
         service.decide(bookingId, provider, OfferStatus.DECLINED);
 
-        Decision second = service.decide(bookingId, provider, OfferStatus.ACCEPTED);
+        Decision again = service.decide(bookingId, provider, OfferStatus.ACCEPTED);
 
-        assertThat(second.outcome()).isEqualTo(Outcome.ALREADY_DECIDED);
-        assertThat(second.offer().status()).isEqualTo(OfferStatus.DECLINED);
+        assertThat(again.outcome()).isEqualTo(Outcome.ALREADY_DECIDED);
+        assertThat(again.offer().status()).isEqualTo(OfferStatus.DECLINED);
         assertThat(service.statusOf(bookingId, provider)).contains(OfferStatus.DECLINED);
     }
 
     @Test
-    void acceptOfAWithdrawnOffer_isRefusedAsAlreadyDecided() {
-        service.open(bookingId, provider, WINDOW);
+    void acceptOfAnOfferWithdrawnByCancellation_isRefusedAsAlreadyDecided() {
+        open(bookingId, WINDOW, provider);
         service.withdraw(bookingId);
 
         Decision decision = service.decide(bookingId, provider, OfferStatus.ACCEPTED);
@@ -158,55 +204,53 @@ class JobOfferServiceTest {
     // ---- timeout -------------------------------------------------------------------------------
 
     @Test
-    void expire_keepsADecisionThatLandedFirst() {
-        service.open(bookingId, provider, WINDOW);
-        service.decide(bookingId, provider, OfferStatus.ACCEPTED);
+    void expire_keepsADecisionThatLandedFirstAndClosesTheRest() {
+        open(bookingId, WINDOW, provider, second, third);
+        service.decide(bookingId, provider, OfferStatus.DECLINED);
         clock.advance(WINDOW);
 
-        assertThat(service.expire(bookingId, provider)).isEqualTo(OfferStatus.ACCEPTED);
+        OfferRound after = service.expire(bookingId, List.of(provider, second, third));
+
+        assertThat(after.offerTo(provider)).get().extracting(JobOffer::status).isEqualTo(OfferStatus.DECLINED);
+        assertThat(after.offerTo(second)).get().extracting(JobOffer::status).isEqualTo(OfferStatus.EXPIRED);
+        assertThat(after.offerTo(third)).get().extracting(JobOffer::status).isEqualTo(OfferStatus.EXPIRED);
     }
 
     @Test
-    void expire_closesAnUnansweredOffer() {
-        service.open(bookingId, provider, WINDOW);
-        clock.advance(WINDOW);
+    void expire_onlyClosesTheGivenProviders() {
+        open(bookingId, WINDOW, provider);
+        open(bookingId, WINDOW, second);
 
-        assertThat(service.expire(bookingId, provider)).isEqualTo(OfferStatus.EXPIRED);
+        service.expire(bookingId, List.of(provider));
+
         assertThat(service.statusOf(bookingId, provider)).contains(OfferStatus.EXPIRED);
+        assertThat(service.statusOf(bookingId, second)).contains(OfferStatus.PENDING);
     }
 
     @Test
-    void expire_ofAnOfferGoneFromStorage_reportsExpired() {
-        service.open(bookingId, provider, WINDOW);
+    void expire_ofOffersGoneFromStorage_returnsAnEmptyRound() {
+        open(bookingId, WINDOW, provider);
         store.evict(bookingId);
 
-        assertThat(service.expire(bookingId, provider)).isEqualTo(OfferStatus.EXPIRED);
-    }
-
-    @Test
-    void expire_ofAnOfferSinceMadeToSomeoneElse_reportsExpiredAndLeavesTheirsOpen() {
-        service.open(bookingId, provider, WINDOW);
-        service.open(bookingId, stranger, WINDOW);
-
-        assertThat(service.expire(bookingId, provider)).isEqualTo(OfferStatus.EXPIRED);
-        assertThat(service.statusOf(bookingId, stranger)).contains(OfferStatus.PENDING);
+        assertThat(service.expire(bookingId, List.of(provider)).isEmpty()).isTrue();
     }
 
     // ---- withdraw ------------------------------------------------------------------------------
 
     @Test
-    void withdraw_closesAPendingOffer() {
-        service.open(bookingId, provider, WINDOW);
+    void withdraw_closesEveryPendingOffer() {
+        open(bookingId, WINDOW, provider, second);
 
         service.withdraw(bookingId);
 
         assertThat(service.statusOf(bookingId, provider)).contains(OfferStatus.WITHDRAWN);
+        assertThat(service.statusOf(bookingId, second)).contains(OfferStatus.WITHDRAWN);
         assertThat(service.pendingFor(provider)).isEmpty();
     }
 
     @Test
-    void withdraw_keepsADecidedOfferAndToleratesNoOffer() {
-        service.open(bookingId, provider, WINDOW);
+    void withdraw_keepsAnAcceptedOfferAndToleratesNoOffer() {
+        open(bookingId, WINDOW, provider);
         service.decide(bookingId, provider, OfferStatus.ACCEPTED);
 
         service.withdraw(bookingId);
@@ -223,11 +267,11 @@ class JobOfferServiceTest {
         UUID sooner = UUID.randomUUID();
         UUID decided = UUID.randomUUID();
         UUID someoneElses = UUID.randomUUID();
-        service.open(later, provider, Duration.ofSeconds(60));
-        service.open(sooner, provider, Duration.ofSeconds(30));
-        service.open(decided, provider, Duration.ofSeconds(45));
+        open(later, Duration.ofSeconds(60), provider);
+        open(sooner, Duration.ofSeconds(30), provider);
+        open(decided, Duration.ofSeconds(45), provider);
         service.decide(decided, provider, OfferStatus.DECLINED);
-        service.open(someoneElses, stranger, Duration.ofSeconds(10));
+        open(someoneElses, Duration.ofSeconds(10), stranger);
 
         assertThat(service.pendingFor(provider)).extracting(JobOffer::bookingId)
                 .containsExactly(sooner, later);
@@ -238,17 +282,17 @@ class JobOfferServiceTest {
     }
 
     @Test
-    void pendingFor_skipsAnOfferThatWasReofferedToSomeoneElse() {
-        service.open(bookingId, provider, WINDOW);
-        service.open(bookingId, stranger, WINDOW);
+    void pendingFor_showsTheSameBookingToEveryProviderInTheWave() {
+        open(bookingId, WINDOW, provider, second);
 
-        assertThat(service.pendingFor(provider)).isEmpty();
-        assertThat(service.pendingFor(stranger)).hasSize(1);
+        assertThat(service.pendingFor(provider)).extracting(JobOffer::bookingId).containsExactly(bookingId);
+        assertThat(service.pendingFor(second)).extracting(JobOffer::bookingId).containsExactly(bookingId);
+        assertThat(service.pendingFor(stranger)).isEmpty();
     }
 
     @Test
     void viewFor_showsAnOfferOnlyToItsProviderInAnyStatus() {
-        service.open(bookingId, provider, WINDOW);
+        open(bookingId, WINDOW, provider);
         service.decide(bookingId, provider, OfferStatus.DECLINED);
 
         assertThat(service.viewFor(bookingId, provider)).get()

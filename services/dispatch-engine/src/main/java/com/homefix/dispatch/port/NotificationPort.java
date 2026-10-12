@@ -5,23 +5,20 @@ import java.util.UUID;
 
 /**
  * Outbound port for the dispatch signalling that goes to people rather than services: the
- * "no provider available" notices required when all radius cycles are exhausted (Requirement 8.9)
- * — the customer via push and SMS, the dispatcher team via an internal channel — and the push that
- * tells a provider a job offer is waiting (Requirement 8.5). The concrete transport (Notification
- * Service call, internal alert bus) is hidden so these paths are unit-testable.
+ * dispatcher-team alert when all radius cycles are exhausted (Requirement 8.9) and the push that
+ * tells a provider a job offer is waiting (Requirement 8.5). The concrete transport is hidden so
+ * these paths are unit-testable.
+ *
+ * <p>The customer's "no provider available" notice is deliberately not here. The Booking Service
+ * publishes {@code BookingCancelled} with {@code status = SEARCHING_FAILED} in the same transaction
+ * that fails the booking, and the Notification Service turns that event into the customer's notice
+ * on every channel. A separate call from the Dispatch Engine duplicated it — or would have, had the
+ * endpoint it called ever existed.
  *
  * <p>Every method is best-effort: implementations must log and swallow delivery failures, never
  * throw, because none of these notices may break or stall dispatch.
  */
 public interface NotificationPort {
-
-    /**
-     * Notifies the customer of a failed search via push notification and SMS.
-     *
-     * @param bookingId  the booking that failed to match
-     * @param customerId the customer to notify
-     */
-    void notifyCustomerNoProviderAvailable(UUID bookingId, UUID customerId);
 
     /** Alerts the dispatcher team via the internal channel that a booking search failed. */
     void alertDispatcherTeam(UUID bookingId);

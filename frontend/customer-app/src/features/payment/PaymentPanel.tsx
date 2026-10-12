@@ -82,7 +82,14 @@ export function PaymentCardActions({ detail }: { detail: BookingDetail }) {
 
   if (flow.confirming) {
     return (
-      <Typography variant="body2" color="text.secondary" component="div" role="status">
+      <Typography
+        variant="body2"
+        component="div"
+        role="status"
+        sx={{
+          color: 'text.secondary',
+        }}
+      >
         <ConfirmingNote flow={flow} amount={amount} />
       </Typography>
     );
@@ -124,7 +131,9 @@ function MethodPicker({ flow, id }: { flow: PaymentFlow; id: string }) {
         direction="row"
         spacing={1}
         useFlexGap
-        flexWrap="wrap"
+        sx={{
+          flexWrap: 'wrap',
+        }}
       >
         {PAYMENT_METHODS.map((option) => {
           const selected = flow.method === option.value;
@@ -203,8 +212,10 @@ function ConfirmingNote({ flow, amount }: { flow: PaymentFlow; amount: string })
     <Stack
       direction="row"
       spacing={1}
-      alignItems="center"
-      justifyContent={{ xs: 'center', sm: 'flex-start' }}
+      sx={{
+        alignItems: 'center',
+        justifyContent: { xs: 'center', sm: 'flex-start' },
+      }}
     >
       <CircularProgress size={14} aria-hidden />
       <span>

@@ -36,7 +36,7 @@ import static com.homefix.booking.domain.BookingStatus.SEARCHING_PROVIDER;
  *
  * <p>Permitted transitions (Requirement 9.1):
  * <pre>
- *   CREATED                    -> SEARCHING_PROVIDER
+ *   CREATED                    -> SEARCHING_PROVIDER | CANCELLED
  *   SEARCHING_PROVIDER         -> PROVIDER_ASSIGNED | AWAITING_ASSIGNMENT | SEARCHING_FAILED | CANCELLED
  *   AWAITING_ASSIGNMENT        -> PROVIDER_ASSIGNED | SEARCHING_FAILED | CANCELLED
  *   PROVIDER_ASSIGNED          -> PROVIDER_ACCEPTED | AWAITING_ASSIGNMENT | CANCELLED
@@ -60,6 +60,10 @@ import static com.homefix.booking.domain.BookingStatus.SEARCHING_PROVIDER;
  * assignment moves it to PROVIDER_ASSIGNED, and the assigned Provider's decline returns it to the
  * queue. Which caller may take each edge (fallback only after dispatch failed, decline only for a
  * queued booking) is the services' rule; this map only says the edge exists.
+ *
+ * <p>{@code CREATED -> CANCELLED} is not in Requirement 9.1's list, but Requirement 9.16 names
+ * CREATED among the states a booking may be cancelled from at no fee; without the edge an
+ * unconfirmed booking could never be withdrawn.
  */
 public final class BookingStateMachine {
 
@@ -67,7 +71,7 @@ public final class BookingStateMachine {
 
     private static Map<BookingStatus, Set<BookingStatus>> buildTransitions() {
         Map<BookingStatus, Set<BookingStatus>> map = new EnumMap<>(BookingStatus.class);
-        map.put(CREATED, EnumSet.of(SEARCHING_PROVIDER));
+        map.put(CREATED, EnumSet.of(SEARCHING_PROVIDER, CANCELLED));
         map.put(SEARCHING_PROVIDER, EnumSet.of(PROVIDER_ASSIGNED, AWAITING_ASSIGNMENT, SEARCHING_FAILED, CANCELLED));
         map.put(AWAITING_ASSIGNMENT, EnumSet.of(PROVIDER_ASSIGNED, SEARCHING_FAILED, CANCELLED));
         map.put(PROVIDER_ASSIGNED, EnumSet.of(PROVIDER_ACCEPTED, AWAITING_ASSIGNMENT, CANCELLED));

@@ -1,9 +1,10 @@
 package com.homefix.shared.outbox;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
+import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
@@ -114,7 +115,7 @@ class OutboxWriteAtomicityTest {
     static class TestBeans {
         @Bean
         ObjectMapper objectMapper() {
-            return new ObjectMapper();
+            return new JsonMapper();
         }
 
         @Bean

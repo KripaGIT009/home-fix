@@ -122,4 +122,36 @@ public interface BookingRepository extends JpaRepository<Booking, UUID> {
      */
     List<Booking> findByStatusInAndQueuedForAssignmentAtBeforeOrderByQueuedForAssignmentAtAsc(
             Collection<BookingStatus> statuses, Instant cutoff, Pageable pageable);
+
+    /**
+     * Bookings still in SEARCHING_PROVIDER that entered it before {@code cutoff}, oldest first — the
+     * stalled-search sweeper's batch (review 17.5 item 4). When a booking entered the state is read
+     * from its audit trail ({@code idx_booking_audit_booking}); the status is a literal so the
+     * partial {@code idx_booking_sweep_status} (migration V4) serves it under any plan.
+     */
+    @Query("""
+            select b from Booking b
+            where b.status = com.homefix.booking.domain.BookingStatus.SEARCHING_PROVIDER
+              and (select max(a.transitionedAt) from BookingAudit a
+                   where a.bookingId = b.id
+                     and a.toState = com.homefix.booking.domain.BookingStatus.SEARCHING_PROVIDER) < :cutoff
+            order by b.createdAt asc, b.id asc
+            """)
+    List<Booking> findSearchingProviderSince(@Param("cutoff") Instant cutoff, Pageable pageable);
+
+    /**
+     * Bookings still in CUSTOMER_APPROVAL_PENDING that entered it (most recently) before
+     * {@code cutoff}, oldest first — the quote-approval timeout sweeper's batch (Requirement 9.9).
+     * Read like {@link #findSearchingProviderSince}; a booking can enter the state more than once
+     * (a second parts request after an approval), so the latest entry is the one that counts.
+     */
+    @Query("""
+            select b from Booking b
+            where b.status = com.homefix.booking.domain.BookingStatus.CUSTOMER_APPROVAL_PENDING
+              and (select max(a.transitionedAt) from BookingAudit a
+                   where a.bookingId = b.id
+                     and a.toState = com.homefix.booking.domain.BookingStatus.CUSTOMER_APPROVAL_PENDING) < :cutoff
+            order by b.createdAt asc, b.id asc
+            """)
+    List<Booking> findCustomerApprovalPendingSince(@Param("cutoff") Instant cutoff, Pageable pageable);
 }

@@ -70,4 +70,10 @@ public class InMemoryLoginAttemptStore implements LoginAttemptStore {
     public void clearFailures(String username) {
         failures.remove(username);
     }
+
+    @Override
+    public void unlock(String username) {
+        failures.remove(username);
+        locks.remove(username);
+    }
 }

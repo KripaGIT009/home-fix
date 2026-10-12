@@ -25,7 +25,6 @@ import com.homefix.provider.bank.BankAccountVerificationPort;
 import com.homefix.provider.bank.BankAccountView;
 import com.homefix.provider.catalog.CatalogClientPort;
 import com.homefix.provider.config.ProviderProperties;
-import com.homefix.provider.crypto.KmsEncryptionPort;
 import com.homefix.provider.domain.AvailabilitySlot;
 import com.homefix.provider.domain.ProviderCategorySelection;
 import com.homefix.provider.domain.EarningType;
@@ -43,8 +42,9 @@ import com.homefix.provider.service.ProfileUpdateCommand.CategorySelectionComman
  * rating-based Admin-review flagging (Requirements 4 and 14).
  *
  * <p>External dependencies are expressed as ports ({@link CatalogClientPort},
- * {@link KmsEncryptionPort}, {@link AdminAlertPort}, {@link BankAccountVerificationPort}) so the
- * logic is fully unit-testable.
+ * {@link AdminAlertPort}, {@link BankAccountVerificationPort}) so the logic is fully unit-testable.
+ * Encryption at rest goes through {@link BankAccountCodec}; a settlement copies the account's
+ * ciphertext and never encrypts a destination of its own.
  */
 @Service
 public class ProviderService {
@@ -55,7 +55,6 @@ public class ProviderService {
     private final ProviderEarningRepository earningRepository;
     private final SettlementRepository settlementRepository;
     private final CatalogClientPort catalogClient;
-    private final KmsEncryptionPort kms;
     private final AdminAlertPort adminAlert;
     private final ProviderProperties props;
     private final BankAccountCodec bankAccountCodec;
@@ -65,7 +64,6 @@ public class ProviderService {
                            ProviderEarningRepository earningRepository,
                            SettlementRepository settlementRepository,
                            CatalogClientPort catalogClient,
-                           KmsEncryptionPort kms,
                            AdminAlertPort adminAlert,
                            ProviderProperties props,
                            BankAccountCodec bankAccountCodec,
@@ -74,7 +72,6 @@ public class ProviderService {
         this.earningRepository = earningRepository;
         this.settlementRepository = settlementRepository;
         this.catalogClient = catalogClient;
-        this.kms = kms;
         this.adminAlert = adminAlert;
         this.props = props;
         this.bankAccountCodec = bankAccountCodec;
@@ -261,8 +258,19 @@ public class ProviderService {
      * line showing gross, platform fee, and net (Requirement 14.1).
      *
      * <p>Idempotent per booking: the Payment Service delivers the credit at least once, so a
-     * second credit for a booking that already has its JOB_CREDIT line changes nothing (a unique
-     * index, migration V2, settles two deliveries that race).
+     * second credit for a booking that already has its JOB_CREDIT line changes nothing. The check
+     * is scoped by provider as well: a booking pays exactly one provider, so a credit of a booking
+     * already credited to a <em>different</em> provider is not a repeat but a contradiction, and is
+     * refused with 409 {@code EARNING_BOOKING_CONFLICT} instead of being silently "applied".
+     *
+     * <p>Two deliveries that race both pass the check; the unique index (migration V2) then refuses
+     * the second insert. The line is flushed here so that refusal surfaces as a
+     * {@link org.springframework.dao.DataIntegrityViolationException} from this call, which rolls the
+     * transaction back; the caller then answers through {@link #jobCreditAlreadyApplied} instead of
+     * a 500.
+     *
+     * @throws ProviderException 409 {@code EARNING_BOOKING_CONFLICT} when the booking was credited to
+     *                           another provider
      */
     @Transactional
     public ProviderProfile creditJobEarning(UUID providerId, UUID bookingId, String bookingReference,
@@ -277,14 +285,55 @@ public class ProviderService {
             throw ProviderException.validation("Platform fee cannot exceed gross earning");
         }
         ProviderProfile profile = getExisting(providerId);
-        if (bookingId != null && earningRepository.existsByBookingIdAndType(bookingId, EarningType.JOB_CREDIT)) {
-            log.info("Job credit for booking {} already applied; ignoring the repeat", bookingId);
-            return profile;
+        if (bookingId != null) {
+            Optional<ProviderEarning> applied =
+                    earningRepository.findFirstByBookingIdAndType(bookingId, EarningType.JOB_CREDIT);
+            if (applied.isPresent()) {
+                requireSameProvider(applied.get(), providerId);
+                log.info("Job credit for booking {} already applied to provider {}; ignoring the repeat",
+                        bookingId, providerId);
+                return profile;
+            }
         }
         ProviderEarning earning = ProviderEarning.jobCredit(providerId, bookingId, bookingReference, gross, platformFee);
-        earningRepository.save(earning);
+        earningRepository.saveAndFlush(earning);
         profile.creditWallet(earning.getNet());
         return profileRepository.save(profile);
+    }
+
+    /**
+     * The answer to a job credit that lost a race with another delivery of the same booking's credit
+     * (the unique index refused its insert, see {@link #creditJobEarning}): the provider's profile
+     * with the balance the winning delivery produced, exactly as for a repeat that came later.
+     *
+     * @return empty when the booking has no job credit after all, i.e. the refused insert was not a
+     *         duplicate and the caller should surface the original failure
+     * @throws ProviderException 409 {@code EARNING_BOOKING_CONFLICT} when the winning credit went to
+     *                           another provider; 404 for an unknown provider
+     */
+    @Transactional(readOnly = true)
+    public Optional<ProviderProfile> jobCreditAlreadyApplied(UUID providerId, UUID bookingId) {
+        if (bookingId == null) {
+            return Optional.empty();
+        }
+        Optional<ProviderEarning> applied =
+                earningRepository.findFirstByBookingIdAndType(bookingId, EarningType.JOB_CREDIT);
+        if (applied.isEmpty()) {
+            return Optional.empty();
+        }
+        requireSameProvider(applied.get(), providerId);
+        log.info("Job credit for booking {} was applied by a concurrent delivery; answering as a repeat",
+                bookingId);
+        return Optional.of(getExisting(providerId));
+    }
+
+    private static void requireSameProvider(ProviderEarning applied, UUID providerId) {
+        if (!applied.getProviderId().equals(providerId)) {
+            log.error("Job credit for booking {} sent for provider {} but already applied to provider {}",
+                    applied.getBookingId(), providerId, applied.getProviderId());
+            throw new ProviderException(HttpStatus.CONFLICT, "EARNING_BOOKING_CONFLICT",
+                    "Booking " + applied.getBookingId() + " was already credited to another provider");
+        }
     }
 
     /** Records a complaint-related penalty deduction, itemised separately (Requirement 14.1). */
@@ -326,13 +375,18 @@ public class ProviderService {
                     "A verified bank account is required before requesting a settlement");
         }
 
+        // Requirement 14.3: the transfer goes to the provider's verified registered account, and only
+        // there. Any other destination is refused, so a payout can never be directed to an account
+        // nobody verified (previously any other reference was encrypted and used as the destination).
+        if (!usesStoredAccount(profile, cmd.bankAccountRef())) {
+            throw new ProviderException(HttpStatus.BAD_REQUEST, "BANK_ACCOUNT_NOT_ON_FILE",
+                    "Settlements are paid only to your verified bank account on file; omit bankAccountRef "
+                            + "or send that account's id");
+        }
         // Requirement 4.9: the destination is stored encrypted at rest. The account on file is
         // already ciphertext and is copied as is: encrypting it again would leave the settlement
         // holding a value that decrypts to ciphertext rather than to the account.
-        String encryptedRef = usesStoredAccount(profile, cmd.bankAccountRef())
-                ? profile.getBankAccountEncrypted()
-                : kms.encrypt(cmd.bankAccountRef());
-        Settlement settlement = Settlement.request(providerId, amount, encryptedRef);
+        Settlement settlement = Settlement.request(providerId, amount, profile.getBankAccountEncrypted());
         settlementRepository.save(settlement);
 
         // Reserve the funds by debiting the wallet; a failed transfer credits them back downstream.
@@ -342,10 +396,10 @@ public class ProviderService {
     }
 
     /**
-     * {@code true} when the settlement goes to the account on file: no reference supplied, or the
+     * {@code true} when the request names the account on file: no reference supplied, or the
      * account's own id ({@code BankAccountResponse.id}, the profile id), which is what the provider
-     * app sends when the provider picks their account. Any other reference is a raw destination to
-     * encrypt, as before.
+     * app sends when the provider picks their account. Any other reference is refused by
+     * {@link #requestSettlement}.
      */
     private static boolean usesStoredAccount(ProviderProfile profile, String bankAccountRef) {
         return bankAccountRef == null

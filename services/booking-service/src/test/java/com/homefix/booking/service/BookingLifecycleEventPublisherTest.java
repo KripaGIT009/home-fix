@@ -15,13 +15,13 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
-import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder;
+import tools.jackson.databind.cfg.DateTimeFeature;
 
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import com.homefix.booking.domain.Booking;
 import com.homefix.booking.domain.BookingStatus;
 import com.homefix.booking.support.Bookings;
@@ -46,8 +46,8 @@ class BookingLifecycleEventPublisherTest {
      * Same defaults as the Spring Boot ObjectMapper the publisher and consumers are given: Boot's
      * Jackson auto-configuration additionally turns off timestamp-style dates.
      */
-    private final ObjectMapper objectMapper = Jackson2ObjectMapperBuilder.json()
-            .featuresToDisable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+    private final ObjectMapper objectMapper = JsonMapper.builder()
+            .disable(DateTimeFeature.WRITE_DATES_AS_TIMESTAMPS)
             .build();
 
     private OutboxEventRepository outboxRepository;
@@ -127,20 +127,20 @@ class BookingLifecycleEventPublisherTest {
         assertThat(row.getEventType()).isEqualTo("BookingCancelled");
 
         JsonNode json = objectMapper.readTree(row.getPayload());
-        assertThat(json.get("bookingId").asText()).isEqualTo(booking.getId().toString());
-        assertThat(json.get("reference").asText()).isEqualTo(booking.getReference());
+        assertThat(json.get("bookingId").asString()).isEqualTo(booking.getId().toString());
+        assertThat(json.get("reference").asString()).isEqualTo(booking.getReference());
         assertThat(json.has("bookingReference")).isFalse();
-        assertThat(json.get("customerId").asText()).isEqualTo(booking.getCustomerId().toString());
-        assertThat(json.get("providerId").asText()).isEqualTo(providerId.toString());
-        assertThat(json.get("previousStatus").asText()).isEqualTo("PROVIDER_ON_THE_WAY");
-        assertThat(json.get("status").asText()).isEqualTo("CANCELLED");
-        assertThat(json.get("cancelledBy").asText()).isEqualTo(adminId.toString());
-        assertThat(json.get("cancelledByRole").asText()).isEqualTo("ADMIN");
-        assertThat(json.get("reason").asText()).isEqualTo("provider unreachable");
+        assertThat(json.get("customerId").asString()).isEqualTo(booking.getCustomerId().toString());
+        assertThat(json.get("providerId").asString()).isEqualTo(providerId.toString());
+        assertThat(json.get("previousStatus").asString()).isEqualTo("PROVIDER_ON_THE_WAY");
+        assertThat(json.get("status").asString()).isEqualTo("CANCELLED");
+        assertThat(json.get("cancelledBy").asString()).isEqualTo(adminId.toString());
+        assertThat(json.get("cancelledByRole").asString()).isEqualTo("ADMIN");
+        assertThat(json.get("reason").asString()).isEqualTo("provider unreachable");
         assertThat(json.get("cancellationFee").decimalValue()).isEqualByComparingTo("75.00");
         // ISO-8601 strings, not epoch numbers, so every consumer reads them as Instants.
-        assertThat(json.get("bookingCreatedAt").isTextual()).isTrue();
-        assertThat(json.get("occurredAt").asText()).isEqualTo("2026-09-11T09:30:00Z");
+        assertThat(json.get("bookingCreatedAt").isString()).isTrue();
+        assertThat(json.get("occurredAt").asString()).isEqualTo("2026-09-11T09:30:00Z");
     }
 
     @Test
@@ -165,9 +165,9 @@ class BookingLifecycleEventPublisherTest {
         assertThat(notification.reference()).isEqualTo(booking.getReference());
 
         JsonNode json = objectMapper.readTree(row.getPayload());
-        assertThat(json.get("reference").asText()).isEqualTo(booking.getReference());
-        assertThat(json.get("bookingCreatedAt").isTextual()).isTrue();
-        assertThat(json.get("occurredAt").asText()).isEqualTo("2026-09-11T09:30:00Z");
+        assertThat(json.get("reference").asString()).isEqualTo(booking.getReference());
+        assertThat(json.get("bookingCreatedAt").isString()).isTrue();
+        assertThat(json.get("occurredAt").asString()).isEqualTo("2026-09-11T09:30:00Z");
     }
 
     @Test
@@ -182,8 +182,8 @@ class BookingLifecycleEventPublisherTest {
 
         // Requirement MT-5.3: the provider's notification says which agency assigned the job.
         JsonNode json = objectMapper.readTree(savedRow().getPayload());
-        assertThat(json.get("tenantId").asText()).isEqualTo(tenantId.toString());
-        assertThat(json.get("tenantName").asText()).isEqualTo("Ara Home Services");
+        assertThat(json.get("tenantId").asString()).isEqualTo(tenantId.toString());
+        assertThat(json.get("tenantName").asString()).isEqualTo("Ara Home Services");
         // Still readable by the consumers' existing records.
         assertThat(objectMapper.readValue(savedRow().getPayload(), NotificationLifecycleEventPayload.class)
                 .customerId()).isEqualTo(booking.getCustomerId());

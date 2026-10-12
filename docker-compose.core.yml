@@ -1,4 +1,4 @@
-# HomeFix — full local stack: all 20 backend services + all three SPAs.
+# HomeFix — full local stack: the backend in five deployables + all three SPAs.
 #
 # Postgres, Redis and Kafka are NOT containers here: locally the services use the ones
 # installed on this machine, reached from the containers through host.docker.internal
@@ -8,16 +8,16 @@
 # instead, add docker-compose.infra.yml (see its header). AWS deployments do not use this file:
 # Helm wires RDS, ElastiCache and MSK per environment (helm/services/*.yaml).
 #
-# Schemas come from each service's Flyway migrations (src/main/resources/db/migration), the
+# Schemas come from each service's Flyway migrations (src/main/resources/db/migration/<service>), the
 # same as on AWS; Hibernate only validates. The shared outbox tables ship in homefix-shared-outbox.
 #
 #   cp .env.example .env            # local-dev secrets; compose refuses to start without it
 #   docker compose -f docker-compose.core.yml up -d --build --wait
 #   bash docker/seed-pricing.sh      # once per database, before the first price estimate
 #
-# Health checks allow a 300 s start period: on a cold start all twenty JVMs boot at once and,
-# CPU-bound, several need 3-5 minutes. Failures inside the start period do not count, so
-# `up --wait` no longer gives up on a service that is merely slow.
+# Health checks allow a 180 s start period: a deployable starts its services one after another,
+# and is healthy only when every one of them reports ready. Failures inside the start period do
+# not count, so `up --wait` does not give up on a deployable that is merely slow.
 #
 # Then open:
 #   http://localhost:5173  customer-app
@@ -27,32 +27,33 @@
 # Each SPA proxies /api/auth to the Auth Service and /api to the API Gateway.
 # Log in with any Indian mobile number; the dev SMS gateway logs the OTP instead
 # of sending it:
-#   docker logs homefix-core-auth-service-1 | grep "DEV SMS"
+#   docker logs homefix-core-identity-app-1 | grep "DEV SMS"
 
 name: homefix-core
 
+# The 19 backend services run in four deployables (plus the API gateway); each deployable is one
+# JVM that hosts its services side by side, each in its own Spring context on the port it always
+# had (see shared/homefix-service-host). Service-to-service URLs therefore point at the deployable:
+# http://jobs-app:8084 is booking-service. A value that must differ between services sharing a
+# JVM can be set per service as <SERVICE>__<VAR>, e.g. BOOKING_SERVICE__DB_USERNAME.
+
 services:
-  auth-service:
-    # A transient startup race (Kafka DNS not yet resolvable during the
-    # start-up stampede) otherwise leaves the service down for good, needing a
-    # manual restart. Bounded, so a genuinely broken service still stops.
+
+  identity-app:
+    # Hosts auth-service, customer-service, provider-service, verification-service.
     restart: "on-failure:5"
     build:
-      context: ./services/auth-service
-    # Without a container limit the JVM sizes its max heap at 25% of the whole
-    # WSL VM (~1.9 GB each), so twenty idle services feel no pressure to collect
-    # and between them exhaust the host. A limit makes the JVM container-aware;
-    # measured steady-state usage for these services is ~340-400 MB.
-    mem_limit: 448m
+      context: ./apps/identity-app
+    # One JVM for 4 services: a container limit keeps the JVM container-aware.
+    mem_limit: 896m
     environment:
-      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70 -XX:+UseSerialGC -Xss512k"
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=75 -XX:+UseSerialGC -Xss512k"
       DB_URL: jdbc:postgresql://${HOMEFIX_DB_HOST:-host.docker.internal}:${HOMEFIX_DB_PORT:-5432}/${HOMEFIX_DB_NAME:-homefix}
       DB_USERNAME: homefix
       DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD, see .env.example}
       SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "4"
       REDIS_HOST: ${HOMEFIX_REDIS_HOST:-host.docker.internal}
       REDIS_PORT: "${HOMEFIX_REDIS_PORT:-6379}"
-      SERVER_PORT: "8081"
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
       # Shared service credential for the Auth Service /internal/** endpoints
       # (the Notification Service's contact lookup).
@@ -76,17 +77,194 @@ services:
       # so without this nothing can open the Admin Portal. Never enable outside dev.
       DEV_SEED_ENABLED: "${DEV_SEED_ENABLED:-false}"
       DEV_SEED_PASSWORD: "${DEV_SEED_PASSWORD:-}"
+      # Dev-only email gateway (email-auth spec): sign-up codes, reset codes and staff invitation
+      # links are appended to docker/dev-mail/dev-mail.log instead of being mailed. Never outside dev.
+      EMAIL_PROVIDER: file
+      EMAIL_FILE_PATH: /var/log/homefix-mail/dev-mail.log
+      # Invitation links point at homefix.apps.admin-portal-url in config.app_config (seeded
+      # with http://localhost:5175).
+      KMS_PROVIDER: local
+      # Base64 AES-256 data key for the local KMS adapter (no default any more).
+      KMS_LOCAL_DATA_KEY: ${KMS_LOCAL_DATA_KEY:?set KMS_LOCAL_DATA_KEY, see .env.example}
+      GEOCODING_PROVIDER: noop
+      BOOKING_SERVICE_URL: http://jobs-app:8084
+      # Base64 AES-256 data key for the local KMS adapter (no default any more).
+      KMS_DATA_KEY: ${KMS_DATA_KEY:?set KMS_DATA_KEY, see .env.example}
+      # Read live active jobs from the Booking Service's internal surface (Req 28.8).
+      BOOKING_CLIENT: http
+      BOOKING_SERVICE_URI: http://jobs-app:8084
+      CATALOG_SERVICE_URI: http://jobs-app:8085
+      # Batch APPROVED lookup behind the dispatch eligibility search (Req 5.10, 8.2).
+      VERIFICATION_SERVICE_URL: http://identity-app:8094
+      # Looks accounts up by mobile number and grants/revokes TENANT_ADMIN when a platform admin
+      # manages a Tenant's administrators (Requirement MT-2).
+      AUTH_SERVICE_URL: http://identity-app:8081
+      # Local only: a simulator verifies a well-formed bank account immediately, standing in for the
+      # bank "penny drop" check. Deployments default to manual verification by a platform admin.
+      BANK_ACCOUNT_VERIFICATION: simulator
+      PROVIDER_SERVICE_URL: http://identity-app:8083
     ports:
-      - "8081:8081"
+      - "8081:8081"  # auth-service
+      - "8082:8082"  # customer-service
+      - "8083:8083"  # provider-service
+      - "8094:8094"  # verification-service
     volumes:
       # Host-readable sink for the dev SMS gateway (see SMS_PROVIDER above).
       - ./docker/dev-sms:/var/log/homefix
+      # Host-readable Dev_Mail_Log (see EMAIL_PROVIDER above).
+      - ./docker/dev-mail:/var/log/homefix-mail
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/health/readiness || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/health/readiness && wget -qO- http://localhost:8082/health/readiness && wget -qO- http://localhost:8083/health/readiness && wget -qO- http://localhost:8094/health/readiness || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 20
-      start_period: 300s
+      start_period: 180s
+
+  jobs-app:
+    # Hosts catalog-service, pricing-engine, promotion-service, booking-service, dispatch-engine, location-service, chat-service.
+    restart: "on-failure:5"
+    build:
+      context: ./apps/jobs-app
+    # One JVM for 7 services: a container limit keeps the JVM container-aware.
+    mem_limit: 1280m
+    environment:
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=75 -XX:+UseSerialGC -Xss512k"
+      DB_URL: jdbc:postgresql://${HOMEFIX_DB_HOST:-host.docker.internal}:${HOMEFIX_DB_PORT:-5432}/${HOMEFIX_DB_NAME:-homefix}
+      DB_USERNAME: homefix
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD, see .env.example}
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "4"
+      REDIS_HOST: ${HOMEFIX_REDIS_HOST:-host.docker.internal}
+      REDIS_PORT: "${HOMEFIX_REDIS_PORT:-6379}"
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
+      CATALOG_CACHE: memory
+      PRICING_CACHE: memory
+      # Coupon discounts are quoted by promotion-service's /internal/coupons/{code}/quote,
+      # which requires the shared service credential.
+      PROMOTION_SERVICE_URL: http://jobs-app:8098
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?set INTERNAL_API_KEY, see .env.example}
+      PRICING_ENGINE__LOGGING_LEVEL_COM_HOMEFIX_SHARED_SECURITY: DEBUG
+      CATALOG_CLIENT: http
+      CATALOG_SERVICE_URL: http://jobs-app:8085
+      PRICING_CLIENT: http
+      PRICING_ENGINE_URL: http://jobs-app:8086
+      CUSTOMER_CLIENT: http
+      CUSTOMER_SERVICE_URL: http://identity-app:8082
+      MEDIA_STORAGE_PROVIDER: local
+      # Routes bookings automatic matching could not place to the Tenants covering them, and
+      # checks a Tenant admin's assignments (Requirement MT-4, MT-5).
+      PROVIDER_SERVICE_URL: http://identity-app:8083
+      TENANT_ASSIGNMENT_TIMEOUT: PT60M
+      # Consumes PaymentCompleted to move a paid booking to PAYMENT_COMPLETED.
+      KAFKA_BOOTSTRAP_SERVERS: ${HOMEFIX_KAFKA_BOOTSTRAP_SERVERS:-host.docker.internal:9094}
+      BOOKING_SERVICE_URL: http://jobs-app:8084
+      NOTIFICATION_SERVICE_URL: http://engagement-app:8090
+      LOCATION_STORE: redis
+    ports:
+      - "8085:8085"  # catalog-service
+      - "8086:8086"  # pricing-engine
+      - "8098:8098"  # promotion-service
+      - "8084:8084"  # booking-service
+      - "8087:8087"  # dispatch-engine
+      - "8092:8092"  # location-service
+      - "8093:8093"  # chat-service
+    depends_on:
+      identity-app:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8085/health/readiness && wget -qO- http://localhost:8086/health/readiness && wget -qO- http://localhost:8098/health/readiness && wget -qO- http://localhost:8084/health/readiness && wget -qO- http://localhost:8087/health/readiness && wget -qO- http://localhost:8092/health/readiness && wget -qO- http://localhost:8093/health/readiness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 180s
+
+  money-app:
+    # Hosts payment-service, invoice-service.
+    restart: "on-failure:5"
+    build:
+      context: ./apps/money-app
+    # One JVM for 2 services: a container limit keeps the JVM container-aware.
+    mem_limit: 640m
+    environment:
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=75 -XX:+UseSerialGC -Xss512k"
+      DB_URL: jdbc:postgresql://${HOMEFIX_DB_HOST:-host.docker.internal}:${HOMEFIX_DB_PORT:-5432}/${HOMEFIX_DB_NAME:-homefix}
+      DB_USERNAME: homefix
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD, see .env.example}
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "4"
+      REDIS_HOST: ${HOMEFIX_REDIS_HOST:-host.docker.internal}
+      REDIS_PORT: "${HOMEFIX_REDIS_PORT:-6379}"
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
+      # Base64 AES-256 data key for the local KMS adapter (no default any more).
+      KMS_DATA_KEY: ${KMS_DATA_KEY:?set KMS_DATA_KEY, see .env.example}
+      # Gateway webhook signing secrets (HMAC-SHA256); no defaults any more.
+      RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET:?set RAZORPAY_WEBHOOK_SECRET, see .env.example}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:?set STRIPE_WEBHOOK_SECRET, see .env.example}
+      # Razorpay test-mode keys; optional. Set them and PAYMENT_DEFAULT_GATEWAY=razorpay in .env
+      # to pay through real Razorpay Checkout instead of the simulator.
+      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-}
+      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:-}
+      # Payments are priced from the booking, not the client: the Booking Service's internal
+      # payment-facts and payment-pending endpoints, called with the shared service credential.
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?set INTERNAL_API_KEY, see .env.example}
+      BOOKING_SERVICE_URL: http://jobs-app:8084
+      # Credits each paid booking's earning to the provider's wallet (idempotent per booking).
+      PROVIDER_WALLET_CLIENT: http
+      PROVIDER_SERVICE_URL: http://identity-app:8083
+      # Local only: no real gateway can send the signed webhook that settles a payment, so a
+      # simulator settles it through the same signed-callback path. Never enabled in Helm.
+      # 'razorpay' works locally too, because Checkout's confirmation settles the payment.
+      PAYMENT_DEFAULT_GATEWAY: ${PAYMENT_DEFAULT_GATEWAY:-simulator}
+      PAYMENT_SIMULATOR_ENABLED: "true"
+      PAYMENT_SIMULATOR_SECRET: ${PAYMENT_SIMULATOR_SECRET:-local-payment-simulator-secret}
+      KAFKA_BOOTSTRAP_SERVERS: ${HOMEFIX_KAFKA_BOOTSTRAP_SERVERS:-host.docker.internal:9094}
+      NOTIFICATION_SERVICE_URL: http://engagement-app:8090
+    ports:
+      - "8088:8088"  # payment-service
+      - "8089:8089"  # invoice-service
+    depends_on:
+      jobs-app:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8088/health/readiness && wget -qO- http://localhost:8089/health/readiness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 180s
+
+  engagement-app:
+    # Hosts outbox-processor, notification-service, complaint-service, rating-review-service, admin-service, reporting-service.
+    restart: "on-failure:5"
+    build:
+      context: ./apps/engagement-app
+    # One JVM for 6 services: a container limit keeps the JVM container-aware.
+    mem_limit: 1152m
+    environment:
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=75 -XX:+UseSerialGC -Xss512k"
+      DB_URL: jdbc:postgresql://${HOMEFIX_DB_HOST:-host.docker.internal}:${HOMEFIX_DB_PORT:-5432}/${HOMEFIX_DB_NAME:-homefix}
+      DB_USERNAME: homefix
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD, see .env.example}
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "4"
+      KAFKA_BOOTSTRAP_SERVERS: ${HOMEFIX_KAFKA_BOOTSTRAP_SERVERS:-host.docker.internal:9094}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
+      PREFERENCE_SERVICE_URL: http://identity-app:8082
+      # Recipient contact details are resolved from the Auth Service by user id,
+      # authenticated with the shared service credential.
+      AUTH_SERVICE_URL: http://identity-app:8081
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?set INTERNAL_API_KEY, see .env.example}
+      REDIS_HOST: ${HOMEFIX_REDIS_HOST:-host.docker.internal}
+      REDIS_PORT: "${HOMEFIX_REDIS_PORT:-6379}"
+    ports:
+      - "8099:8099"  # outbox-processor
+      - "8090:8090"  # notification-service
+      - "8091:8091"  # complaint-service
+      - "8097:8097"  # rating-review-service
+      - "8095:8095"  # admin-service
+      - "8096:8096"  # reporting-service
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8099/health/readiness && wget -qO- http://localhost:8090/health/readiness && wget -qO- http://localhost:8091/health/readiness && wget -qO- http://localhost:8097/health/readiness && wget -qO- http://localhost:8095/health/readiness && wget -qO- http://localhost:8096/health/readiness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 180s
 
   api-gateway:
     # A transient startup race (Kafka DNS not yet resolvable during the
@@ -109,17 +287,17 @@ services:
       REDIS_PORT: "${HOMEFIX_REDIS_PORT:-6379}"
       SERVER_PORT: "8080"
       HTTPS_ENFORCED: "false"
-      AUTH_SERVICE_URI: http://auth-service:8081
-      AUTH_INTROSPECT_URI: http://auth-service:8081/auth/introspect
-      CATALOG_SERVICE_URI: http://catalog-service:8085
-      CUSTOMER_SERVICE_URI: http://customer-service:8082
-      BOOKING_SERVICE_URI: http://booking-service:8084
-      PRICING_ENGINE_URI: http://pricing-engine:8086
-      LOCATION_SERVICE_URI: http://location-service:8092
+      AUTH_SERVICE_URI: http://identity-app:8081
+      AUTH_INTROSPECT_URI: http://identity-app:8081/auth/introspect
+      CATALOG_SERVICE_URI: http://jobs-app:8085
+      CUSTOMER_SERVICE_URI: http://identity-app:8082
+      BOOKING_SERVICE_URI: http://jobs-app:8084
+      PRICING_ENGINE_URI: http://jobs-app:8086
+      LOCATION_SERVICE_URI: http://jobs-app:8092
     ports:
       - "8080:8080"
     depends_on:
-      auth-service:
+      identity-app:
         condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health/readiness || exit 1"]
@@ -128,648 +306,6 @@ services:
       retries: 20
       start_period: 300s
 
-  catalog-service:
-    # A transient startup race (Kafka DNS not yet resolvable during the
-    # start-up stampede) otherwise leaves the service down for good, needing a
-    # manual restart. Bounded, so a genuinely broken service still stops.
-    restart: "on-failure:5"
-    build:
-      context: ./services/catalog-service
-    # Without a container limit the JVM sizes its max heap at 25% of the whole
-    # WSL VM (~1.9 GB each), so twenty idle services feel no pressure to collect
-    # and between them exhaust the host. A limit makes the JVM container-aware;
-    # measured steady-state usage for these services is ~340-400 MB.
-    mem_limit: 448m
-    environment:
-      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70 -XX:+UseSerialGC -Xss512k"
-      DB_URL: jdbc:postgresql://${HOMEFIX_DB_HOST:-host.docker.internal}:${HOMEFIX_DB_PORT:-5432}/${HOMEFIX_DB_NAME:-homefix}
-      DB_USERNAME: homefix
-      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD, see .env.example}
-      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "4"
-      REDIS_HOST: ${HOMEFIX_REDIS_HOST:-host.docker.internal}
-      REDIS_PORT: "${HOMEFIX_REDIS_PORT:-6379}"
-      SERVER_PORT: "8085"
-      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
-      CATALOG_CACHE: memory
-    ports:
-      - "8085:8085"
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8085/health/readiness || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 20
-      start_period: 300s
-
-  customer-service:
-    # A transient startup race (Kafka DNS not yet resolvable during the
-    # start-up stampede) otherwise leaves the service down for good, needing a
-    # manual restart. Bounded, so a genuinely broken service still stops.
-    restart: "on-failure:5"
-    build:
-      context: ./services/customer-service
-    # Without a container limit the JVM sizes its max heap at 25% of the whole
-    # WSL VM (~1.9 GB each), so twenty idle services feel no pressure to collect
-    # and between them exhaust the host. A limit makes the JVM container-aware;
-    # measured steady-state usage for these services is ~340-400 MB.
-    mem_limit: 448m
-    environment:
-      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70 -XX:+UseSerialGC -Xss512k"
-      DB_URL: jdbc:postgresql://${HOMEFIX_DB_HOST:-host.docker.internal}:${HOMEFIX_DB_PORT:-5432}/${HOMEFIX_DB_NAME:-homefix}
-      DB_USERNAME: homefix
-      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD, see .env.example}
-      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "4"
-      SERVER_PORT: "8082"
-      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
-      KMS_PROVIDER: local
-      # Base64 AES-256 data key for the local KMS adapter (no default any more).
-      KMS_LOCAL_DATA_KEY: ${KMS_LOCAL_DATA_KEY:?set KMS_LOCAL_DATA_KEY, see .env.example}
-      GEOCODING_PROVIDER: noop
-      BOOKING_SERVICE_URL: http://booking-service:8084
-      # Shared service credential for the Customer Service /internal/** endpoints
-      # (the Dispatch Engine's address lookup).
-      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?set INTERNAL_API_KEY, see .env.example}
-    ports:
-      - "8082:8082"
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8082/health/readiness || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 20
-      start_period: 300s
-
-  pricing-engine:
-    # A transient startup race (Kafka DNS not yet resolvable during the
-    # start-up stampede) otherwise leaves the service down for good, needing a
-    # manual restart. Bounded, so a genuinely broken service still stops.
-    restart: "on-failure:5"
-    build:
-      context: ./services/pricing-engine
-    # Without a container limit the JVM sizes its max heap at 25% of the whole
-    # WSL VM (~1.9 GB each), so twenty idle services feel no pressure to collect
-    # and between them exhaust the host. A limit makes the JVM container-aware;
-    # measured steady-state usage for these services is ~340-400 MB.
-    mem_limit: 448m
-    environment:
-      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70 -XX:+UseSerialGC -Xss512k"
-      # Admin pricing parameters persist in the 'pricing' schema, so they survive restarts.
-      DB_URL: jdbc:postgresql://${HOMEFIX_DB_HOST:-host.docker.internal}:${HOMEFIX_DB_PORT:-5432}/${HOMEFIX_DB_NAME:-homefix}
-      DB_USERNAME: homefix
-      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD, see .env.example}
-      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "4"
-      REDIS_HOST: ${HOMEFIX_REDIS_HOST:-host.docker.internal}
-      REDIS_PORT: "${HOMEFIX_REDIS_PORT:-6379}"
-      SERVER_PORT: "8086"
-      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
-      PRICING_CACHE: memory
-      # Coupon discounts are quoted by promotion-service's /internal/coupons/{code}/quote,
-      # which requires the shared service credential.
-      PROMOTION_SERVICE_URL: http://promotion-service:8098
-      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?set INTERNAL_API_KEY, see .env.example}
-      LOGGING_LEVEL_COM_HOMEFIX_SHARED_SECURITY: DEBUG
-    ports:
-      - "8086:8086"
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8086/health/readiness || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 20
-      start_period: 300s
-
-  booking-service:
-    # A transient startup race (Kafka DNS not yet resolvable during the
-    # start-up stampede) otherwise leaves the service down for good, needing a
-    # manual restart. Bounded, so a genuinely broken service still stops.
-    restart: "on-failure:5"
-    build:
-      context: ./services/booking-service
-    # Without a container limit the JVM sizes its max heap at 25% of the whole
-    # WSL VM (~1.9 GB each), so twenty idle services feel no pressure to collect
-    # and between them exhaust the host. A limit makes the JVM container-aware;
-    # measured steady-state usage for these services is ~340-400 MB.
-    mem_limit: 448m
-    environment:
-      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70 -XX:+UseSerialGC -Xss512k"
-      DB_URL: jdbc:postgresql://${HOMEFIX_DB_HOST:-host.docker.internal}:${HOMEFIX_DB_PORT:-5432}/${HOMEFIX_DB_NAME:-homefix}
-      DB_USERNAME: homefix
-      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD, see .env.example}
-      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "4"
-      SERVER_PORT: "8084"
-      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
-      # Shared service credential for the Booking Service /internal/** endpoints.
-      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?set INTERNAL_API_KEY, see .env.example}
-      CATALOG_CLIENT: http
-      CATALOG_SERVICE_URL: http://catalog-service:8085
-      PRICING_CLIENT: http
-      PRICING_ENGINE_URL: http://pricing-engine:8086
-      CUSTOMER_CLIENT: http
-      CUSTOMER_SERVICE_URL: http://customer-service:8082
-      MEDIA_STORAGE_PROVIDER: local
-      # Routes bookings automatic matching could not place to the Tenants covering them, and
-      # checks a Tenant admin's assignments (Requirement MT-4, MT-5).
-      PROVIDER_SERVICE_URL: http://provider-service:8083
-      TENANT_ASSIGNMENT_TIMEOUT: PT60M
-      # Consumes PaymentCompleted to move a paid booking to PAYMENT_COMPLETED.
-      KAFKA_BOOTSTRAP_SERVERS: ${HOMEFIX_KAFKA_BOOTSTRAP_SERVERS:-host.docker.internal:9094}
-    ports:
-      - "8084:8084"
-    depends_on:
-      catalog-service:
-        condition: service_started
-      pricing-engine:
-        condition: service_started
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8084/health/readiness || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 20
-      start_period: 300s
-
-  dispatch-engine:
-    # A transient startup race (Kafka DNS not yet resolvable during the
-    # start-up stampede) otherwise leaves the service down for good, needing a
-    # manual restart. Bounded, so a genuinely broken service still stops.
-    restart: "on-failure:5"
-    build:
-      context: ./services/dispatch-engine
-    # Without a container limit the JVM sizes its max heap at 25% of the whole
-    # WSL VM (~1.9 GB each), so twenty idle services feel no pressure to collect
-    # and between them exhaust the host. A limit makes the JVM container-aware;
-    # measured steady-state usage for these services is ~340-400 MB.
-    mem_limit: 448m
-    environment:
-      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70 -XX:+UseSerialGC -Xss512k"
-      DB_URL: jdbc:postgresql://${HOMEFIX_DB_HOST:-host.docker.internal}:${HOMEFIX_DB_PORT:-5432}/${HOMEFIX_DB_NAME:-homefix}
-      DB_USERNAME: homefix
-      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD, see .env.example}
-      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "4"
-      REDIS_HOST: ${HOMEFIX_REDIS_HOST:-host.docker.internal}
-      REDIS_PORT: "${HOMEFIX_REDIS_PORT:-6379}"
-      KAFKA_BOOTSTRAP_SERVERS: ${HOMEFIX_KAFKA_BOOTSTRAP_SERVERS:-host.docker.internal:9094}
-      SERVER_PORT: "8087"
-      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
-      # Shared service credential for the Booking Service and Customer Service
-      # /internal/** endpoints.
-      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?set INTERNAL_API_KEY, see .env.example}
-      PROVIDER_SERVICE_URL: http://provider-service:8083
-      BOOKING_SERVICE_URL: http://booking-service:8084
-      NOTIFICATION_SERVICE_URL: http://notification-service:8090
-      # Booking enrichment before matching: address -> coordinates, subcategory -> skill tags.
-      CUSTOMER_SERVICE_URL: http://customer-service:8082
-      CATALOG_SERVICE_URL: http://catalog-service:8085
-    ports:
-      - "8087:8087"
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8087/health/readiness || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 20
-      start_period: 300s
-
-  location-service:
-    # A transient startup race (Kafka DNS not yet resolvable during the
-    # start-up stampede) otherwise leaves the service down for good, needing a
-    # manual restart. Bounded, so a genuinely broken service still stops.
-    restart: "on-failure:5"
-    build:
-      context: ./services/location-service
-    # Without a container limit the JVM sizes its max heap at 25% of the whole
-    # WSL VM (~1.9 GB each), so twenty idle services feel no pressure to collect
-    # and between them exhaust the host. A limit makes the JVM container-aware;
-    # measured steady-state usage for these services is ~340-400 MB.
-    mem_limit: 448m
-    environment:
-      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70 -XX:+UseSerialGC -Xss512k"
-      DB_URL: jdbc:postgresql://${HOMEFIX_DB_HOST:-host.docker.internal}:${HOMEFIX_DB_PORT:-5432}/${HOMEFIX_DB_NAME:-homefix}
-      DB_USERNAME: homefix
-      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD, see .env.example}
-      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "4"
-      REDIS_HOST: ${HOMEFIX_REDIS_HOST:-host.docker.internal}
-      REDIS_PORT: "${HOMEFIX_REDIS_PORT:-6379}"
-      KAFKA_BOOTSTRAP_SERVERS: ${HOMEFIX_KAFKA_BOOTSTRAP_SERVERS:-host.docker.internal:9094}
-      SERVER_PORT: "8092"
-      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
-      LOCATION_STORE: redis
-    ports:
-      - "8092:8092"
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8092/health/readiness || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 20
-      start_period: 300s
-
-  provider-service:
-    # A transient startup race (Kafka DNS not yet resolvable during the
-    # start-up stampede) otherwise leaves the service down for good, needing a
-    # manual restart. Bounded, so a genuinely broken service still stops.
-    restart: "on-failure:5"
-    build:
-      context: ./services/provider-service
-    # Without a container limit the JVM sizes its max heap at 25% of the whole
-    # WSL VM (~1.9 GB each), so twenty idle services feel no pressure to collect
-    # and between them exhaust the host. A limit makes the JVM container-aware;
-    # measured steady-state usage for these services is ~340-400 MB.
-    mem_limit: 448m
-    environment:
-      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70 -XX:+UseSerialGC -Xss512k"
-      DB_URL: jdbc:postgresql://${HOMEFIX_DB_HOST:-host.docker.internal}:${HOMEFIX_DB_PORT:-5432}/${HOMEFIX_DB_NAME:-homefix}
-      DB_USERNAME: homefix
-      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD, see .env.example}
-      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "4"
-      SERVER_PORT: "8083"
-      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
-      # Base64 AES-256 data key for the local KMS adapter (no default any more).
-      KMS_DATA_KEY: ${KMS_DATA_KEY:?set KMS_DATA_KEY, see .env.example}
-      # Read live active jobs from the Booking Service's internal surface (Req 28.8).
-      BOOKING_CLIENT: http
-      BOOKING_SERVICE_URI: http://booking-service:8084
-      CATALOG_SERVICE_URI: http://catalog-service:8085
-      # Batch APPROVED lookup behind the dispatch eligibility search (Req 5.10, 8.2).
-      VERIFICATION_SERVICE_URL: http://verification-service:8094
-      # Looks accounts up by mobile number and grants/revokes TENANT_ADMIN when a platform admin
-      # manages a Tenant's administrators (Requirement MT-2).
-      AUTH_SERVICE_URL: http://auth-service:8081
-      # Local only: a simulator verifies a well-formed bank account immediately, standing in for the
-      # bank "penny drop" check. Deployments default to manual verification by a platform admin.
-      BANK_ACCOUNT_VERIFICATION: simulator
-      # Shared service credential: presented to the Booking and Verification Services
-      # /internal/** endpoints, and required on this service's own /internal/**
-      # (the Dispatch Engine's eligible-provider search).
-      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?set INTERNAL_API_KEY, see .env.example}
-    ports:
-      - "8083:8083"
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8083/health/readiness || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 300s
-
-  verification-service:
-    # A transient startup race (Kafka DNS not yet resolvable during the
-    # start-up stampede) otherwise leaves the service down for good, needing a
-    # manual restart. Bounded, so a genuinely broken service still stops.
-    restart: "on-failure:5"
-    build:
-      context: ./services/verification-service
-    # Without a container limit the JVM sizes its max heap at 25% of the whole
-    # WSL VM (~1.9 GB each), so twenty idle services feel no pressure to collect
-    # and between them exhaust the host. A limit makes the JVM container-aware;
-    # measured steady-state usage for these services is ~340-400 MB.
-    mem_limit: 448m
-    environment:
-      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70 -XX:+UseSerialGC -Xss512k"
-      DB_URL: jdbc:postgresql://${HOMEFIX_DB_HOST:-host.docker.internal}:${HOMEFIX_DB_PORT:-5432}/${HOMEFIX_DB_NAME:-homefix}
-      DB_USERNAME: homefix
-      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD, see .env.example}
-      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "4"
-      SERVER_PORT: "8094"
-      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
-      # Required on /internal/** (the Provider Service's batch lookups and admin suspend/reinstate),
-      # and presented to the Provider Service for the admin verification queue's provider names.
-      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?set INTERNAL_API_KEY, see .env.example}
-      PROVIDER_SERVICE_URL: http://provider-service:8083
-    ports:
-      - "8094:8094"
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8094/health/readiness || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 300s
-
-  payment-service:
-    # A transient startup race (Kafka DNS not yet resolvable during the
-    # start-up stampede) otherwise leaves the service down for good, needing a
-    # manual restart. Bounded, so a genuinely broken service still stops.
-    restart: "on-failure:5"
-    build:
-      context: ./services/payment-service
-    # Without a container limit the JVM sizes its max heap at 25% of the whole
-    # WSL VM (~1.9 GB each), so twenty idle services feel no pressure to collect
-    # and between them exhaust the host. A limit makes the JVM container-aware;
-    # measured steady-state usage for these services is ~340-400 MB.
-    mem_limit: 448m
-    environment:
-      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70 -XX:+UseSerialGC -Xss512k"
-      DB_URL: jdbc:postgresql://${HOMEFIX_DB_HOST:-host.docker.internal}:${HOMEFIX_DB_PORT:-5432}/${HOMEFIX_DB_NAME:-homefix}
-      DB_USERNAME: homefix
-      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD, see .env.example}
-      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "4"
-      REDIS_HOST: ${HOMEFIX_REDIS_HOST:-host.docker.internal}
-      REDIS_PORT: "${HOMEFIX_REDIS_PORT:-6379}"
-      SERVER_PORT: "8088"
-      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
-      # Base64 AES-256 data key for the local KMS adapter (no default any more).
-      KMS_DATA_KEY: ${KMS_DATA_KEY:?set KMS_DATA_KEY, see .env.example}
-      # Gateway webhook signing secrets (HMAC-SHA256); no defaults any more.
-      RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET:?set RAZORPAY_WEBHOOK_SECRET, see .env.example}
-      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:?set STRIPE_WEBHOOK_SECRET, see .env.example}
-      # Razorpay test-mode keys; optional. Set them and PAYMENT_DEFAULT_GATEWAY=razorpay in .env
-      # to pay through real Razorpay Checkout instead of the simulator.
-      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-}
-      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:-}
-      # Payments are priced from the booking, not the client: the Booking Service's internal
-      # payment-facts and payment-pending endpoints, called with the shared service credential.
-      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?set INTERNAL_API_KEY, see .env.example}
-      BOOKING_SERVICE_URL: http://booking-service:8084
-      # Credits each paid booking's earning to the provider's wallet (idempotent per booking).
-      PROVIDER_WALLET_CLIENT: http
-      PROVIDER_SERVICE_URL: http://provider-service:8083
-      # Local only: no real gateway can send the signed webhook that settles a payment, so a
-      # simulator settles it through the same signed-callback path. Never enabled in Helm.
-      # 'razorpay' works locally too, because Checkout's confirmation settles the payment.
-      PAYMENT_DEFAULT_GATEWAY: ${PAYMENT_DEFAULT_GATEWAY:-simulator}
-      PAYMENT_SIMULATOR_ENABLED: "true"
-      PAYMENT_SIMULATOR_SECRET: ${PAYMENT_SIMULATOR_SECRET:-local-payment-simulator-secret}
-    ports:
-      - "8088:8088"
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8088/health/readiness || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 300s
-
-  invoice-service:
-    # A transient startup race (Kafka DNS not yet resolvable during the
-    # start-up stampede) otherwise leaves the service down for good, needing a
-    # manual restart. Bounded, so a genuinely broken service still stops.
-    restart: "on-failure:5"
-    build:
-      context: ./services/invoice-service
-    # Without a container limit the JVM sizes its max heap at 25% of the whole
-    # WSL VM (~1.9 GB each), so twenty idle services feel no pressure to collect
-    # and between them exhaust the host. A limit makes the JVM container-aware;
-    # measured steady-state usage for these services is ~340-400 MB.
-    mem_limit: 448m
-    environment:
-      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70 -XX:+UseSerialGC -Xss512k"
-      DB_URL: jdbc:postgresql://${HOMEFIX_DB_HOST:-host.docker.internal}:${HOMEFIX_DB_PORT:-5432}/${HOMEFIX_DB_NAME:-homefix}
-      DB_USERNAME: homefix
-      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD, see .env.example}
-      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "4"
-      REDIS_HOST: ${HOMEFIX_REDIS_HOST:-host.docker.internal}
-      REDIS_PORT: "${HOMEFIX_REDIS_PORT:-6379}"
-      KAFKA_BOOTSTRAP_SERVERS: ${HOMEFIX_KAFKA_BOOTSTRAP_SERVERS:-host.docker.internal:9094}
-      SERVER_PORT: "8089"
-      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
-      NOTIFICATION_SERVICE_URL: http://notification-service:8090
-    ports:
-      - "8089:8089"
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8089/health/readiness || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 300s
-
-  notification-service:
-    # A transient startup race (Kafka DNS not yet resolvable during the
-    # start-up stampede) otherwise leaves the service down for good, needing a
-    # manual restart. Bounded, so a genuinely broken service still stops.
-    restart: "on-failure:5"
-    build:
-      context: ./services/notification-service
-    # Without a container limit the JVM sizes its max heap at 25% of the whole
-    # WSL VM (~1.9 GB each), so twenty idle services feel no pressure to collect
-    # and between them exhaust the host. A limit makes the JVM container-aware;
-    # measured steady-state usage for these services is ~340-400 MB.
-    mem_limit: 448m
-    environment:
-      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70 -XX:+UseSerialGC -Xss512k"
-      DB_URL: jdbc:postgresql://${HOMEFIX_DB_HOST:-host.docker.internal}:${HOMEFIX_DB_PORT:-5432}/${HOMEFIX_DB_NAME:-homefix}
-      DB_USERNAME: homefix
-      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD, see .env.example}
-      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "4"
-      KAFKA_BOOTSTRAP_SERVERS: ${HOMEFIX_KAFKA_BOOTSTRAP_SERVERS:-host.docker.internal:9094}
-      SERVER_PORT: "8090"
-      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
-      PREFERENCE_SERVICE_URL: http://customer-service:8082
-      # Recipient contact details are resolved from the Auth Service by user id,
-      # authenticated with the shared service credential.
-      AUTH_SERVICE_URL: http://auth-service:8081
-      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?set INTERNAL_API_KEY, see .env.example}
-    ports:
-      - "8090:8090"
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8090/health/readiness || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 300s
-
-  complaint-service:
-    # A transient startup race (Kafka DNS not yet resolvable during the
-    # start-up stampede) otherwise leaves the service down for good, needing a
-    # manual restart. Bounded, so a genuinely broken service still stops.
-    restart: "on-failure:5"
-    build:
-      context: ./services/complaint-service
-    # Without a container limit the JVM sizes its max heap at 25% of the whole
-    # WSL VM (~1.9 GB each), so twenty idle services feel no pressure to collect
-    # and between them exhaust the host. A limit makes the JVM container-aware;
-    # measured steady-state usage for these services is ~340-400 MB.
-    mem_limit: 448m
-    environment:
-      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70 -XX:+UseSerialGC -Xss512k"
-      DB_URL: jdbc:postgresql://${HOMEFIX_DB_HOST:-host.docker.internal}:${HOMEFIX_DB_PORT:-5432}/${HOMEFIX_DB_NAME:-homefix}
-      DB_USERNAME: homefix
-      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD, see .env.example}
-      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "4"
-      REDIS_HOST: ${HOMEFIX_REDIS_HOST:-host.docker.internal}
-      REDIS_PORT: "${HOMEFIX_REDIS_PORT:-6379}"
-      KAFKA_BOOTSTRAP_SERVERS: ${HOMEFIX_KAFKA_BOOTSTRAP_SERVERS:-host.docker.internal:9094}
-      SERVER_PORT: "8091"
-      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
-    ports:
-      - "8091:8091"
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8091/health/readiness || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 300s
-
-  chat-service:
-    # A transient startup race (Kafka DNS not yet resolvable during the
-    # start-up stampede) otherwise leaves the service down for good, needing a
-    # manual restart. Bounded, so a genuinely broken service still stops.
-    restart: "on-failure:5"
-    build:
-      context: ./services/chat-service
-    # Without a container limit the JVM sizes its max heap at 25% of the whole
-    # WSL VM (~1.9 GB each), so twenty idle services feel no pressure to collect
-    # and between them exhaust the host. A limit makes the JVM container-aware;
-    # measured steady-state usage for these services is ~340-400 MB.
-    mem_limit: 448m
-    environment:
-      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70 -XX:+UseSerialGC -Xss512k"
-      DB_URL: jdbc:postgresql://${HOMEFIX_DB_HOST:-host.docker.internal}:${HOMEFIX_DB_PORT:-5432}/${HOMEFIX_DB_NAME:-homefix}
-      DB_USERNAME: homefix
-      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD, see .env.example}
-      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "4"
-      KAFKA_BOOTSTRAP_SERVERS: ${HOMEFIX_KAFKA_BOOTSTRAP_SERVERS:-host.docker.internal:9094}
-      SERVER_PORT: "8093"
-      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
-    ports:
-      - "8093:8093"
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8093/health/readiness || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 300s
-
-  rating-review-service:
-    # A transient startup race (Kafka DNS not yet resolvable during the
-    # start-up stampede) otherwise leaves the service down for good, needing a
-    # manual restart. Bounded, so a genuinely broken service still stops.
-    restart: "on-failure:5"
-    build:
-      context: ./services/rating-review-service
-    # Without a container limit the JVM sizes its max heap at 25% of the whole
-    # WSL VM (~1.9 GB each), so twenty idle services feel no pressure to collect
-    # and between them exhaust the host. A limit makes the JVM container-aware;
-    # measured steady-state usage for these services is ~340-400 MB.
-    mem_limit: 448m
-    environment:
-      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70 -XX:+UseSerialGC -Xss512k"
-      DB_URL: jdbc:postgresql://${HOMEFIX_DB_HOST:-host.docker.internal}:${HOMEFIX_DB_PORT:-5432}/${HOMEFIX_DB_NAME:-homefix}
-      DB_USERNAME: homefix
-      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD, see .env.example}
-      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "4"
-      REDIS_HOST: ${HOMEFIX_REDIS_HOST:-host.docker.internal}
-      REDIS_PORT: "${HOMEFIX_REDIS_PORT:-6379}"
-      KAFKA_BOOTSTRAP_SERVERS: ${HOMEFIX_KAFKA_BOOTSTRAP_SERVERS:-host.docker.internal:9094}
-      SERVER_PORT: "8097"
-      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
-    ports:
-      - "8097:8097"
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8097/health/readiness || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 300s
-
-  promotion-service:
-    # A transient startup race (Kafka DNS not yet resolvable during the
-    # start-up stampede) otherwise leaves the service down for good, needing a
-    # manual restart. Bounded, so a genuinely broken service still stops.
-    restart: "on-failure:5"
-    build:
-      context: ./services/promotion-service
-    # Without a container limit the JVM sizes its max heap at 25% of the whole
-    # WSL VM (~1.9 GB each), so twenty idle services feel no pressure to collect
-    # and between them exhaust the host. A limit makes the JVM container-aware;
-    # measured steady-state usage for these services is ~340-400 MB.
-    mem_limit: 448m
-    environment:
-      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70 -XX:+UseSerialGC -Xss512k"
-      DB_URL: jdbc:postgresql://${HOMEFIX_DB_HOST:-host.docker.internal}:${HOMEFIX_DB_PORT:-5432}/${HOMEFIX_DB_NAME:-homefix}
-      DB_USERNAME: homefix
-      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD, see .env.example}
-      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "4"
-      REDIS_HOST: ${HOMEFIX_REDIS_HOST:-host.docker.internal}
-      REDIS_PORT: "${HOMEFIX_REDIS_PORT:-6379}"
-      SERVER_PORT: "8098"
-      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
-      # Shared service credential for the Promotion Service /internal/** endpoints
-      # (the Pricing Engine's coupon quote).
-      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?set INTERNAL_API_KEY, see .env.example}
-    ports:
-      - "8098:8098"
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8098/health/readiness || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 300s
-
-  admin-service:
-    # A transient startup race (Kafka DNS not yet resolvable during the
-    # start-up stampede) otherwise leaves the service down for good, needing a
-    # manual restart. Bounded, so a genuinely broken service still stops.
-    restart: "on-failure:5"
-    build:
-      context: ./services/admin-service
-    # Without a container limit the JVM sizes its max heap at 25% of the whole
-    # WSL VM (~1.9 GB each), so twenty idle services feel no pressure to collect
-    # and between them exhaust the host. A limit makes the JVM container-aware;
-    # measured steady-state usage for these services is ~340-400 MB.
-    mem_limit: 448m
-    environment:
-      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70 -XX:+UseSerialGC -Xss512k"
-      DB_URL: jdbc:postgresql://${HOMEFIX_DB_HOST:-host.docker.internal}:${HOMEFIX_DB_PORT:-5432}/${HOMEFIX_DB_NAME:-homefix}
-      DB_USERNAME: homefix
-      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD, see .env.example}
-      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "4"
-      SERVER_PORT: "8095"
-      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
-    ports:
-      - "8095:8095"
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8095/health/readiness || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 300s
-
-  reporting-service:
-    # A transient startup race (Kafka DNS not yet resolvable during the
-    # start-up stampede) otherwise leaves the service down for good, needing a
-    # manual restart. Bounded, so a genuinely broken service still stops.
-    restart: "on-failure:5"
-    build:
-      context: ./services/reporting-service
-    # Without a container limit the JVM sizes its max heap at 25% of the whole
-    # WSL VM (~1.9 GB each), so twenty idle services feel no pressure to collect
-    # and between them exhaust the host. A limit makes the JVM container-aware;
-    # measured steady-state usage for these services is ~340-400 MB.
-    mem_limit: 448m
-    environment:
-      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70 -XX:+UseSerialGC -Xss512k"
-      SERVER_PORT: "8096"
-      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
-    ports:
-      - "8096:8096"
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8096/health/readiness || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 300s
-
-  outbox-processor:
-    # A transient startup race (Kafka DNS not yet resolvable during the
-    # start-up stampede) otherwise leaves the service down for good, needing a
-    # manual restart. Bounded, so a genuinely broken service still stops.
-    restart: "on-failure:5"
-    build:
-      context: ./services/outbox-processor
-    # Without a container limit the JVM sizes its max heap at 25% of the whole
-    # WSL VM (~1.9 GB each), so twenty idle services feel no pressure to collect
-    # and between them exhaust the host. A limit makes the JVM container-aware;
-    # measured steady-state usage for these services is ~340-400 MB.
-    mem_limit: 448m
-    environment:
-      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70 -XX:+UseSerialGC -Xss512k"
-      DB_URL: jdbc:postgresql://${HOMEFIX_DB_HOST:-host.docker.internal}:${HOMEFIX_DB_PORT:-5432}/${HOMEFIX_DB_NAME:-homefix}
-      DB_USERNAME: homefix
-      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD, see .env.example}
-      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "4"
-      KAFKA_BOOTSTRAP_SERVERS: ${HOMEFIX_KAFKA_BOOTSTRAP_SERVERS:-host.docker.internal:9094}
-      SERVER_PORT: "8099"
-      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET, see .env.example}
-    ports:
-      - "8099:8099"
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8099/health/readiness || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 300s
   customer-app:
     # A transient startup race (Kafka DNS not yet resolvable during the
     # start-up stampede) otherwise leaves the service down for good, needing a
@@ -781,7 +317,7 @@ services:
       - "5173:80"
     depends_on:
       - api-gateway
-      - auth-service
+      - identity-app
 
   provider-app:
     # A transient startup race (Kafka DNS not yet resolvable during the
@@ -794,7 +330,7 @@ services:
       - "5174:80"
     depends_on:
       - api-gateway
-      - auth-service
+      - identity-app
 
   admin-portal:
     # A transient startup race (Kafka DNS not yet resolvable during the
@@ -807,4 +343,4 @@ services:
       - "5175:80"
     depends_on:
       - api-gateway
-      - auth-service
+      - identity-app

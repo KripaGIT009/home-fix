@@ -1,1 +1,3 @@
 dev-sms/
+# Dev_Mail_Log: emailed sign-up codes, reset codes and invitation links in plain text.
+dev-mail/

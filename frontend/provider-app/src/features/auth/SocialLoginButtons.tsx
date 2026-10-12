@@ -51,7 +51,12 @@ export function SocialLoginButtons({ onSelect, disabled = false }: SocialLoginBu
   return (
     <Stack spacing={2}>
       <Divider>
-        <Typography variant="caption" color="text.secondary">
+        <Typography
+          variant="caption"
+          sx={{
+            color: 'text.secondary',
+          }}
+        >
           or continue with
         </Typography>
       </Divider>
@@ -93,7 +98,13 @@ export function SocialLoginButtons({ onSelect, disabled = false }: SocialLoginBu
       </Stack>
 
       {googleReady ? null : (
-        <Typography variant="caption" color="text.secondary" textAlign="center">
+        <Typography
+          variant="caption"
+          sx={{
+            color: 'text.secondary',
+            textAlign: 'center',
+          }}
+        >
           Social sign-in needs a provider client id. Use your mobile number to continue.
         </Typography>
       )}

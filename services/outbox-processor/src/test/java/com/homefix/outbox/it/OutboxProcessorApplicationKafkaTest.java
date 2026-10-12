@@ -27,7 +27,7 @@ import static org.awaitility.Awaitility.await;
 
 /**
  * Boots the real Outbox Processor application — its own configuration, the shipped
- * {@code application.yml} topic mapping, the scheduled poller — against H2 and an embedded Kafka
+ * {@code outbox-processor.yml} topic mapping, the scheduled poller — against H2 and an embedded Kafka
  * broker, and checks the production wiring end to end: a PENDING row written to the outbox is
  * claimed by the scheduled poll, published to its mapped topic with the {@code eventId} header,
  * and marked PUBLISHED.

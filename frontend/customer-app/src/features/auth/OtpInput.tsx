@@ -129,6 +129,8 @@ export function OtpInput({
     >
       {digits.map((digit, index) => (
         <Box
+          // One box per digit position: the position is the identity.
+          // eslint-disable-next-line @eslint-react/no-array-index-key
           key={index}
           component="input"
           ref={(element: HTMLInputElement | null) => {

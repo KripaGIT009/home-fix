@@ -20,6 +20,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.MediaType;
+import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -33,6 +34,7 @@ import com.homefix.booking.service.Actor;
 import com.homefix.booking.service.BookingException;
 import com.homefix.booking.service.BookingService;
 import com.homefix.booking.service.CreateBookingCommand;
+import com.homefix.shared.observability.json.HomefixJson;
 
 /**
  * Web-layer tests for {@link BookingController} (Requirements 7, 8.1, 9.16-9.18) using a
@@ -56,6 +58,8 @@ class BookingControllerTest {
     void setUp() {
         mvc = MockMvcBuilders.standaloneSetup(new BookingController(bookingService))
                 .setControllerAdvice(new GlobalExceptionHandler())
+                // The service's JSON settings (a missing boolean is false, as in production).
+                .setMessageConverters(new JacksonJsonHttpMessageConverter(HomefixJson.builder().build()))
                 .build();
     }
 

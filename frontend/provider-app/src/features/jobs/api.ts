@@ -108,7 +108,8 @@ export interface JobDetail {
 /**
  * Where a job offer is in its lifecycle. Only `PENDING` can still be answered;
  * `EXPIRED` means the response window closed (a late accept is refused) and
- * `WITHDRAWN` that the booking was cancelled while the offer was open.
+ * `WITHDRAWN` that the offer closed while open: another provider offered the
+ * same job accepted it first, or the booking was cancelled.
  */
 export type JobOfferStatus = 'PENDING' | 'ACCEPTED' | 'DECLINED' | 'EXPIRED' | 'WITHDRAWN';
 
@@ -146,6 +147,8 @@ export interface JobOffer {
 export const OFFER_ERROR = {
   notFound: 'OFFER_NOT_FOUND',
   expired: 'OFFER_EXPIRED',
+  /** The same job was offered to several providers and another one accepted it first. */
+  taken: 'OFFER_TAKEN',
   alreadyDecided: 'OFFER_ALREADY_DECIDED',
 } as const;
 

@@ -5,7 +5,10 @@ import java.util.UUID;
 
 import com.homefix.complaint.domain.Complaint;
 
-/** Response projection of a {@link Complaint} (Requirement 16). */
+/**
+ * Response projection of a {@link Complaint} (Requirement 16). {@code resolutionNote} is the latest
+ * note staff recorded on the complaint, or {@code null} when none has been.
+ */
 public record ComplaintResponse(
         UUID id,
         UUID bookingId,
@@ -20,7 +23,8 @@ public record ComplaintResponse(
         boolean escalated,
         Instant createdAt,
         Instant slaDeadline,
-        Instant resolvedAt) {
+        Instant resolvedAt,
+        String resolutionNote) {
 
     public static ComplaintResponse from(Complaint c) {
         return new ComplaintResponse(
@@ -37,6 +41,7 @@ public record ComplaintResponse(
                 c.isEscalated(),
                 c.getCreatedAt(),
                 c.getSlaDeadline(),
-                c.getResolvedAt());
+                c.getResolvedAt(),
+                c.getResolutionNote());
     }
 }

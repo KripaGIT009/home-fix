@@ -20,7 +20,14 @@ export function ServiceAddress({
 }) {
   const { address, coordinates } = booking;
   return (
-    <Stack direction="row" spacing={0.75} alignItems="flex-start" sx={{ minWidth }}>
+    <Stack
+      direction="row"
+      spacing={0.75}
+      sx={{
+        alignItems: 'flex-start',
+        minWidth,
+      }}
+    >
       <PlaceRoundedIcon sx={{ fontSize: 16, mt: 0.25, color: 'text.secondary' }} aria-hidden />
       <Stack spacing={0.25} sx={{ minWidth: 0 }}>
         <Typography variant="body2" sx={{ overflowWrap: 'anywhere' }}>

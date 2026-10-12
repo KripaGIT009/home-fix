@@ -167,7 +167,13 @@ function RefundDialog({ payment, onClose }: RefundDialogProps) {
           : 'Refund payment'}
       </DialogTitle>
       <DialogContent dividers>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+        <Typography
+          variant="body2"
+          sx={{
+            color: 'text.secondary',
+            mb: 2,
+          }}
+        >
           Refundable up to {formatCurrency(max, payment.currency)}.
         </Typography>
         <Stack spacing={2}>
@@ -178,7 +184,6 @@ function RefundDialog({ payment, onClose }: RefundDialogProps) {
             onChange={(event) =>
               setAmount(event.target.value === '' ? 0 : Number(event.target.value))
             }
-            inputProps={{ min: 0.01, max, step: 0.01 }}
             error={touched && amountInvalid}
             helperText={
               touched && amountInvalid
@@ -186,6 +191,9 @@ function RefundDialog({ payment, onClose }: RefundDialogProps) {
                 : undefined
             }
             fullWidth
+            slotProps={{
+              htmlInput: { min: 0.01, max, step: 0.01 },
+            }}
           />
           <TextField
             label="Refund reason"

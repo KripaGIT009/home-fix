@@ -22,17 +22,30 @@ export function ModuleScreen({ title, description, actions, children }: ModuleSc
     <AppShell title={title}>
       <Stack
         direction={{ xs: 'column', sm: 'row' }}
-        justifyContent="space-between"
-        alignItems={{ xs: 'flex-start', sm: 'center' }}
         spacing={2}
-        sx={{ mb: 3 }}
+        sx={{
+          justifyContent: 'space-between',
+          alignItems: { xs: 'flex-start', sm: 'center' },
+          mb: 3,
+        }}
       >
         <Box>
-          <Typography variant="h5" component="h2" fontWeight={700}>
+          <Typography
+            variant="h5"
+            component="h2"
+            sx={{
+              fontWeight: 700,
+            }}
+          >
             {title}
           </Typography>
           {description ? (
-            <Typography variant="body2" color="text.secondary">
+            <Typography
+              variant="body2"
+              sx={{
+                color: 'text.secondary',
+              }}
+            >
               {description}
             </Typography>
           ) : null}

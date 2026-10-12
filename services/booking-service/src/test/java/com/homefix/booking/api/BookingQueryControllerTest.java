@@ -19,16 +19,16 @@ import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder;
-import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
+import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import tools.jackson.databind.cfg.DateTimeFeature;
+import tools.jackson.databind.json.JsonMapper;
 
-import com.fasterxml.jackson.databind.SerializationFeature;
 import com.homefix.booking.address.CustomerAddressPort;
 import com.homefix.booking.address.CustomerAddressPort.ServiceAddress;
 import com.homefix.booking.catalog.CatalogClientPort;
@@ -88,9 +88,9 @@ class BookingQueryControllerTest {
                 new BookingQueryService(repository, catalog, media, parts, addresses), new CallerIdentity());
         mvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new GlobalExceptionHandler())
-                .setMessageConverters(new MappingJackson2HttpMessageConverter(
-                        Jackson2ObjectMapperBuilder.json()
-                                .featuresToDisable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+                .setMessageConverters(new JacksonJsonHttpMessageConverter(
+                        JsonMapper.builder()
+                                .disable(DateTimeFeature.WRITE_DATES_AS_TIMESTAMPS)
                                 .build()))
                 .build();
     }

@@ -29,4 +29,10 @@ public interface LoginAttemptStore {
 
     /** Clears the failure counter after a successful sign-in. */
     void clearFailures(String username);
+
+    /**
+     * Lifts a lockout and clears the failure counter: the owner has proven control of the account
+     * another way (a password reset by emailed code).
+     */
+    void unlock(String username);
 }

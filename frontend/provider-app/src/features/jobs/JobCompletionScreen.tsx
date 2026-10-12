@@ -1,4 +1,4 @@
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router';
 import {
   Card,
   CardContent,
@@ -38,7 +38,7 @@ export function JobCompletionScreen() {
   const summary = useJobCompletionSummary(bookingId);
 
   return (
-    <AppShell title="Job completed" onBack={() => navigate('/dashboard')}>
+    <AppShell title="Job completed" onBack={() => void navigate('/dashboard')}>
       <QueryStateView
         isLoading={summary.isLoading}
         isError={summary.isError}
@@ -54,12 +54,28 @@ export function JobCompletionScreen() {
 function SummaryContent({ summary }: { summary: JobCompletionSummary }) {
   return (
     <Stack spacing={2}>
-      <Stack alignItems="center" spacing={1} sx={{ py: 1 }}>
+      <Stack
+        spacing={1}
+        sx={{
+          alignItems: 'center',
+          py: 1,
+        }}
+      >
         <CheckCircleRoundedIcon color="success" sx={{ fontSize: 56 }} aria-hidden />
-        <Typography variant="h6" fontWeight={700}>
+        <Typography
+          variant="h6"
+          sx={{
+            fontWeight: 700,
+          }}
+        >
           Job completed
         </Typography>
-        <Typography variant="caption" color="text.secondary">
+        <Typography
+          variant="caption"
+          sx={{
+            color: 'text.secondary',
+          }}
+        >
           {summary.reference}
         </Typography>
       </Stack>
@@ -68,11 +84,26 @@ function SummaryContent({ summary }: { summary: JobCompletionSummary }) {
 
       <Card variant="outlined">
         <CardContent>
-          <Stack direction="row" justifyContent="space-between">
-            <Typography variant="body2" color="text.secondary">
+          <Stack
+            direction="row"
+            sx={{
+              justifyContent: 'space-between',
+            }}
+          >
+            <Typography
+              variant="body2"
+              sx={{
+                color: 'text.secondary',
+              }}
+            >
               Net working time
             </Typography>
-            <Typography variant="subtitle2" fontWeight={700}>
+            <Typography
+              variant="subtitle2"
+              sx={{
+                fontWeight: 700,
+              }}
+            >
               {formatDuration(summary.netDurationMinutes)}
             </Typography>
           </Stack>
@@ -81,7 +112,13 @@ function SummaryContent({ summary }: { summary: JobCompletionSummary }) {
 
       <Card variant="outlined">
         <CardContent>
-          <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 1 }}>
+          <Typography
+            variant="subtitle2"
+            sx={{
+              fontWeight: 700,
+              mb: 1,
+            }}
+          >
             Parts &amp; materials
           </Typography>
           {summary.parts.length > 0 ? (
@@ -91,7 +128,12 @@ function SummaryContent({ summary }: { summary: JobCompletionSummary }) {
                   key={part.id}
                   disableGutters
                   secondaryAction={
-                    <Typography variant="body2" fontWeight={700}>
+                    <Typography
+                      variant="body2"
+                      sx={{
+                        fontWeight: 700,
+                      }}
+                    >
                       {formatCurrency(part.quantity * part.unitCost, summary.currency)}
                     </Typography>
                   }
@@ -104,16 +146,36 @@ function SummaryContent({ summary }: { summary: JobCompletionSummary }) {
               ))}
             </List>
           ) : (
-            <Typography variant="body2" color="text.secondary">
+            <Typography
+              variant="body2"
+              sx={{
+                color: 'text.secondary',
+              }}
+            >
               No parts recorded.
             </Typography>
           )}
           <Divider sx={{ my: 1 }} />
-          <Stack direction="row" justifyContent="space-between">
-            <Typography variant="body2" color="text.secondary">
+          <Stack
+            direction="row"
+            sx={{
+              justifyContent: 'space-between',
+            }}
+          >
+            <Typography
+              variant="body2"
+              sx={{
+                color: 'text.secondary',
+              }}
+            >
               Parts total
             </Typography>
-            <Typography variant="subtitle2" fontWeight={700}>
+            <Typography
+              variant="subtitle2"
+              sx={{
+                fontWeight: 700,
+              }}
+            >
               {formatCurrency(summary.partsTotal, summary.currency)}
             </Typography>
           </Stack>
@@ -125,7 +187,13 @@ function SummaryContent({ summary }: { summary: JobCompletionSummary }) {
           <Typography variant="overline" sx={{ opacity: 0.9 }}>
             Final price
           </Typography>
-          <Typography variant="h4" component="p" fontWeight={700}>
+          <Typography
+            variant="h4"
+            component="p"
+            sx={{
+              fontWeight: 700,
+            }}
+          >
             {formatCurrency(summary.finalPrice, summary.currency)}
           </Typography>
         </CardContent>

@@ -146,8 +146,10 @@ export function TwentyFourSevenBadge({ sx }: { sx?: SxProps<Theme> }) {
     <Stack
       direction="row"
       spacing={0.25}
-      alignItems="center"
       sx={[
+        {
+          alignItems: 'center',
+        },
         {
           px: 0.75,
           py: 0.25,
@@ -163,8 +165,11 @@ export function TwentyFourSevenBadge({ sx }: { sx?: SxProps<Theme> }) {
       <BoltRoundedIcon sx={{ fontSize: 14, color: brand.warm }} aria-hidden />
       <Typography
         variant="caption"
-        fontWeight={800}
-        sx={{ fontSize: '0.6875rem', lineHeight: 1.5 }}
+        sx={{
+          fontWeight: 800,
+          fontSize: '0.6875rem',
+          lineHeight: 1.5,
+        }}
       >
         24×7
         <Box component="span" sx={visuallyHidden}>

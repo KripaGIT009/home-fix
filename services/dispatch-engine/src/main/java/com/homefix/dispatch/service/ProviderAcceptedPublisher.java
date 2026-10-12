@@ -9,12 +9,14 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
- * Publishes {@link ProviderAcceptedEvent} through the shared outbox (Requirement 8.6). The write
- * happens inside its own transaction so the PENDING outbox row is committed atomically; the shared
+ * Publishes {@link ProviderAcceptedEvent} through the shared outbox (Requirement 8.6); the shared
  * Outbox Processor then relays it to Kafka exactly-once.
  *
- * <p>This is a thin seam over {@link OutboxEventPublisher} so {@link DispatchService} can publish
- * without carrying transaction concerns, and so tests can substitute a fake publisher.
+ * <p>The only caller is {@code JpaAcceptanceLedger#announce}, whose transaction this joins: the
+ * outbox row is written in the same transaction that removes the acceptance's pending record, so
+ * the event exists if and only if the record is gone (see
+ * {@link com.homefix.dispatch.port.AcceptanceLedger}). Called without a transaction it opens its
+ * own.
  */
 @Component
 public class ProviderAcceptedPublisher {

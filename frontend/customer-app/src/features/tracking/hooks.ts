@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { UseQueryResult } from '@tanstack/react-query';
 import type { ApiError } from '@api/client';
@@ -179,13 +179,11 @@ export function useChatHistory(channelId: string): UseQueryResult<ChatMessage[],
  */
 export function useNowTick(intervalMs: number): number {
   const [now, setNow] = useState(() => Date.now());
-  const ref = useRef(intervalMs);
-  ref.current = intervalMs;
 
   useEffect(() => {
-    const id = window.setInterval(() => setNow(Date.now()), ref.current);
+    const id = window.setInterval(() => setNow(Date.now()), intervalMs);
     return () => window.clearInterval(id);
-  }, []);
+  }, [intervalMs]);
 
   return now;
 }

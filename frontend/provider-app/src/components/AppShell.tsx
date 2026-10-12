@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router';
 import {
   AppBar,
   Avatar,
@@ -78,7 +78,7 @@ export function AppShell({ title, children, onBack, branded = false, action }: A
     // state. Navigation is not awaited so the button never appears to hang on a
     // slow network; the revoke completes in the background either way.
     void logout();
-    navigate('/login', { replace: true });
+    void navigate('/login', { replace: true });
   };
 
   return (
@@ -111,7 +111,7 @@ export function AppShell({ title, children, onBack, branded = false, action }: A
             {NAV_ITEMS.map((item) => (
               <Button
                 key={item.value}
-                onClick={() => navigate(item.value)}
+                onClick={() => void navigate(item.value)}
                 startIcon={item.icon}
                 sx={{
                   color: activeValue === item.value ? 'primary.main' : 'text.secondary',
@@ -127,7 +127,11 @@ export function AppShell({ title, children, onBack, branded = false, action }: A
           {action}
 
           <Tooltip title={user?.displayName ?? 'Profile'}>
-            <IconButton onClick={() => navigate('/profile')} aria-label="Open profile" size="small">
+            <IconButton
+              onClick={() => void navigate('/profile')}
+              aria-label="Open profile"
+              size="small"
+            >
               <Avatar sx={{ width: 32, height: 32, bgcolor: 'primary.main', fontSize: 13 }}>
                 {initials || <PersonRoundedIcon sx={{ fontSize: 18 }} />}
               </Avatar>
@@ -164,7 +168,7 @@ export function AppShell({ title, children, onBack, branded = false, action }: A
         <BottomNavigation
           showLabels
           value={activeValue}
-          onChange={(_event, value: string) => navigate(value)}
+          onChange={(_event, value: string) => void navigate(value)}
         >
           {NAV_ITEMS.map((item) => (
             <BottomNavigationAction

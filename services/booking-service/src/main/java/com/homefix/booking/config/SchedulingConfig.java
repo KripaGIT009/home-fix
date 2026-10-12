@@ -5,9 +5,10 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
- * Turns on {@code @Scheduled} for the Booking Service, whose only scheduled job is the Tenant
- * assignment timeout sweeper (Requirement MT-7.3). {@code homefix.booking.scheduling.enabled=false}
- * switches it off, for a test context that drives the sweeper itself.
+ * Turns on {@code @Scheduled} for the Booking Service's sweepers: the Tenant assignment timeout
+ * (Requirement MT-7.3), the additional-quote approval timeout (Requirement 9.9) and the stalled
+ * provider search (review 17.5 item 4). {@code homefix.booking.scheduling.enabled=false} switches
+ * them off, for a test context that drives a sweeper itself.
  */
 @Configuration
 @EnableScheduling

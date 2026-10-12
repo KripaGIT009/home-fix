@@ -1,6 +1,6 @@
 package com.homefix.invoice.consumer;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.homefix.invoice.event.PaymentCompletedEvent;
 import com.homefix.invoice.service.InvoiceService;
 import com.homefix.shared.outbox.kafka.DlqForwarder;

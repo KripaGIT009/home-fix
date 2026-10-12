@@ -1,4 +1,4 @@
-import { Link as RouterLink } from 'react-router-dom';
+import { Link as RouterLink } from 'react-router';
 import { Box, Button, Stack, Typography } from '@mui/material';
 import ExploreOffRoundedIcon from '@mui/icons-material/ExploreOffRounded';
 import { brand, radius } from '@lib/theme';
@@ -29,9 +29,14 @@ export function PlaceholderScreen({ title, description }: PlaceholderScreenProps
       <Stack
         component="main"
         spacing={2}
-        alignItems="center"
-        textAlign="center"
-        sx={{ flexGrow: 1, justifyContent: 'center', px: 2, pb: 10 }}
+        sx={{
+          alignItems: 'center',
+          textAlign: 'center',
+          flexGrow: 1,
+          justifyContent: 'center',
+          px: 2,
+          pb: 10,
+        }}
       >
         <Box
           aria-hidden
@@ -51,7 +56,13 @@ export function PlaceholderScreen({ title, description }: PlaceholderScreenProps
           {title}
         </Typography>
         {description ? (
-          <Typography variant="body1" color="text.secondary" sx={{ maxWidth: 400 }}>
+          <Typography
+            variant="body1"
+            sx={{
+              color: 'text.secondary',
+              maxWidth: 400,
+            }}
+          >
             {description}
           </Typography>
         ) : null}

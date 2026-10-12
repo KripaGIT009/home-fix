@@ -39,4 +39,18 @@ public class LocationException extends RuntimeException {
     public static LocationException noLocation(String message) {
         return new LocationException("LOCATION_NOT_AVAILABLE", HttpStatus.NOT_FOUND, message);
     }
+
+    /**
+     * The Booking does not exist, or the caller is neither its customer nor its assigned provider.
+     * Both get the same answer so a booking id cannot be probed.
+     */
+    public static LocationException bookingNotFound(String message) {
+        return new LocationException("LOCATION_BOOKING_NOT_FOUND", HttpStatus.NOT_FOUND, message);
+    }
+
+    /** The Booking Service could not say who a Booking is between, so access is refused. */
+    public static LocationException bookingLookupUnavailable(String message) {
+        return new LocationException("LOCATION_BOOKING_LOOKUP_UNAVAILABLE", HttpStatus.SERVICE_UNAVAILABLE,
+                message);
+    }
 }

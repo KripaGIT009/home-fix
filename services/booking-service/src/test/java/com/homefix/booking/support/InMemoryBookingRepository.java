@@ -52,6 +52,39 @@ public class InMemoryBookingRepository implements BookingRepository {
         this.candidates = candidates;
     }
 
+    /**
+     * The audit trail the sweeper queries read state-entry times from; without one they throw, as a
+     * test that never supplied the trail cannot be answered.
+     */
+    private InMemoryBookingAuditRepository audits;
+
+    public InMemoryBookingRepository withAudits(InMemoryBookingAuditRepository audits) {
+        this.audits = audits;
+        return this;
+    }
+
+    @Override
+    public List<Booking> findSearchingProviderSince(Instant cutoff, Pageable pageable) {
+        return enteredBefore(BookingStatus.SEARCHING_PROVIDER, cutoff, pageable);
+    }
+
+    @Override
+    public List<Booking> findCustomerApprovalPendingSince(Instant cutoff, Pageable pageable) {
+        return enteredBefore(BookingStatus.CUSTOMER_APPROVAL_PENDING, cutoff, pageable);
+    }
+
+    private List<Booking> enteredBefore(BookingStatus status, Instant cutoff, Pageable pageable) {
+        if (audits == null) {
+            throw new UnsupportedOperationException("no audit trail: call withAudits(...)");
+        }
+        return store.values().stream()
+                .filter(b -> b.getStatus() == status
+                        && audits.lastEnteredAt(b.getId(), status).map(at -> at.isBefore(cutoff)).orElse(false))
+                .sorted(Comparator.comparing(Booking::getCreatedAt).thenComparing(Booking::getId))
+                .limit(pageable.getPageSize())
+                .toList();
+    }
+
     @Override
     public List<Booking> findAssignmentQueue(UUID tenantId, Pageable pageable) {
         return store.values().stream()

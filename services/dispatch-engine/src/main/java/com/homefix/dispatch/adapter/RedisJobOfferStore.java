@@ -1,6 +1,7 @@
 package com.homefix.dispatch.adapter;
 
 import com.homefix.dispatch.domain.JobOffer;
+import com.homefix.dispatch.domain.OfferRound;
 import com.homefix.dispatch.domain.OfferStatus;
 import com.homefix.dispatch.port.JobOfferStore;
 import org.slf4j.Logger;
@@ -13,6 +14,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -26,22 +28,27 @@ import java.util.function.UnaryOperator;
  *
  * <p>Layout:
  * <ul>
- *   <li>{@code dispatch:offer:booking:{bookingId}} — a hash holding the booking's current offer.
- *       Dispatch offers a booking to one provider at a time, so one key per booking suffices; a
- *       later offer to the next candidate replaces it.</li>
+ *   <li>{@code dispatch:offer:booking:{bookingId}} — a hash holding the booking's whole
+ *       {@link OfferRound}: the booking-level fields once ({@code bookingId}, {@code emergency},
+ *       {@code subcategoryId}, {@code reference}, {@code scheduledAt}) and one
+ *       {@code offer:{providerId}} field per provider offered, encoded as
+ *       {@code STATUS|offeredAtMillis|expiresAtMillis|decidedAtMillis|position}, where position
+ *       keeps the order the offers were made in. Keeping every offer in one
+ *       key is what lets a single compare-and-set accept one provider and withdraw the others.</li>
  *   <li>{@code dispatch:offers:provider:{providerId}} — a set of booking ids offered to that
- *       provider, so they can list their pending offers. Entries can go stale (the offer was
- *       replaced or expired from storage); readers check each against the booking's hash and
- *       stale members are pruned as they are found.</li>
+ *       provider, so they can list their pending offers. Entries can go stale (the round expired
+ *       from storage); readers check each against the booking's hash and prune stale members.</li>
  * </ul>
- * Both keys carry the TTL passed to {@link #save}, so abandoned offers clean themselves up.
+ * Both keys carry the TTL passed when a wave is opened, so abandoned offers clean themselves up.
+ * Fields are only ever added or overwritten (offers are never removed from a round), so later
+ * writes without a TTL keep the key's expiry.
  *
  * <p>{@link #update} is an optimistic compare-and-set: {@code WATCH} the hash, read it, compute the
  * transition in Java, and write it inside {@code MULTI}/{@code EXEC}. If anyone touched the hash in
  * between, {@code EXEC} is discarded and the whole read-compute-write is retried against the new
- * value, so two concurrent decisions (accept vs. the timeout, or a double accept) can never both
- * win. Keeping the transition in Java rather than a Lua script keeps the state machine in one
- * place, {@link JobOffer}, where it is unit-tested.
+ * value, so two concurrent decisions (two accepts, or an accept and the wave's timeout) can never
+ * both win. Keeping the transition in Java rather than a Lua script keeps the state machine in one
+ * place, {@link OfferRound}, where it is unit-tested.
  *
  * <p>Registered by {@code DispatchAdaptersConfig}, for the same reason as
  * {@link RedisDistributedLockAdapter}.
@@ -52,20 +59,24 @@ public class RedisJobOfferStore implements JobOfferStore {
 
     static final String OFFER_KEY_PREFIX = "dispatch:offer:booking:";
     static final String PROVIDER_INDEX_PREFIX = "dispatch:offers:provider:";
+    static final String OFFER_FIELD_PREFIX = "offer:";
 
-    /** Optimistic retries before giving up; contention on one offer is at most a handful of writers. */
-    static final int MAX_CAS_ATTEMPTS = 8;
+    /** Optimistic retries before giving up; contention on one round is at most a wave's providers. */
+    static final int MAX_CAS_ATTEMPTS = 16;
 
     private static final String BOOKING_ID = "bookingId";
-    private static final String PROVIDER_ID = "providerId";
-    private static final String STATUS = "status";
-    private static final String OFFERED_AT = "offeredAt";
-    private static final String EXPIRES_AT = "expiresAt";
-    private static final String DECIDED_AT = "decidedAt";
     private static final String EMERGENCY = "emergency";
     private static final String SUBCATEGORY_ID = "subcategoryId";
     private static final String REFERENCE = "reference";
     private static final String SCHEDULED_AT = "scheduledAt";
+
+    // Single-offer layout written before offers were made in waves; still read so offers in
+    // flight across a deploy are not lost (they expire within one window plus grace).
+    private static final String LEGACY_PROVIDER_ID = "providerId";
+    private static final String LEGACY_STATUS = "status";
+    private static final String LEGACY_OFFERED_AT = "offeredAt";
+    private static final String LEGACY_EXPIRES_AT = "expiresAt";
+    private static final String LEGACY_DECIDED_AT = "decidedAt";
 
     private final StringRedisTemplate redis;
 
@@ -74,31 +85,9 @@ public class RedisJobOfferStore implements JobOfferStore {
     }
 
     @Override
-    public void save(JobOffer offer, Duration ttl) {
-        String offerKey = offerKey(offer.bookingId());
-        String indexKey = indexKey(offer.providerId());
-        Map<String, String> fields = toHash(offer);
-        redis.execute(new SessionCallback<List<Object>>() {
-            @Override
-            @SuppressWarnings({"unchecked", "rawtypes"})
-            public List<Object> execute(RedisOperations operations) throws DataAccessException {
-                RedisOperations<String, String> ops = operations;
-                ops.multi();
-                // Delete first so no field of a previous offer for this booking survives.
-                ops.delete(offerKey);
-                ops.opsForHash().putAll(offerKey, fields);
-                ops.expire(offerKey, ttl);
-                ops.opsForSet().add(indexKey, offer.bookingId().toString());
-                ops.expire(indexKey, ttl);
-                return ops.exec();
-            }
-        });
-    }
-
-    @Override
-    public Optional<JobOffer> find(UUID bookingId) {
+    public Optional<OfferRound> find(UUID bookingId) {
         Map<Object, Object> entries = redis.opsForHash().entries(offerKey(bookingId));
-        return entries == null || entries.isEmpty() ? Optional.empty() : Optional.of(fromHash(entries));
+        return entries == null || entries.isEmpty() ? Optional.empty() : Optional.of(fromHash(bookingId, entries));
     }
 
     @Override
@@ -110,11 +99,11 @@ public class RedisJobOfferStore implements JobOfferStore {
             return offers;
         }
         for (String member : members) {
-            Optional<JobOffer> offer = parseUuid(member).flatMap(this::find);
-            if (offer.isPresent() && offer.get().isOfferedTo(providerId)) {
+            Optional<JobOffer> offer = parseUuid(member).flatMap(this::find).flatMap(r -> r.offerTo(providerId));
+            if (offer.isPresent()) {
                 offers.add(offer.get());
             } else {
-                // Expired from storage or since re-offered to someone else: drop the index entry.
+                // The round expired from storage: drop the index entry.
                 redis.opsForSet().remove(indexKey, member);
             }
         }
@@ -122,7 +111,7 @@ public class RedisJobOfferStore implements JobOfferStore {
     }
 
     @Override
-    public Optional<Change> update(UUID bookingId, UnaryOperator<JobOffer> transition) {
+    public Change update(UUID bookingId, UnaryOperator<OfferRound> transition, Duration ttl) {
         String key = offerKey(bookingId);
         for (int attempt = 1; attempt <= MAX_CAS_ATTEMPTS; attempt++) {
             CasResult result = redis.execute(new SessionCallback<CasResult>() {
@@ -132,23 +121,31 @@ public class RedisJobOfferStore implements JobOfferStore {
                     RedisOperations<String, String> ops = operations;
                     ops.watch(key);
                     Map<Object, Object> entries = ops.opsForHash().entries(key);
-                    if (entries == null || entries.isEmpty()) {
-                        ops.unwatch();
-                        return CasResult.committed(Optional.empty());
-                    }
-                    JobOffer before = fromHash(entries);
-                    JobOffer after = transition.apply(before);
+                    OfferRound before = entries == null || entries.isEmpty()
+                            ? OfferRound.empty(bookingId)
+                            : fromHash(bookingId, entries);
+                    OfferRound after = transition.apply(before);
                     if (after.equals(before)) {
                         ops.unwatch();
-                        return CasResult.committed(Optional.of(new Change(before, before)));
+                        return CasResult.committed(new Change(before, before));
                     }
                     ops.multi();
                     ops.opsForHash().putAll(key, toHash(after));
+                    if (ttl != null) {
+                        ops.expire(key, ttl);
+                    }
+                    for (JobOffer offer : after.offers()) {
+                        if (before.offerTo(offer.providerId()).isEmpty()) {
+                            String indexKey = indexKey(offer.providerId());
+                            ops.opsForSet().add(indexKey, bookingId.toString());
+                            if (ttl != null) {
+                                ops.expire(indexKey, ttl);
+                            }
+                        }
+                    }
                     // HMSET's reply is a bare status, which RedisTemplate.exec() drops from its
-                    // results, so a committed transaction holding only the write also comes back
-                    // empty — indistinguishable from a discarded one. Without this the first
-                    // accept committed, was read as a conflict, and the retry then refused the
-                    // provider's own decision as OFFER_ALREADY_DECIDED. HLEN's integer reply is
+                    // results, so a committed transaction holding only the write would also come
+                    // back empty — indistinguishable from a discarded one. HLEN's integer reply is
                     // always kept, so a committed transaction is never empty.
                     ops.opsForHash().size(key);
                     List<Object> exec = ops.exec();
@@ -157,16 +154,16 @@ public class RedisJobOfferStore implements JobOfferStore {
                     if (exec == null || exec.isEmpty()) {
                         return CasResult.CONFLICT;
                     }
-                    return CasResult.committed(Optional.of(new Change(before, after)));
+                    return CasResult.committed(new Change(before, after));
                 }
             });
             if (result != null && !result.conflict()) {
                 return result.change();
             }
-            log.debug("Concurrent write to offer for booking {}; retrying ({}/{})",
+            log.debug("Concurrent write to the offers of booking {}; retrying ({}/{})",
                     bookingId, attempt, MAX_CAS_ATTEMPTS);
         }
-        throw new IllegalStateException("Could not update the offer for booking " + bookingId
+        throw new IllegalStateException("Could not update the offers of booking " + bookingId
                 + " after " + MAX_CAS_ATTEMPTS + " attempts under contention");
     }
 
@@ -178,41 +175,66 @@ public class RedisJobOfferStore implements JobOfferStore {
         return PROVIDER_INDEX_PREFIX + providerId;
     }
 
-    static Map<String, String> toHash(JobOffer offer) {
+    static Map<String, String> toHash(OfferRound round) {
         Map<String, String> fields = new HashMap<>();
-        fields.put(BOOKING_ID, offer.bookingId().toString());
-        fields.put(PROVIDER_ID, offer.providerId().toString());
-        fields.put(STATUS, offer.status().name());
-        fields.put(OFFERED_AT, Long.toString(offer.offeredAt().toEpochMilli()));
-        fields.put(EXPIRES_AT, Long.toString(offer.expiresAt().toEpochMilli()));
-        fields.put(EMERGENCY, Boolean.toString(offer.emergency()));
-        if (offer.decidedAt() != null) {
-            fields.put(DECIDED_AT, Long.toString(offer.decidedAt().toEpochMilli()));
+        fields.put(BOOKING_ID, round.bookingId().toString());
+        if (round.offers().isEmpty()) {
+            return fields;
         }
-        if (offer.subcategoryId() != null) {
-            fields.put(SUBCATEGORY_ID, offer.subcategoryId().toString());
+        JobOffer first = round.offers().get(0);
+        fields.put(EMERGENCY, Boolean.toString(first.emergency()));
+        if (first.subcategoryId() != null) {
+            fields.put(SUBCATEGORY_ID, first.subcategoryId().toString());
         }
-        if (offer.reference() != null) {
-            fields.put(REFERENCE, offer.reference());
+        if (first.reference() != null) {
+            fields.put(REFERENCE, first.reference());
         }
-        if (offer.scheduledAt() != null) {
-            fields.put(SCHEDULED_AT, Long.toString(offer.scheduledAt().toEpochMilli()));
+        if (first.scheduledAt() != null) {
+            fields.put(SCHEDULED_AT, Long.toString(first.scheduledAt().toEpochMilli()));
+        }
+        for (int position = 0; position < round.offers().size(); position++) {
+            JobOffer offer = round.offers().get(position);
+            fields.put(OFFER_FIELD_PREFIX + offer.providerId(), encode(offer, position));
         }
         return fields;
     }
 
-    static JobOffer fromHash(Map<Object, Object> entries) {
-        return new JobOffer(
-                UUID.fromString(str(entries, BOOKING_ID)),
-                UUID.fromString(str(entries, PROVIDER_ID)),
-                OfferStatus.valueOf(str(entries, STATUS)),
-                instant(entries, OFFERED_AT),
-                instant(entries, EXPIRES_AT),
-                instant(entries, DECIDED_AT),
-                Boolean.parseBoolean(str(entries, EMERGENCY)),
-                str(entries, SUBCATEGORY_ID) == null ? null : UUID.fromString(str(entries, SUBCATEGORY_ID)),
-                str(entries, REFERENCE),
-                instant(entries, SCHEDULED_AT));
+    static OfferRound fromHash(UUID bookingId, Map<Object, Object> entries) {
+        boolean emergency = Boolean.parseBoolean(str(entries, EMERGENCY));
+        UUID subcategoryId = str(entries, SUBCATEGORY_ID) == null ? null : UUID.fromString(str(entries, SUBCATEGORY_ID));
+        String reference = str(entries, REFERENCE);
+        Instant scheduledAt = instant(str(entries, SCHEDULED_AT));
+        List<JobOffer> offers = new ArrayList<>();
+        Map<UUID, Integer> positions = new HashMap<>();
+        for (Map.Entry<Object, Object> entry : entries.entrySet()) {
+            String field = entry.getKey().toString();
+            if (!field.startsWith(OFFER_FIELD_PREFIX)) {
+                continue;
+            }
+            UUID providerId = UUID.fromString(field.substring(OFFER_FIELD_PREFIX.length()));
+            String[] parts = entry.getValue().toString().split("\\|", -1);
+            positions.put(providerId, parts.length > 4 ? Integer.parseInt(parts[4]) : 0);
+            offers.add(new JobOffer(bookingId, providerId, OfferStatus.valueOf(parts[0]),
+                    instant(parts[1]), instant(parts[2]), instant(parts[3]),
+                    emergency, subcategoryId, reference, scheduledAt));
+        }
+        if (offers.isEmpty() && str(entries, LEGACY_PROVIDER_ID) != null) {
+            offers.add(new JobOffer(bookingId, UUID.fromString(str(entries, LEGACY_PROVIDER_ID)),
+                    OfferStatus.valueOf(str(entries, LEGACY_STATUS)),
+                    instant(str(entries, LEGACY_OFFERED_AT)), instant(str(entries, LEGACY_EXPIRES_AT)),
+                    instant(str(entries, LEGACY_DECIDED_AT)), emergency, subcategoryId, reference, scheduledAt));
+        }
+        // Hash order is arbitrary; put the round back in the order the offers were made.
+        offers.sort(Comparator.comparing((JobOffer o) -> positions.getOrDefault(o.providerId(), 0)));
+        return new OfferRound(bookingId, offers);
+    }
+
+    private static String encode(JobOffer offer, int position) {
+        return offer.status().name()
+                + '|' + offer.offeredAt().toEpochMilli()
+                + '|' + offer.expiresAt().toEpochMilli()
+                + '|' + (offer.decidedAt() == null ? "" : Long.toString(offer.decidedAt().toEpochMilli()))
+                + '|' + position;
     }
 
     private static String str(Map<Object, Object> entries, String field) {
@@ -220,9 +242,8 @@ public class RedisJobOfferStore implements JobOfferStore {
         return value == null ? null : value.toString();
     }
 
-    private static Instant instant(Map<Object, Object> entries, String field) {
-        String value = str(entries, field);
-        return value == null ? null : Instant.ofEpochMilli(Long.parseLong(value));
+    private static Instant instant(String value) {
+        return value == null || value.isEmpty() ? null : Instant.ofEpochMilli(Long.parseLong(value));
     }
 
     private static Optional<UUID> parseUuid(String value) {
@@ -234,10 +255,10 @@ public class RedisJobOfferStore implements JobOfferStore {
     }
 
     /** Outcome of one optimistic attempt: committed with a result, or lost to a concurrent write. */
-    private record CasResult(boolean conflict, Optional<Change> change) {
-        static final CasResult CONFLICT = new CasResult(true, Optional.empty());
+    private record CasResult(boolean conflict, Change change) {
+        static final CasResult CONFLICT = new CasResult(true, null);
 
-        static CasResult committed(Optional<Change> change) {
+        static CasResult committed(Change change) {
             return new CasResult(false, change);
         }
     }

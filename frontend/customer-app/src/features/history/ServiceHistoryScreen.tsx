@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { Box, Button, Card, CardActionArea, Pagination, Stack, Typography } from '@mui/material';
 import ChevronRightRoundedIcon from '@mui/icons-material/ChevronRightRounded';
 import ReceiptLongRoundedIcon from '@mui/icons-material/ReceiptLongRounded';
@@ -29,12 +29,25 @@ export function ServiceHistoryScreen() {
   return (
     <AppShell>
       <Stack spacing={{ xs: 2.5, md: 4 }}>
-        <Stack direction="row" alignItems="flex-end" justifyContent="space-between" spacing={2}>
+        <Stack
+          direction="row"
+          spacing={2}
+          sx={{
+            alignItems: 'flex-end',
+            justifyContent: 'space-between',
+          }}
+        >
           <Box>
             <Typography variant="h2" component="h1">
               Your bookings
             </Typography>
-            <Typography variant="body1" color="text.secondary" sx={{ mt: 0.5 }}>
+            <Typography
+              variant="body1"
+              sx={{
+                color: 'text.secondary',
+                mt: 0.5,
+              }}
+            >
               {total > 0
                 ? `${total} booking${total === 1 ? '' : 's'}, newest first.`
                 : 'Every job you book, with its status and invoice.'}
@@ -42,7 +55,7 @@ export function ServiceHistoryScreen() {
           </Box>
           <Button
             variant="outlined"
-            onClick={() => navigate('/home')}
+            onClick={() => void navigate('/home')}
             sx={{ display: { xs: 'none', sm: 'inline-flex' }, flexShrink: 0 }}
           >
             Book a service
@@ -59,7 +72,7 @@ export function ServiceHistoryScreen() {
           emptyTitle="No bookings yet"
           emptyMessage="When you book a service it shows up here, with live status and your invoice."
           emptyAction={
-            <Button variant="contained" size="large" onClick={() => navigate('/home')}>
+            <Button variant="contained" size="large" onClick={() => void navigate('/home')}>
               Book a service
             </Button>
           }
@@ -69,13 +82,18 @@ export function ServiceHistoryScreen() {
               <HistoryRow
                 key={item.bookingId}
                 item={item}
-                onOpen={() => navigate(`/bookings/${item.bookingId}`)}
+                onOpen={() => void navigate(`/bookings/${item.bookingId}`)}
               />
             ))}
           </Stack>
 
           {query.data && query.data.totalPages > 1 ? (
-            <Stack alignItems="center" sx={{ mt: 4 }}>
+            <Stack
+              sx={{
+                alignItems: 'center',
+                mt: 4,
+              }}
+            >
               <Pagination
                 count={query.data.totalPages}
                 page={page}
@@ -101,16 +119,34 @@ function HistoryRow({ item, onOpen }: { item: BookingHistoryItem; onOpen: () => 
         sx={{ p: { xs: 2, md: 2.5 } }}
         aria-label={`${item.serviceName}, ${formatDate(item.date)}, booking ${item.referenceNumber}`}
       >
-        <Stack direction="row" spacing={2} alignItems="center">
+        <Stack
+          direction="row"
+          spacing={2}
+          sx={{
+            alignItems: 'center',
+          }}
+        >
           <IconTile size={48} bg={tone.bg} color={tone.fg}>
             <ReceiptLongRoundedIcon />
           </IconTile>
 
           <Box sx={{ minWidth: 0, flexGrow: 1 }}>
-            <Typography variant="subtitle1" fontWeight={700} noWrap>
+            <Typography
+              variant="subtitle1"
+              noWrap
+              sx={{
+                fontWeight: 700,
+              }}
+            >
               {item.serviceName}
             </Typography>
-            <Typography variant="body2" color="text.secondary" noWrap>
+            <Typography
+              variant="body2"
+              noWrap
+              sx={{
+                color: 'text.secondary',
+              }}
+            >
               {formatDate(item.date)}
               <Box component="span" sx={{ mx: 0.75, color: brand.subtle }}>
                 ·
@@ -127,8 +163,12 @@ function HistoryRow({ item, onOpen }: { item: BookingHistoryItem; onOpen: () => 
           </Box>
           <Typography
             variant="subtitle1"
-            fontWeight={800}
-            sx={{ flexShrink: 0, minWidth: { sm: 96 }, textAlign: 'right' }}
+            sx={{
+              fontWeight: 800,
+              flexShrink: 0,
+              minWidth: { sm: 96 },
+              textAlign: 'right',
+            }}
           >
             {formatCurrency(item.amount, item.currency)}
           </Typography>

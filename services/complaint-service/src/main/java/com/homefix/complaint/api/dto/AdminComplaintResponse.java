@@ -14,6 +14,9 @@ import com.homefix.complaint.domain.Complaint;
  * services or inventing a value. {@code summary} is the customer's description and
  * {@code slaDueAt} the resolution SLA deadline (16.4). {@code status} is the backend enum name,
  * including the states the portal did not originally model (ESCALATED, REFUND_FAILED, CLOSED).
+ * {@code resolutionNote} is the latest note staff recorded through {@code PATCH
+ * /admin/complaints/{id}}, or {@code null} when none has been; it was stored but never returned
+ * before, so a note could be written and never read back.
  */
 public record AdminComplaintResponse(
         UUID id,
@@ -23,7 +26,8 @@ public record AdminComplaintResponse(
         String summary,
         String status,
         Instant slaDueAt,
-        Instant createdAt) {
+        Instant createdAt,
+        String resolutionNote) {
 
     public static AdminComplaintResponse from(Complaint c) {
         return new AdminComplaintResponse(
@@ -34,6 +38,7 @@ public record AdminComplaintResponse(
                 c.getDescription(),
                 c.getStatus().name(),
                 c.getSlaDeadline(),
-                c.getCreatedAt());
+                c.getCreatedAt(),
+                c.getResolutionNote());
     }
 }

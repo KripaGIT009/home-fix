@@ -1,14 +1,9 @@
 package com.homefix.auth.api;
 
 import java.util.List;
-import java.util.Set;
 import java.util.UUID;
-import java.util.stream.Collectors;
 
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.GrantedAuthority;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -17,9 +12,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.homefix.auth.admin.AdminUserException;
 import com.homefix.auth.admin.AdminUserService;
-import com.homefix.auth.admin.StaffActor;
 
 import jakarta.validation.Valid;
 
@@ -34,8 +27,6 @@ import jakarta.validation.Valid;
 @RestController
 @RequestMapping("/admin/users")
 public class AdminUserController {
-
-    private static final String ROLE_PREFIX = "ROLE_";
 
     private final AdminUserService adminUserService;
 
@@ -67,29 +58,6 @@ public class AdminUserController {
             @PathVariable("id") UUID id,
             @Valid @RequestBody UpdateUserStatusRequest request) {
         return ResponseEntity.ok(AdminUserResponse.from(
-                adminUserService.changeStatus(id, request.status(), currentActor())));
-    }
-
-    /**
-     * The caller as the JWT validation filter left them in the security context: the subject as
-     * the account id, the {@code ROLE_*} authorities as role names.
-     */
-    private static StaffActor currentActor() {
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        if (authentication == null || !authentication.isAuthenticated()) {
-            throw AdminUserException.invalidPrincipal();
-        }
-        UUID actorId;
-        try {
-            actorId = UUID.fromString(authentication.getName());
-        } catch (IllegalArgumentException ex) {
-            throw AdminUserException.invalidPrincipal();
-        }
-        Set<String> roles = authentication.getAuthorities().stream()
-                .map(GrantedAuthority::getAuthority)
-                .filter(authority -> authority.startsWith(ROLE_PREFIX))
-                .map(authority -> authority.substring(ROLE_PREFIX.length()))
-                .collect(Collectors.toSet());
-        return new StaffActor(actorId, roles);
+                adminUserService.changeStatus(id, request.status(), RequestContext.currentActor())));
     }
 }

@@ -1,4 +1,4 @@
-import { isApiError } from '@api/client';
+import { isApiError, type ApiError } from '@api/client';
 import { OTP_LOCKED_CODE } from './constants';
 
 /**
@@ -48,6 +48,15 @@ export function getLockoutInfo(error: unknown): LockoutInfo {
   return remainingSeconds !== undefined
     ? { isLocked: true, remainingSeconds, message: error.message }
     : { isLocked: true, message: error.message };
+}
+
+/**
+ * Seconds a 429 asks the caller to wait (a password sign-in lockout, a resend
+ * limit): the `Retry-After` header when it was readable, else the duration the
+ * message names, else undefined.
+ */
+export function getRetryAfterSeconds(error: ApiError): number | undefined {
+  return error.retryAfterSeconds ?? parseRemainingSeconds(error.message);
 }
 
 /** Format a duration in seconds as `M:SS` for countdown display. */

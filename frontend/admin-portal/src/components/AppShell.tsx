@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router';
 import {
   AppBar,
   Avatar,
@@ -112,11 +112,11 @@ export function AppShell({ title, children }: AppShellProps) {
     // state. Navigation is not awaited so the button never appears to hang on a
     // slow network; the revoke completes in the background either way.
     void logout();
-    navigate('/login', { replace: true });
+    void navigate('/login', { replace: true });
   };
 
   const handleNavigate = (path: string) => {
-    navigate(path);
+    void navigate(path);
     setMobileOpen(false);
   };
 
@@ -208,10 +208,11 @@ export function AppShell({ title, children }: AppShellProps) {
                   </ListItemIcon>
                   <ListItemText
                     primary={item.label}
-                    primaryTypographyProps={{
-                      variant: 'body2',
-                      fontWeight: selected ? 600 : 500,
-                      fontSize: '0.8125rem',
+                    slotProps={{
+                      primary: {
+                        variant: 'body2',
+                        sx: { fontWeight: selected ? 600 : 500, fontSize: '0.8125rem' },
+                      },
                     }}
                   />
                   {item.badge ? <NavCount count={badges[item.badge]} /> : null}
@@ -224,7 +225,14 @@ export function AppShell({ title, children }: AppShellProps) {
 
       <Box sx={{ p: 2, borderTop: `1px solid ${brand.navLine}` }}>
         {isTenantAdmin && tenant ? (
-          <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5 }}>
+          <Stack
+            direction="row"
+            spacing={1}
+            sx={{
+              alignItems: 'center',
+              mb: 0.5,
+            }}
+          >
             <Typography
               variant="body2"
               noWrap
@@ -282,7 +290,13 @@ export function AppShell({ title, children }: AppShellProps) {
             </Typography>
           </Box>
 
-          <Stack direction="row" spacing={1.25} alignItems="center">
+          <Stack
+            direction="row"
+            spacing={1.25}
+            sx={{
+              alignItems: 'center',
+            }}
+          >
             <Chip
               label={roleLabel}
               size="small"
@@ -323,12 +337,29 @@ export function AppShell({ title, children }: AppShellProps) {
                 >
                   {initials}
                 </Avatar>
-                <Stack alignItems="flex-start" sx={{ display: { xs: 'none', md: 'flex' } }}>
-                  <Typography variant="body2" fontWeight={600} lineHeight={1.15}>
+                <Stack
+                  sx={{
+                    alignItems: 'flex-start',
+                    display: { xs: 'none', md: 'flex' },
+                  }}
+                >
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      fontWeight: 600,
+                      lineHeight: 1.15,
+                    }}
+                  >
                     {operatorName}
                   </Typography>
                   {user?.email ? (
-                    <Typography variant="caption" color="text.secondary" lineHeight={1.15}>
+                    <Typography
+                      variant="caption"
+                      sx={{
+                        color: 'text.secondary',
+                        lineHeight: 1.15,
+                      }}
+                    >
                       {user.email}
                     </Typography>
                   ) : null}
@@ -345,10 +376,20 @@ export function AppShell({ title, children }: AppShellProps) {
               transformOrigin={{ vertical: 'top', horizontal: 'right' }}
             >
               <Box sx={{ px: 1.5, py: 1 }}>
-                <Typography variant="body2" fontWeight={600}>
+                <Typography
+                  variant="body2"
+                  sx={{
+                    fontWeight: 600,
+                  }}
+                >
                   {operatorName}
                 </Typography>
-                <Typography variant="caption" color="text.secondary">
+                <Typography
+                  variant="caption"
+                  sx={{
+                    color: 'text.secondary',
+                  }}
+                >
                   {user?.email ?? user?.mobileNumber ?? roleLabel}
                 </Typography>
               </Box>

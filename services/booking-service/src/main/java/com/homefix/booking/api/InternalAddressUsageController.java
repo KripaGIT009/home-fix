@@ -28,13 +28,18 @@ import com.homefix.booking.domain.BookingStatus;
 public class InternalAddressUsageController {
 
     /**
-     * States in which a booking still needs its address: from the search for a provider until the
-     * job is under way. Once the provider is on site nobody navigates to it again; {@code CREATED}
-     * is excluded because an unconfirmed booking cannot be cancelled, so counting it would block the
-     * delete forever.
+     * States in which a booking still needs its address: every state before the job is done, from
+     * an unconfirmed booking to the wait for the customer's approval of an additional quote. That
+     * includes the Tenant queue (AWAITING_ASSIGNMENT, PROVIDER_ASSIGNED), whose Tenant_Admins read
+     * the address to pick a Provider and whose Provider then travels there. {@code CREATED} counts
+     * because the booking can still be confirmed and dispatched to the address; it can be cancelled
+     * at no fee, so it never blocks the delete for good. Once the job is completed nobody goes there
+     * again; the payment and refund states after it would otherwise hold the address forever.
      */
     static final Set<BookingStatus> ADDRESS_IN_USE_STATUSES = Set.of(
+            BookingStatus.CREATED,
             BookingStatus.SEARCHING_PROVIDER,
+            BookingStatus.AWAITING_ASSIGNMENT,
             BookingStatus.PROVIDER_ASSIGNED,
             BookingStatus.PROVIDER_ACCEPTED,
             BookingStatus.PROVIDER_ON_THE_WAY,

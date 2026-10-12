@@ -1,4 +1,4 @@
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router';
 import { Alert, Box, Button, Chip, Stack, Typography } from '@mui/material';
 import { AppShell } from '@components/AppShell';
 import { QueryStateView } from '@components/QueryStateView';
@@ -40,7 +40,7 @@ export function ActiveJobScreen() {
   const job = useJobDetail(bookingId);
 
   return (
-    <AppShell title="Active job" onBack={() => navigate(`/jobs/${bookingId}`)}>
+    <AppShell title="Active job" onBack={() => void navigate(`/jobs/${bookingId}`)}>
       <QueryStateView
         isLoading={job.isLoading}
         isError={job.isError}
@@ -85,17 +85,33 @@ function ActiveContent({ job }: { job: JobDetail }) {
   };
   const handleComplete = () => {
     completeJob.mutate(undefined, {
-      onSuccess: () => navigate(`/jobs/${job.bookingId}/complete`),
+      onSuccess: () => void navigate(`/jobs/${job.bookingId}/complete`),
     });
   };
 
   const header = (
-    <Stack direction="row" justifyContent="space-between" alignItems="center">
+    <Stack
+      direction="row"
+      sx={{
+        justifyContent: 'space-between',
+        alignItems: 'center',
+      }}
+    >
       <Box>
-        <Typography variant="h6" fontWeight={700}>
+        <Typography
+          variant="h6"
+          sx={{
+            fontWeight: 700,
+          }}
+        >
           {job.serviceName}
         </Typography>
-        <Typography variant="caption" color="text.secondary">
+        <Typography
+          variant="caption"
+          sx={{
+            color: 'text.secondary',
+          }}
+        >
           {job.reference}
         </Typography>
       </Box>
@@ -112,12 +128,12 @@ function ActiveContent({ job }: { job: JobDetail }) {
           // The refetched job is PROVIDER_ACCEPTED: this screen carries on.
           onAccepted={() => undefined}
           onDeclined={(tenantName) =>
-            navigate('/dashboard', {
+            void navigate('/dashboard', {
               replace: true,
               state: { notice: declinedNotice(tenantName) } satisfies DashboardNoticeState,
             })
           }
-          onGone={() => navigate('/dashboard', { replace: true })}
+          onGone={() => void navigate('/dashboard', { replace: true })}
         />
       </Stack>
     );
@@ -242,7 +258,7 @@ function ActiveContent({ job }: { job: JobDetail }) {
             variant="contained"
             size="large"
             fullWidth
-            onClick={() => navigate(`/jobs/${job.bookingId}/complete`)}
+            onClick={() => void navigate(`/jobs/${job.bookingId}/complete`)}
           >
             View completion summary
           </Button>

@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { Box, Stack, Typography } from '@mui/material';
 import PaymentsRoundedIcon from '@mui/icons-material/PaymentsRounded';
 import WorkHistoryRoundedIcon from '@mui/icons-material/WorkHistoryRounded';
@@ -27,7 +27,7 @@ export function SplashScreen() {
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      navigate(isAuthenticated ? '/dashboard' : '/login', { replace: true });
+      void navigate(isAuthenticated ? '/dashboard' : '/login', { replace: true });
     }, SPLASH_DURATION_MS);
     return () => clearTimeout(timer);
   }, [navigate, isAuthenticated]);
@@ -55,10 +55,23 @@ export function SplashScreen() {
         position: 'relative',
       }}
     >
-      <Stack spacing={2.5} alignItems="center" textAlign="center" sx={{ zIndex: 1 }}>
+      <Stack
+        spacing={2.5}
+        sx={{
+          alignItems: 'center',
+          textAlign: 'center',
+          zIndex: 1,
+        }}
+      >
         <BrandLogo size={76} inverted markOnly />
         <Box>
-          <Typography variant="h3" component="h1" fontWeight={800}>
+          <Typography
+            variant="h3"
+            component="h1"
+            sx={{
+              fontWeight: 800,
+            }}
+          >
             HomeFix
           </Typography>
           <Typography variant="overline" sx={{ opacity: 0.75, letterSpacing: '0.2em' }}>
@@ -75,8 +88,8 @@ export function SplashScreen() {
               key={promise.label}
               direction="row"
               spacing={0.75}
-              alignItems="center"
               sx={{
+                alignItems: 'center',
                 px: 1.5,
                 py: 0.75,
                 borderRadius: 999,
@@ -85,7 +98,12 @@ export function SplashScreen() {
               }}
             >
               {promise.icon}
-              <Typography variant="caption" fontWeight={700}>
+              <Typography
+                variant="caption"
+                sx={{
+                  fontWeight: 700,
+                }}
+              >
                 {promise.label}
               </Typography>
             </Stack>

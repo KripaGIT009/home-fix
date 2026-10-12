@@ -24,9 +24,9 @@ export function ErrorFallback({ error, resetErrorBoundary }: FallbackProps) {
       <Stack
         role="alert"
         spacing={2}
-        alignItems="center"
-        textAlign="center"
         sx={{
+          alignItems: 'center',
+          textAlign: 'center',
           maxWidth: 440,
           width: '100%',
           p: { xs: 3, md: 5 },
@@ -54,7 +54,12 @@ export function ErrorFallback({ error, resetErrorBoundary }: FallbackProps) {
         <Typography variant="h4" component="h1">
           Something went wrong
         </Typography>
-        <Typography variant="body1" color="text.secondary">
+        <Typography
+          variant="body1"
+          sx={{
+            color: 'text.secondary',
+          }}
+        >
           {friendlyErrorMessage(
             error,
             'This screen ran into a problem. Trying again usually fixes it.',

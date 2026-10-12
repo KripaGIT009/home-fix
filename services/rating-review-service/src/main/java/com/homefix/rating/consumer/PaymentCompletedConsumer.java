@@ -1,6 +1,6 @@
 package com.homefix.rating.consumer;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.homefix.rating.event.PaymentCompletedEvent;
 import com.homefix.rating.service.ReviewService;
 import com.homefix.shared.outbox.kafka.DlqForwarder;

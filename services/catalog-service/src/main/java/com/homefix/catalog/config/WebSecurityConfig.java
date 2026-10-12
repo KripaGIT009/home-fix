@@ -53,6 +53,8 @@ public class WebSecurityConfig {
                         .permitAll()
                         // Read-only customer-facing catalog listings are public.
                         .requestMatchers(HttpMethod.GET, "/catalog/**").permitAll()
+                        // The web apps' public settings (homefix-shared-config), read before sign-in.
+                        .requestMatchers(HttpMethod.GET, "/config/client").permitAll()
                         // Everything else (Admin CRUD under /admin/catalog/**) requires an
                         // authenticated principal; ADMIN role checks are enforced by the
                         // shared RbacEnforcementFilter.

@@ -5,9 +5,9 @@ import java.util.Map;
 import java.util.UUID;
 
 import org.springframework.stereotype.Service;
+import tools.jackson.core.JacksonException;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * Records every Admin action in the immutable Audit_Log (Requirement 19.8).
@@ -86,7 +86,7 @@ public class AuditLogService {
         }
         try {
             return objectMapper.writeValueAsString(values);
-        } catch (JsonProcessingException ex) {
+        } catch (JacksonException ex) {
             // An audit record must never be silently dropped; surface the failure.
             throw new IllegalStateException("Failed to serialise audit values", ex);
         }

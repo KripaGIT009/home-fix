@@ -156,6 +156,40 @@ class DispatchOutcomeServiceTest {
                 .isInstanceOf(BookingException.class);
     }
 
+    @Test
+    void acceptance_ofABookingInATenantQueue_isRefusedAndLeavesItQueued() {
+        Booking booking = searchingBooking();
+        coveredBy(UUID.randomUUID());
+        service.markSearchingFailed(booking.getId()); // dispatch gave up; a Tenant covers it
+
+        // A late offer acceptance must not pull the booking out of the queue (Property MT1).
+        assertThatThrownBy(() -> service.markProviderAccepted(booking.getId(), UUID.randomUUID()))
+                .isInstanceOf(InvalidTransitionException.class);
+
+        assertThat(booking.getStatus()).isEqualTo(BookingStatus.AWAITING_ASSIGNMENT);
+        assertThat(booking.getProviderId()).isNull();
+        assertThat(booking.getTenantId()).isNull();
+    }
+
+    @Test
+    void acceptance_ofATenantAssignedBooking_isRefusedAndKeepsTheAssignment() {
+        Booking booking = searchingBooking();
+        UUID tenantId = UUID.randomUUID();
+        UUID assigned = UUID.randomUUID();
+        booking.applyStatus(BookingStatus.PROVIDER_ASSIGNED);
+        booking.setQueuedForAssignmentAt(CLOCK.instant());
+        booking.setTenantId(tenantId);
+        booking.setProviderId(assigned);
+
+        assertThatThrownBy(() -> service.markProviderAccepted(booking.getId(), UUID.randomUUID()))
+                .isInstanceOf(InvalidTransitionException.class);
+
+        assertThat(booking.getStatus()).isEqualTo(BookingStatus.PROVIDER_ASSIGNED);
+        assertThat(booking.getProviderId()).isEqualTo(assigned);
+        assertThat(booking.getTenantId()).isEqualTo(tenantId);
+        verify(auditRepository, never()).save(any());
+    }
+
     // ----- Exhausted search (Requirement 8.9) -----
 
     @Test
@@ -314,6 +348,34 @@ class DispatchOutcomeServiceTest {
 
         assertThatThrownBy(() -> service.markSearchingFailed(booking.getId()))
                 .isInstanceOf(InvalidTransitionException.class);
+    }
+
+    // ----- Stalled search (review 17.5 item 4) -----
+
+    @Test
+    void stalledSearch_withCoveringTenants_isQueuedLikeAnExhaustedSearch() {
+        Booking booking = searchingBooking();
+        coveredBy(UUID.randomUUID());
+
+        Booking result = service.expireStalledSearch(booking.getId(), java.time.Duration.ofMinutes(60));
+
+        assertThat(result.getStatus()).isEqualTo(BookingStatus.AWAITING_ASSIGNMENT);
+        verify(outboxPublisher, never()).publish(any(), any(), any(), any());
+        ArgumentCaptor<BookingAudit> audit = ArgumentCaptor.forClass(BookingAudit.class);
+        verify(auditRepository).save(audit.capture());
+        assertThat(audit.getValue().getReason())
+                .isEqualTo("Provider search did not finish within PT1H; routed to 1 partner(s)");
+    }
+
+    @Test
+    void stalledSearch_withoutTenants_failsAndTellsTheCustomer() {
+        Booking booking = searchingBooking();
+
+        Booking result = service.expireStalledSearch(booking.getId(), java.time.Duration.ofMinutes(60));
+
+        assertThat(result.getStatus()).isEqualTo(BookingStatus.SEARCHING_FAILED);
+        verify(outboxPublisher, times(1)).publish(eq(BookingCancelledEvent.AGGREGATE_TYPE),
+                eq(booking.getId()), eq(BookingCancelledEvent.EVENT_TYPE), any());
     }
 
     // ----- Tenant on automatic acceptance (Requirement MT-8.1, MT-8.2) -----

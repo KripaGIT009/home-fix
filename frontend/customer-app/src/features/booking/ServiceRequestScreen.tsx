@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState, type ReactNode } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
-import { useForm } from 'react-hook-form';
+import { useNavigate, useParams } from 'react-router';
+import { useForm, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import {
   Box,
@@ -59,7 +59,7 @@ export function ServiceRequestScreen() {
     register,
     handleSubmit,
     setValue,
-    watch,
+    control,
     formState: { errors },
   } = useForm<ServiceRequestFormValues>({
     resolver: zodResolver(serviceRequestSchema),
@@ -72,7 +72,7 @@ export function ServiceRequestScreen() {
     },
   });
 
-  const isEmergency = watch('isEmergency');
+  const isEmergency = useWatch({ control, name: 'isEmergency' });
   const emergencyAvailable = subcategory?.emergencyAvailable ?? false;
 
   const onSubmit = useCallback(
@@ -97,7 +97,7 @@ export function ServiceRequestScreen() {
         media,
       });
 
-      navigate(`/book/${subcategoryId}/estimate`);
+      void navigate(`/book/${subcategoryId}/estimate`);
     },
     [media, navigate, setDraft, subcategory, subcategoryId],
   );
@@ -157,13 +157,29 @@ export function ServiceRequestScreen() {
                       }
                       label={
                         <Box>
-                          <Stack direction="row" spacing={0.75} alignItems="center">
+                          <Stack
+                            direction="row"
+                            spacing={0.75}
+                            sx={{
+                              alignItems: 'center',
+                            }}
+                          >
                             <BoltRoundedIcon fontSize="small" color="error" />
-                            <Typography variant="subtitle2" fontWeight={700}>
+                            <Typography
+                              variant="subtitle2"
+                              sx={{
+                                fontWeight: 700,
+                              }}
+                            >
                               Emergency — send a pro now
                             </Typography>
                           </Stack>
-                          <Typography variant="caption" color="text.secondary">
+                          <Typography
+                            variant="caption"
+                            sx={{
+                              color: 'text.secondary',
+                            }}
+                          >
                             Available 24×7. An emergency charge applies.
                           </Typography>
                         </Box>
@@ -173,7 +189,12 @@ export function ServiceRequestScreen() {
                 ) : null}
 
                 {isEmergency ? (
-                  <Typography variant="body2" color="text.secondary">
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      color: 'text.secondary',
+                    }}
+                  >
                     We&apos;ll find the nearest verified professional as soon as you confirm.
                   </Typography>
                 ) : (
@@ -181,14 +202,16 @@ export function ServiceRequestScreen() {
                     label="Preferred date & time"
                     type="datetime-local"
                     fullWidth
-                    InputLabelProps={{ shrink: true }}
-                    inputProps={{ min: scheduleBounds.min, max: scheduleBounds.max }}
                     error={Boolean(errors.scheduledAt)}
                     helperText={
                       errors.scheduledAt?.message ??
                       'At least 2 hours from now, up to 90 days ahead.'
                     }
                     {...register('scheduledAt')}
+                    slotProps={{
+                      htmlInput: { min: scheduleBounds.min, max: scheduleBounds.max },
+                      inputLabel: { shrink: true },
+                    }}
                   />
                 )}
               </Stack>
@@ -206,8 +229,10 @@ export function ServiceRequestScreen() {
                   helperText={
                     errors.description?.message ?? `Up to ${MAX_DESCRIPTION_LENGTH} characters.`
                   }
-                  inputProps={{ maxLength: MAX_DESCRIPTION_LENGTH }}
                   {...register('description')}
+                  slotProps={{
+                    htmlInput: { maxLength: MAX_DESCRIPTION_LENGTH },
+                  }}
                 />
                 <MediaUpload files={media} onChange={setMedia} />
               </Stack>
@@ -245,10 +270,12 @@ export function ServiceRequestScreen() {
               </Button>
               <Typography
                 variant="caption"
-                color="text.secondary"
-                display="block"
-                textAlign="center"
-                sx={{ mt: 1 }}
+                sx={{
+                  color: 'text.secondary',
+                  display: 'block',
+                  textAlign: 'center',
+                  mt: 1,
+                }}
               >
                 You won&apos;t be charged yet.
               </Typography>
@@ -275,7 +302,12 @@ function ServiceSummary({
   return (
     <Card sx={{ bgcolor: brand.accentSoft, borderColor: brand.accentLine }}>
       <CardContent>
-        <Typography variant="overline" color="primary.dark">
+        <Typography
+          variant="overline"
+          sx={{
+            color: 'primary.dark',
+          }}
+        >
           You&apos;re booking
         </Typography>
         <Typography variant="h5" component="p">
@@ -284,20 +316,42 @@ function ServiceSummary({
         <Stack direction="row" spacing={3} sx={{ mt: 1.5 }}>
           {price !== undefined ? (
             <Box>
-              <Typography variant="caption" color="text.secondary">
+              <Typography
+                variant="caption"
+                sx={{
+                  color: 'text.secondary',
+                }}
+              >
                 Starts at
               </Typography>
-              <Typography variant="h5" component="p" fontWeight={800}>
+              <Typography
+                variant="h5"
+                component="p"
+                sx={{
+                  fontWeight: 800,
+                }}
+              >
                 {formatPrice(price)}
               </Typography>
             </Box>
           ) : null}
           {duration ? (
             <Box>
-              <Typography variant="caption" color="text.secondary">
+              <Typography
+                variant="caption"
+                sx={{
+                  color: 'text.secondary',
+                }}
+              >
                 Typical visit
               </Typography>
-              <Typography variant="h5" component="p" fontWeight={800}>
+              <Typography
+                variant="h5"
+                component="p"
+                sx={{
+                  fontWeight: 800,
+                }}
+              >
                 {formatDuration(duration)}
               </Typography>
             </Box>
@@ -310,7 +364,14 @@ function ServiceSummary({
               'A verified, background-checked pro',
               'Live tracking and in-app chat',
             ].map((point) => (
-              <Stack key={point} direction="row" spacing={1} alignItems="center">
+              <Stack
+                key={point}
+                direction="row"
+                spacing={1}
+                sx={{
+                  alignItems: 'center',
+                }}
+              >
                 <CheckCircleRoundedIcon sx={{ fontSize: 18, color: 'success.main' }} aria-hidden />
                 <Typography variant="body2">{point}</Typography>
               </Stack>
@@ -337,10 +398,23 @@ function FormSection({
   return (
     <Card component="section" aria-label={title}>
       <CardContent>
-        <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mb: 2.5 }}>
+        <Stack
+          direction="row"
+          spacing={1.5}
+          sx={{
+            alignItems: 'center',
+            mb: 2.5,
+          }}
+        >
           <IconTile size={36}>{icon}</IconTile>
           <Box>
-            <Typography variant="caption" color="text.secondary" fontWeight={600}>
+            <Typography
+              variant="caption"
+              sx={{
+                color: 'text.secondary',
+                fontWeight: 600,
+              }}
+            >
               Step {step} of 3
             </Typography>
             <Typography variant="h6" component="h2" sx={{ lineHeight: 1.2 }}>

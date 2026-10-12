@@ -1,5 +1,6 @@
 package com.homefix.auth.domain;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -24,6 +25,12 @@ public interface UserAccountRepository extends JpaRepository<UserAccount, UUID> 
 
     boolean existsByMobileNumber(String mobileNumber);
 
+    /** The account with this email address. Emails are stored lower case; the caller normalises. */
+    Optional<UserAccount> findByEmail(String email);
+
+    /** Email sign-ups still unverified and created before {@code cutoff}: what the sweep removes. */
+    List<UserAccount> findByStatusAndCreatedAtBefore(AccountStatus status, Instant cutoff);
+
     /**
      * The account's status alone, for token introspection. The API Gateway introspects on every
      * uncached request, so this reads one column by primary key rather than loading the entity
@@ -36,7 +43,7 @@ public interface UserAccountRepository extends JpaRepository<UserAccount, UUID> 
     List<UserAccount> findByOrderByCreatedAtDesc(Pageable page);
 
     /**
-     * Accounts whose mobile number or console username contains {@code pattern} (a lower-case
+     * Accounts whose mobile number, console username, email or display name contains {@code pattern} (a lower-case
      * {@code LIKE} pattern with {@code \} escaping literal wildcards), newest first, bounded by
      * {@code page}. Either column may be null, and a null column simply does not match, which is
      * why the unfiltered list is a separate query: a social-login account with neither would
@@ -46,6 +53,8 @@ public interface UserAccountRepository extends JpaRepository<UserAccount, UUID> 
             select u from UserAccount u
             where lower(u.mobileNumber) like :pattern escape '\\'
                or lower(u.username) like :pattern escape '\\'
+               or lower(u.email) like :pattern escape '\\'
+               or lower(u.displayName) like :pattern escape '\\'
             order by u.createdAt desc
             """)
     List<UserAccount> searchForAdmin(@Param("pattern") String pattern, Pageable page);

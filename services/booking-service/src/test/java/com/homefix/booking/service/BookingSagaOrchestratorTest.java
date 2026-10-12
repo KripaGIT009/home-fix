@@ -15,6 +15,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import com.homefix.booking.domain.BookingStatus;
 import com.homefix.booking.domain.SagaStep;
 import com.homefix.booking.domain.SagaStepRepository;
 
@@ -89,6 +90,18 @@ class BookingSagaOrchestratorTest {
                 .isInstanceOf(BookingException.class)
                 .satisfies(ex -> assertThat(((BookingException) ex).getErrorCode())
                         .isEqualTo("PRICING_ENGINE_UNAVAILABLE"));
+    }
+
+    @Test
+    void anIllegalTransitionFromAStepIsPropagatedUnwrapped() {
+        BookingSagaOrchestrator.Step<String> failing = BookingSagaOrchestrator.Step.of(
+                "transition", () -> {
+                    throw new InvalidTransitionException(BOOKING,
+                            BookingStatus.SEARCHING_PROVIDER, BookingStatus.SEARCHING_PROVIDER);
+                });
+
+        assertThatThrownBy(() -> orchestrator.execute(BOOKING, List.of(failing)))
+                .isInstanceOf(InvalidTransitionException.class);
     }
 
     @Test

@@ -1,8 +1,14 @@
-import { createBrowserRouter } from 'react-router-dom';
+import { createBrowserRouter } from 'react-router';
 import { PlaceholderScreen } from '@components/PlaceholderScreen';
 import { ProfileScreen } from '@features/profile/ProfileScreen';
+import { ServicesScreen } from '@features/profile/ServicesScreen';
+import { ServiceAreaScreen } from '@features/profile/ServiceAreaScreen';
+import { AvailabilityScreen } from '@features/profile/AvailabilityScreen';
 import { RequireAuth } from '@components/RequireAuth';
 import { LoginScreen } from '@features/auth/LoginScreen';
+import { SignUpScreen } from '@features/auth/SignUpScreen';
+import { EmailCodeScreen } from '@features/auth/EmailCodeScreen';
+import { ForgotPasswordScreen } from '@features/auth/ForgotPasswordScreen';
 import { SplashScreen } from '@features/auth/SplashScreen';
 import { DashboardScreen } from '@features/dashboard/DashboardScreen';
 import { VerificationStatusScreen } from '@features/verification/VerificationStatusScreen';
@@ -19,7 +25,12 @@ import { EarningsScreen } from '@features/earnings/EarningsScreen';
  *
  * Task 34 implemented Login/OTP, Dashboard, and Verification status. Task 35
  * implements Job Request, Job Details, Active Job, Job Completion, and
- * Earnings/settlement history and the provider's profile.
+ * Earnings/settlement history and the provider's profile. The work-profile
+ * editors under /profile/* (services, service area, availability) are what
+ * make a newly signed-up provider matchable by dispatch.
+ *
+ * Email sign-up, its code screen and the forgotten-password flow (email-auth
+ * spec) are public, like /login.
  */
 export const router = createBrowserRouter([
   {
@@ -29,6 +40,18 @@ export const router = createBrowserRouter([
   {
     path: '/login',
     element: <LoginScreen />,
+  },
+  {
+    path: '/signup',
+    element: <SignUpScreen />,
+  },
+  {
+    path: '/signup/verify',
+    element: <EmailCodeScreen />,
+  },
+  {
+    path: '/forgot-password',
+    element: <ForgotPasswordScreen />,
   },
   {
     path: '/dashboard',
@@ -91,6 +114,30 @@ export const router = createBrowserRouter([
     element: (
       <RequireAuth>
         <ProfileScreen />
+      </RequireAuth>
+    ),
+  },
+  {
+    path: '/profile/services',
+    element: (
+      <RequireAuth>
+        <ServicesScreen />
+      </RequireAuth>
+    ),
+  },
+  {
+    path: '/profile/service-area',
+    element: (
+      <RequireAuth>
+        <ServiceAreaScreen />
+      </RequireAuth>
+    ),
+  },
+  {
+    path: '/profile/availability',
+    element: (
+      <RequireAuth>
+        <AvailabilityScreen />
       </RequireAuth>
     ),
   },

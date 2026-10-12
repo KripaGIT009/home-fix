@@ -11,8 +11,8 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.UUID;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import com.homefix.chat.config.ChatProperties;
 import com.homefix.chat.delivery.MessageDeliveryPort;
 import com.homefix.chat.domain.ChatChannel;

@@ -80,6 +80,11 @@ public class WebSecurityConfig {
                                 "/metrics",
                                 "/prometheus")
                         .permitAll()
+                        // Service-to-service only: the authority is granted solely by the
+                        // internal-API filter, never by a user token, so a customer JWT cannot reach
+                        // these handlers even through an encoded path the filter failed to spot.
+                        .requestMatchers("/internal/**")
+                        .hasAuthority(InternalApiKeyFilter.INTERNAL_AUTHORITY)
                         // Everything else requires an authenticated principal; fine-grained
                         // role checks are performed by the shared RbacEnforcementFilter.
                         .anyRequest().authenticated())

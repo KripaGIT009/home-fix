@@ -8,7 +8,8 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 import au.com.dius.pact.consumer.MessagePactBuilder;
 import au.com.dius.pact.consumer.dsl.PactDslJsonBody;
@@ -36,7 +37,7 @@ import au.com.dius.pact.core.model.messaging.MessagePact;
         pactVersion = PactSpecVersion.V3)
 class DispatchEngineConsumerPactTest {
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final ObjectMapper MAPPER = new JsonMapper();
 
     @Pact(consumer = "booking-service", provider = "dispatch-engine")
     MessagePact bookingCreatedPact(MessagePactBuilder builder) {

@@ -1,0 +1,48 @@
+# jobs-app - values for helm/homefix-service. One JVM hosting catalog-service, pricing-engine, promotion-service, booking-service, dispatch-engine, location-service, chat-service,
+# each on the port it has in docker-compose.core.yml (shared/homefix-service-host).
+# Merged from the former per-service values; inter-service URLs point at the deployable.
+
+serviceName: jobs-app
+# catalog-service
+containerPort: 8085
+extraPorts:
+  - name: pricing  # pricing-engine
+    port: 8086
+  - name: promotion  # promotion-service
+    port: 8098
+  - name: booking  # booking-service
+    port: 8084
+  - name: dispatch  # dispatch-engine
+    port: 8087
+  - name: location  # location-service
+    port: 8092
+  - name: chat  # chat-service
+    port: 8093
+
+dependencies:
+  postgres: true
+  redis: true
+  kafka: true
+
+# Keys read from the existing Secret "jobs-app-secrets".
+secrets:
+  env:
+    JWT_SECRET: jwt_secret
+    INTERNAL_API_KEY: internal_api_key
+
+config:
+  CATALOG_CACHE: "memory"
+  PRICING_CACHE: "memory"
+  PROMOTION_SERVICE_URL: "http://jobs-app:8098"
+  CATALOG_CLIENT: "http"
+  CATALOG_SERVICE_URL: "http://jobs-app:8085"
+  PRICING_CLIENT: "http"
+  PRICING_ENGINE_URL: "http://jobs-app:8086"
+  CUSTOMER_CLIENT: "http"
+  CUSTOMER_SERVICE_URL: "http://identity-app:8082"
+  PROVIDER_SERVICE_URL: "http://identity-app:8083"
+  TENANT_ASSIGNMENT_TIMEOUT: "PT60M"
+  MEDIA_STORAGE_PROVIDER: "local"
+  BOOKING_SERVICE_URL: "http://jobs-app:8084"
+  NOTIFICATION_SERVICE_URL: "http://engagement-app:8090"
+  LOCATION_STORE: "redis"

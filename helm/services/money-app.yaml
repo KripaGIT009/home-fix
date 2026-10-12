@@ -1,0 +1,32 @@
+# money-app - values for helm/homefix-service. One JVM hosting payment-service, invoice-service,
+# each on the port it has in docker-compose.core.yml (shared/homefix-service-host).
+# Merged from the former per-service values; inter-service URLs point at the deployable.
+
+serviceName: money-app
+# payment-service
+containerPort: 8088
+extraPorts:
+  - name: invoice  # invoice-service
+    port: 8089
+
+dependencies:
+  postgres: true
+  redis: true
+  kafka: true
+
+# Keys read from the existing Secret "money-app-secrets".
+secrets:
+  env:
+    JWT_SECRET: jwt_secret
+    KMS_DATA_KEY: kms_data_key
+    RAZORPAY_KEY_ID: razorpay_key_id
+    RAZORPAY_KEY_SECRET: razorpay_key_secret
+    RAZORPAY_WEBHOOK_SECRET: razorpay_webhook_secret
+    STRIPE_WEBHOOK_SECRET: stripe_webhook_secret
+    INTERNAL_API_KEY: internal_api_key
+
+config:
+  BOOKING_SERVICE_URL: "http://jobs-app:8084"
+  PROVIDER_WALLET_CLIENT: "http"
+  PROVIDER_SERVICE_URL: "http://identity-app:8083"
+  NOTIFICATION_SERVICE_URL: "http://engagement-app:8090"

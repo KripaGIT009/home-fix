@@ -13,7 +13,7 @@
 set -uo pipefail
 
 AUTH_URL="${AUTH_URL:-http://localhost:8081}"
-AUTH_CONTAINER="${AUTH_CONTAINER:-homefix-core-auth-service-1}"
+AUTH_CONTAINER="${AUTH_CONTAINER:-homefix-core-identity-app-1}"
 SMS_LOG="${SMS_LOG:-$(dirname "$0")/dev-sms/dev-sms.log}"
 
 extract_code() { grep -o 'code is [0-9]\{4,10\}' | tail -1 | grep -o '[0-9]\{4,10\}'; }

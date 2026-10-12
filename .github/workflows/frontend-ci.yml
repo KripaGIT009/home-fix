@@ -30,8 +30,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Matches the Dockerfiles (node:20-alpine) and "engines": {"node": ">=20"}.
-  NODE_VERSION: '20'
+  # Matches the Dockerfiles (node:24-alpine) and "engines": {"node": ">=24"}.
+  NODE_VERSION: '24'
 
 jobs:
   build:

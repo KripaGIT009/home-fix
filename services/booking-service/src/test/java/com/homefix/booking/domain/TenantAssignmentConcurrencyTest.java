@@ -24,8 +24,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
+import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Propagation;
@@ -288,7 +288,7 @@ class TenantAssignmentConcurrencyTest {
         };
         BookingTransitionService racing = transitions(racingPublisher);
         ProviderAssignmentService assignments = new ProviderAssignmentService(bookingRepository, racing,
-                mock(OutboxEventPublisher.class), CLOCK);
+                mock(OutboxEventPublisher.class), directory, transactions, CLOCK);
         AssignmentTimeoutSweeper sweeper = new AssignmentTimeoutSweeper(bookingRepository, racing,
                 transactions, properties, CLOCK);
 

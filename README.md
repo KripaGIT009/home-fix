@@ -9,29 +9,37 @@ engine. Service agencies (tenants) can run their own teams of providers on the p
 
 | Path | Contents |
 |------|----------|
-| [`services/`](services/) | 20 Spring Boot 3 / Java 21 services: the API gateway and 19 domain services |
-| [`shared/`](shared/) | Shared Maven libraries: observability, security, resilience, transactional outbox |
-| [`frontend/`](frontend/) | Three React 18 + TypeScript + Vite apps: `customer-app`, `provider-app`, `admin-portal` |
+| [`pom.xml`](pom.xml) | Maven reactor and parent of every backend module: Java 25, Spring Boot 4.1 |
+| [`services/`](services/) | 20 Spring Boot services: the API gateway and 19 domain services (plain jars) |
+| [`apps/`](apps/) | The four deployables that host the domain services, several per JVM: `identity-app`, `jobs-app`, `money-app`, `engagement-app` |
+| [`shared/`](shared/) | Shared Maven libraries: observability, security, resilience, transactional outbox, `config.app_config` settings, and the service host the deployables use |
+| [`frontend/`](frontend/) | Three React 19 + TypeScript 6 + Vite 8 apps (Node 24): `customer-app`, `provider-app`, `admin-portal` |
 | [`docker/`](docker/) | Database init and seed scripts, smoke tests, local-infra helpers |
-| [`helm/`](helm/) | Helm chart (`homefix-service`) and per-service values for Kubernetes |
+| [`helm/`](helm/) | Helm chart (`homefix-service`) and values for each of the five deployables |
 | [`infra/terraform/`](infra/terraform/) | AWS infrastructure: VPC, EKS, RDS, MSK, ElastiCache, KMS, IAM |
 | [`infra/k8s/`](infra/k8s/) | Cluster-level manifests (observability) |
-| [`docs/`](docs/) | Architecture, API contracts and local-run guide |
+| [`docs/`](docs/) | Architecture, deployment runbooks, security architecture, API contracts, local-run guide and the design deck |
 
-## Services
+## Services and deployables
 
-| Service | Port | Service | Port |
-|---------|------|---------|------|
-| api-gateway | 8080 | invoice-service | 8089 |
-| auth-service | 8081 | notification-service | 8090 |
-| customer-service | 8082 | complaint-service | 8091 |
-| provider-service | 8083 | location-service | 8092 |
-| booking-service | 8084 | chat-service | 8093 |
-| catalog-service | 8085 | verification-service | 8094 |
-| pricing-engine | 8086 | admin-service | 8095 |
-| dispatch-engine | 8087 | reporting-service | 8096 |
-| payment-service | 8088 | rating-review-service | 8097 |
-| promotion-service | 8098 | outbox-processor | 8099 |
+The 20 services run as five deployables (five JVMs, five images) instead of twenty. A
+deployable under `apps/` starts each of its services as its own Spring application context
+inside one JVM (`shared/homefix-service-host`), each on its own port with its own
+configuration (`<service>.yml`), database schema and beans, so a service can still be moved
+to its own deployable without code changes.
+
+| Deployable | Services (port) |
+|------------|-----------------|
+| api-gateway | api-gateway (8080) |
+| identity-app | auth-service (8081), customer-service (8082), provider-service (8083), verification-service (8094) |
+| jobs-app | booking-service (8084), catalog-service (8085), pricing-engine (8086), dispatch-engine (8087), location-service (8092), chat-service (8093), promotion-service (8098) |
+| money-app | payment-service (8088), invoice-service (8089) |
+| engagement-app | notification-service (8090), complaint-service (8091), admin-service (8095), reporting-service (8096), rating-review-service (8097), outbox-processor (8099) |
+
+An environment variable meant for one hosted service only is prefixed with its name, e.g.
+`PRICING_ENGINE__LOGGING_LEVEL_ROOT`; unprefixed variables reach every service in the
+deployable. Platform settings shared by all of them (such as the web apps' public URLs) are
+rows of the `config.app_config` table; see [ARCHITECTURE.md](docs/ARCHITECTURE.md#settings-in-the-database-configapp_config).
 
 The services share one PostgreSQL database with a schema per service (migrated by Flyway at
 startup), communicate asynchronously over Kafka through a transactional outbox, and use Redis
@@ -45,25 +53,21 @@ provider apps also ship as Android and iOS apps via Capacitor; see
 
 Locally the services and web apps run in Docker Compose, while PostgreSQL, Kafka and Redis run
 on the host machine. Full setup, including the one-time infrastructure configuration, seeding
-and test users, is in [`docs/LOCAL_ACCESS.md`](docs/LOCAL_ACCESS.md). In short:
+and test users, is in [`docs/LOCAL_ACCESS.md`](docs/LOCAL_ACCESS.md); the step-by-step runbook,
+including a database reset, is in [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md). In short:
 
 ```bash
 cp .env.example .env            # first time only
 
-# Install the shared libraries, then build every service jar
-for m in observability security resilience outbox; do
-  (cd shared/homefix-shared-$m && mvn -q -DskipTests -Djacoco.skip=true install)
-done
-for s in services/*/; do
-  (cd "$s" && mvn -q -DskipTests -Djacoco.skip=true package) || break
-done
+# Build the deployables (JDK 25; one reactor build from the repository root)
+mvn -q -DskipTests -Djacoco.skip=true package
 
 # Start Kafka on the host first, then the stack
 docker compose -f docker-compose.core.yml up -d --build --wait
 ```
 
-The images copy the prebuilt jar from `services/<name>/target/`, so rebuild a service's jar
-before `--build` after changing it.
+The images copy the prebuilt jar from `apps/<deployable>/target/` (and
+`services/api-gateway/target/`), so rebuild before `--build` after changing a service.
 
 To work on a web app on its own:
 
@@ -76,8 +80,21 @@ npm run dev
 ## Deployment
 
 Production targets AWS: Terraform provisions the platform (EKS, RDS PostgreSQL, MSK, ElastiCache)
-and each service is deployed to EKS with the Helm chart in [`helm/`](helm/), configured through
-per-environment values and Secrets. See [`infra/terraform/README.md`](infra/terraform/README.md).
+and each of the five deployables is deployed to EKS with the Helm chart in [`helm/`](helm/), configured through
+per-environment values and Secrets. The step-by-step production runbook and the blockers to clear
+first are in [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md); see also
+[`infra/terraform/README.md`](infra/terraform/README.md).
+
+## Documentation
+
+| Document | What it covers |
+|----------|----------------|
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Containers, the booking step by step, sequence diagrams, events, data model, state machines, dispatch |
+| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Local and production deployment, step by step, with reset and rollback |
+| [`docs/SECURITY.md`](docs/SECURITY.md) | Security architecture: trust boundaries, request checks, identity, secrets, open findings |
+| [`docs/API_CONTRACTS.md`](docs/API_CONTRACTS.md) | REST and event contracts per service |
+| [`docs/LOCAL_ACCESS.md`](docs/LOCAL_ACCESS.md) | Local infrastructure setup, URLs, test users and walkthroughs |
+| [`docs/HomeFix_Design_Deck.pptx`](docs/HomeFix_Design_Deck.pptx) | The design deck: architecture, flows, deployment and security in pictures |
 
 ## Documentation
 
@@ -87,5 +104,20 @@ per-environment values and Secrets. See [`infra/terraform/README.md`](infra/terr
 - [Mobile builds](frontend/MOBILE.md)
 - [Codebase review findings](CODEBASE_REVIEW.md)
 
-Some external integrations (SMS, payment providers, object storage, background checks) are
-currently stubs; the architecture document marks which.
+## Signing in locally
+
+All three apps accept email and password; the customer and provider apps also take mobile OTP
+and Google. The seeded test accounts sign in as `<username>@homefix.local` (for example
+`customer@homefix.local`, `provider@homefix.local`, `admin@homefix.local`) with the password
+from `DEV_SEED_PASSWORD` in `.env`. New customers and providers can sign up with an emailed
+code, staff join by invitation, and agencies register themselves for platform-admin approval.
+Locally, emailed codes and invitation links are written to `docker/dev-mail/dev-mail.log` and
+OTP codes to `docker/dev-sms/dev-sms.log`. See
+[`docs/LOCAL_ACCESS.md`](docs/LOCAL_ACCESS.md).
+
+## What is real and what is stubbed
+
+Google and Apple sign-in and Razorpay payments (test mode locally, with the keys in `.env`) are
+real integrations. SMS, email, document storage and background checks are not: there is no email
+provider yet, and an admin records each provider's background check in the Admin Portal's
+Verification Queue. The architecture document marks each one.

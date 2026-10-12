@@ -40,26 +40,30 @@ class DispatchSettingsServiceTest {
         assertThat(current.radiusIncrementKm()).isEqualTo(5.0);
         assertThat(current.maxExpansionCycles()).isEqualTo(3);
         assertThat(current.offerTimeoutSeconds()).isEqualTo(60L);
+        assertThat(current.offerBatchSize()).isEqualTo(3);
+        assertThat(current.agencyFallbackMinutes()).isEqualTo(5L);
     }
 
     @Test
     void updateAppliesToTheLiveWeightsStoreAndProperties() {
-        DispatchSettings applied = service.update(new DispatchSettings(NEW_WEIGHTS, 7.5, 2.5, 5, 90));
+        DispatchSettings applied = service.update(new DispatchSettings(NEW_WEIGHTS, 7.5, 2.5, 5, 90, 3, 5));
 
         assertThat(weightsStore.current()).isEqualTo(NEW_WEIGHTS);
         assertThat(properties.getInitialRadiusKm()).isEqualTo(7.5);
         assertThat(properties.getRadiusIncrementKm()).isEqualTo(2.5);
         assertThat(properties.getMaxExpansionCycles()).isEqualTo(5);
         assertThat(properties.getOfferTimeoutSeconds()).isEqualTo(90L);
+        assertThat(properties.getOfferBatchSize()).isEqualTo(3);
+        assertThat(properties.getAgencyFallbackMinutes()).isEqualTo(5L);
         assertThat(applied).isEqualTo(service.current());
     }
 
     @Test
     void boundaryValuesAreAccepted() {
-        service.update(new DispatchSettings(NEW_WEIGHTS, 0.1, 0.0, 0, 15));
+        service.update(new DispatchSettings(NEW_WEIGHTS, 0.1, 0.0, 0, 15, 3, 5));
         assertThat(properties.getMaxExpansionCycles()).isZero();
 
-        service.update(new DispatchSettings(NEW_WEIGHTS, 50.0, 10.0, 10, 600));
+        service.update(new DispatchSettings(NEW_WEIGHTS, 50.0, 10.0, 10, 600, 3, 5));
         assertThat(properties.getOfferTimeoutSeconds()).isEqualTo(600L);
     }
 
@@ -67,13 +71,18 @@ class DispatchSettingsServiceTest {
     void anyInvalidValueRejectsTheWholeUpdate() {
         DispatchSettings before = service.current();
 
-        assertRejected(new DispatchSettings(NEW_WEIGHTS, 0.0, 5.0, 3, 60), "initialRadiusKm");
-        assertRejected(new DispatchSettings(NEW_WEIGHTS, Double.NaN, 5.0, 3, 60), "initialRadiusKm");
-        assertRejected(new DispatchSettings(NEW_WEIGHTS, 10.0, -1.0, 3, 60), "radiusIncrementKm");
-        assertRejected(new DispatchSettings(NEW_WEIGHTS, 10.0, 5.0, -1, 60), "maxExpansionCycles");
-        assertRejected(new DispatchSettings(NEW_WEIGHTS, 10.0, 5.0, 11, 60), "maxExpansionCycles");
-        assertRejected(new DispatchSettings(NEW_WEIGHTS, 10.0, 5.0, 3, 14), "offerTimeoutSeconds");
-        assertRejected(new DispatchSettings(NEW_WEIGHTS, 10.0, 5.0, 3, 601), "offerTimeoutSeconds");
+        assertRejected(new DispatchSettings(NEW_WEIGHTS, 0.0, 5.0, 3, 60, 3, 5), "initialRadiusKm");
+        assertRejected(new DispatchSettings(NEW_WEIGHTS, Double.NaN, 5.0, 3, 60, 3, 5), "initialRadiusKm");
+        assertRejected(new DispatchSettings(NEW_WEIGHTS, 10.0, -1.0, 3, 60, 3, 5), "radiusIncrementKm");
+        assertRejected(new DispatchSettings(NEW_WEIGHTS, 10.0, 5.0, -1, 60, 3, 5), "maxExpansionCycles");
+        assertRejected(new DispatchSettings(NEW_WEIGHTS, 10.0, 5.0, 11, 60, 3, 5), "maxExpansionCycles");
+        assertRejected(new DispatchSettings(NEW_WEIGHTS, 10.0, 5.0, 3, 14, 3, 5), "offerTimeoutSeconds");
+        assertRejected(new DispatchSettings(NEW_WEIGHTS, 10.0, 5.0, 3, 601, 3, 5), "offerTimeoutSeconds");
+
+        assertRejected(new DispatchSettings(NEW_WEIGHTS, 10.0, 5.0, 3, 60, 0, 5), "offerBatchSize");
+        assertRejected(new DispatchSettings(NEW_WEIGHTS, 10.0, 5.0, 3, 60, 11, 5), "offerBatchSize");
+        assertRejected(new DispatchSettings(NEW_WEIGHTS, 10.0, 5.0, 3, 60, 3, 0), "agencyFallbackMinutes");
+        assertRejected(new DispatchSettings(NEW_WEIGHTS, 10.0, 5.0, 3, 60, 3, 31), "agencyFallbackMinutes");
 
         // Nothing changed — not even the (valid) weights that travelled with the bad value.
         assertThat(service.current()).isEqualTo(before);

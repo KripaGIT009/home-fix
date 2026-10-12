@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router';
 import {
   Alert,
   Box,
@@ -38,7 +38,7 @@ export function JobRequestScreen() {
   const offer = useJobOffer(bookingId);
 
   return (
-    <AppShell title="Job request" onBack={() => navigate('/dashboard')}>
+    <AppShell title="Job request" onBack={() => void navigate('/dashboard')}>
       <QueryStateView
         isLoading={offer.isLoading}
         isError={offer.isError}
@@ -52,8 +52,8 @@ export function JobRequestScreen() {
             // Straight into the job just accepted, as for an agency assignment. Back on the
             // dashboard it is one card among the provider's other open jobs, listed by
             // scheduled time, so it is easy to open the wrong one.
-            onAccepted={() => navigate(`/jobs/${bookingId}/active`, { replace: true })}
-            onDeclined={() => navigate('/dashboard')}
+            onAccepted={() => void navigate(`/jobs/${bookingId}/active`, { replace: true })}
+            onDeclined={() => void navigate('/dashboard')}
           />
         ) : null}
       </QueryStateView>
@@ -123,15 +123,33 @@ function OfferContent({ offer, bookingId, onAccepted, onDeclined }: OfferContent
               justifyContent: 'center',
             }}
           >
-            <Typography variant="h5" fontWeight={700} aria-live="polite">
+            <Typography
+              variant="h5"
+              aria-live="polite"
+              sx={{
+                fontWeight: 700,
+              }}
+            >
               {timer.secondsLeft}
             </Typography>
-            <Typography variant="caption" color="text.secondary">
+            <Typography
+              variant="caption"
+              sx={{
+                color: 'text.secondary',
+              }}
+            >
               sec
             </Typography>
           </Box>
         </Box>
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }} aria-live="polite">
+        <Typography
+          variant="body2"
+          aria-live="polite"
+          sx={{
+            color: 'text.secondary',
+            mt: 1,
+          }}
+        >
           {isPending
             ? isExpired
               ? 'This offer has expired'
@@ -142,13 +160,30 @@ function OfferContent({ offer, bookingId, onAccepted, onDeclined }: OfferContent
 
       <Card variant="outlined">
         <CardContent>
-          <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
+          <Stack
+            direction="row"
+            spacing={1}
+            sx={{
+              justifyContent: 'space-between',
+              alignItems: 'flex-start',
+            }}
+          >
             <Stack spacing={0.25}>
-              <Typography variant="h6" fontWeight={700}>
+              <Typography
+                variant="h6"
+                sx={{
+                  fontWeight: 700,
+                }}
+              >
                 {offer.emergency ? 'Emergency job' : 'New job'}
               </Typography>
               {offer.reference ? (
-                <Typography variant="caption" color="text.secondary">
+                <Typography
+                  variant="caption"
+                  sx={{
+                    color: 'text.secondary',
+                  }}
+                >
                   {offer.reference}
                 </Typography>
               ) : null}
@@ -165,13 +200,27 @@ function OfferContent({ offer, bookingId, onAccepted, onDeclined }: OfferContent
           </Stack>
 
           <Stack spacing={0.75} sx={{ mt: 1.5 }}>
-            <Stack direction="row" spacing={1} alignItems="center" color="text.secondary">
+            <Stack
+              direction="row"
+              spacing={1}
+              sx={{
+                alignItems: 'center',
+                color: 'text.secondary',
+              }}
+            >
               <ScheduleRoundedIcon fontSize="small" aria-hidden />
               <Typography variant="body2">
                 {offer.scheduledAt ? formatDateTime(offer.scheduledAt) : 'As soon as possible'}
               </Typography>
             </Stack>
-            <Stack direction="row" spacing={1} alignItems="flex-start" color="text.secondary">
+            <Stack
+              direction="row"
+              spacing={1}
+              sx={{
+                alignItems: 'flex-start',
+                color: 'text.secondary',
+              }}
+            >
               <InfoOutlinedIcon fontSize="small" aria-hidden sx={{ mt: 0.25 }} />
               <Typography variant="body2">
                 The address, job description and earning are shared once you accept.
@@ -216,7 +265,7 @@ function describeClosedOffer(status: JobOfferStatus): string {
     case 'DECLINED':
       return 'You declined this job';
     case 'WITHDRAWN':
-      return 'The customer cancelled this booking';
+      return 'This job was taken by another provider or cancelled';
     case 'EXPIRED':
     default:
       return 'This offer has expired';
@@ -228,6 +277,8 @@ function describeDecisionError(code: string, fallback: string): string {
   switch (code) {
     case OFFER_ERROR.expired:
       return 'Too late: this offer expired before your answer arrived.';
+    case OFFER_ERROR.taken:
+      return 'Another provider accepted this job first.';
     case OFFER_ERROR.alreadyDecided:
       return 'This offer has already been answered or withdrawn.';
     case OFFER_ERROR.notFound:

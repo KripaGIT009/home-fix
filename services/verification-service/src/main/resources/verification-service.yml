@@ -1,0 +1,74 @@
+spring:
+  servlet:
+    multipart:
+      # Verification documents arrive as phone photos or PDFs, three per request; Spring's default
+      # (1 MB per file) refused ordinary phone photos with 413 before the service saw them.
+      max-file-size: 10MB
+      max-request-size: 32MB
+  application:
+    name: verification-service
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/homefix}
+    username: ${DB_USERNAME:homefix}
+    # Required: no default, so the service fails fast when DB_PASSWORD is not set.
+    password: ${DB_PASSWORD}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: verification
+    open-in-view: false
+
+  # Schema migrations own the DDL; Hibernate only validates against it. V1 is the baseline
+  # schema, so on a database Hibernate already populated (ddl-auto=update, the old local default)
+  # Flyway records V1 as applied instead of re-creating tables that exist.
+  flyway:
+    schemas: verification
+    # Unique per service: the services of a deployable share one classpath.
+    locations: classpath:db/migration/verification-service,classpath:db/outbox,classpath:db/app-config
+    default-schema: verification
+    baseline-on-migrate: true
+    baseline-version: 1
+server:
+  port: ${SERVER_PORT:8084}
+
+homefix:
+  security:
+    enabled: true
+    # HMAC-SHA256 signing secret shared with the shared JwtValidationFilter (Task 4).
+    # Must be >= 32 bytes. Injected from AWS Secrets Manager in production.
+    # Required: no default, so the service fails fast when JWT_SECRET is not set.
+    jwt-secret: ${JWT_SECRET}
+  verification:
+    # Shared service credential other services present on /internal/** (X-Internal-Api-Key),
+    # i.e. the Provider Service's batch APPROVED lookup. Same INTERNAL_API_KEY as the other
+    # services. No usable default: when unset every /internal/** request is refused (fail closed).
+    internal-api-key: ${INTERNAL_API_KEY:}
+    # S3 bucket for uploaded verification documents; stored with SSE-KMS (Requirement 5.3).
+    documents-bucket: ${DOCUMENTS_BUCKET:homefix-documents}
+    required-document-types:
+      - GOVERNMENT_ID
+      - ADDRESS_PROOF
+      - SKILL_CERTIFICATION
+  provider:
+    # Provider Service directory lookup (display name, primary skill) for the Admin review queue
+    # (Requirement 19.3). Cosmetic: when unreachable or unauthorised the queue is still served,
+    # without names.
+    base-url: ${PROVIDER_SERVICE_URL:http://provider-service:8083}
+    # Must match the Provider Service's homefix.provider.internal-api-key (the same INTERNAL_API_KEY).
+    internal-api-key: ${INTERNAL_API_KEY:}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus,metrics
+      base-path: /
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  metrics:
+    tags:
+      application: verification-service

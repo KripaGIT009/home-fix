@@ -65,15 +65,33 @@ export function PhotoUploadCard({
   return (
     <Card variant="outlined">
       <CardContent>
-        <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
-          <Typography variant="subtitle2" fontWeight={700}>
+        <Stack
+          direction="row"
+          spacing={1}
+          sx={{
+            justifyContent: 'space-between',
+            alignItems: 'center',
+          }}
+        >
+          <Typography
+            variant="subtitle2"
+            sx={{
+              fontWeight: 700,
+            }}
+          >
             {title}
           </Typography>
           {hasPhotos ? (
             <CheckCircleRoundedIcon color="success" fontSize="small" aria-label="Photo attached" />
           ) : null}
         </Stack>
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+        <Typography
+          variant="body2"
+          sx={{
+            color: 'text.secondary',
+            mt: 0.5,
+          }}
+        >
           {helperText}
         </Typography>
 

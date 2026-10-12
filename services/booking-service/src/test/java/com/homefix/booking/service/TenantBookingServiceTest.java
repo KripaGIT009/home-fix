@@ -198,14 +198,28 @@ class TenantBookingServiceTest {
     }
 
     @Test
-    void theCallersTenantIsCachedForAMinute() {
+    void theCallersTenantIsCachedOnlyBrieflyForReads() {
         service.queue(araAdmin);
         service.queue(araAdmin);
         assertThat(directory.byAdminCalls.get()).isEqualTo(1);
 
-        clock.advance(Duration.ofSeconds(61));
+        // The portal polls every 15 s; each poll asks afresh, so a removal shows within seconds.
+        clock.advance(Duration.ofSeconds(6));
         service.queue(araAdmin);
         assertThat(directory.byAdminCalls.get()).isEqualTo(2);
+    }
+
+    @Test
+    void aRemovedAdminCannotAssignEvenWithARecentlyCachedAnswer() {
+        Booking booking = queued("HFX-REMOVED", 1, ara.tenantId());
+        service.queue(araAdmin); // cached: still an admin a moment ago
+        directory.adminToTenant.remove(araAdmin);
+
+        assertThatThrownBy(() -> service.assign(araAdmin, booking.getReference(), araProvider))
+                .satisfies(e -> assertThat(codeOf(e)).isEqualTo("TENANT_NOT_FOUND"))
+                .satisfies(e -> assertThat(statusOf(e)).isEqualTo(HttpStatus.NOT_FOUND));
+        assertThat(booking.getStatus()).isEqualTo(BookingStatus.AWAITING_ASSIGNMENT);
+        verify(outbox, never()).publish(any(), any(), any(), any());
     }
 
     // ----- assignment (Requirement MT-5.2 to MT-5.6) ---------------------------
@@ -299,8 +313,8 @@ class TenantBookingServiceTest {
     @Test
     void anUnreachableProviderServiceRefusesTheAssignmentWith503() {
         Booking booking = queued("HFX-DOWN", 1, ara.tenantId());
-        service.queue(araAdmin); // the caller's Tenant is cached; membership is not
-        directory.down = true;
+        service.queue(araAdmin);
+        directory.down = true; // an assignment asks for the caller's Tenant afresh, and gets no answer
 
         assertThatThrownBy(() -> service.assign(araAdmin, booking.getReference(), araProvider))
                 .satisfies(e -> assertThat(statusOf(e)).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE));

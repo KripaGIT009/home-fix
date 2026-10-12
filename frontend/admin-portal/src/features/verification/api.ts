@@ -8,6 +8,8 @@ import { apiClient } from '@api/client';
  * - GET  /admin/verification/queue          — providers in DOCUMENT_SUBMITTED
  * - GET  /admin/verification/{id}/documents — a provider's submitted documents
  * - POST /admin/verification/{id}/decision  — approve/reject the submission
+ * - GET  /admin/verification/background-checks      — providers at the background-check step
+ * - POST /admin/verification/{id}/background-check  — record the check's result and decide
  */
 
 /** A submitted document reference for inline viewing (Requirement 19.3). */
@@ -74,6 +76,52 @@ export async function fetchVerificationDocuments(
     `/admin/verification/${providerId}/documents`,
   );
   return data;
+}
+
+/**
+ * A provider whose documents were accepted and whose background check waits
+ * for the admin to record its result. No background-check vendor is
+ * integrated: the admin runs the check and records the outcome here.
+ */
+export interface BackgroundCheckEntry {
+  providerId: string;
+  displayName?: string | null;
+  primarySkill?: string | null;
+  /** BACKGROUND_CHECK_COMPLETED: a result is recorded but no decision taken yet. */
+  status: 'BACKGROUND_CHECK_PENDING' | 'BACKGROUND_CHECK_COMPLETED';
+  /** ISO 8601: when the documents were accepted and the check started. */
+  startedAt?: string | null;
+  /** The result recorded so far, if any. */
+  result?: string | null;
+  documentCount: number;
+}
+
+export interface BackgroundCheckPayload {
+  /** PASSED approves the provider for jobs; FAILED rejects them. */
+  outcome: 'PASSED' | 'FAILED';
+  /** What the check found; kept on the provider's verification record. */
+  result: string;
+  /** Required when FAILED: the reason shown to the provider. */
+  reason?: string;
+}
+
+/** GET /admin/verification/background-checks — oldest check first. */
+export async function fetchBackgroundChecks(): Promise<BackgroundCheckEntry[]> {
+  const { data } = await apiClient.get<BackgroundCheckEntry[]>(
+    '/admin/verification/background-checks',
+  );
+  return data;
+}
+
+/**
+ * POST /admin/verification/{id}/background-check — record the result and
+ * approve or reject. 204; 409 when the provider is no longer at this step.
+ */
+export async function submitBackgroundCheck(
+  providerId: string,
+  payload: BackgroundCheckPayload,
+): Promise<void> {
+  await apiClient.post(`/admin/verification/${providerId}/background-check`, payload);
 }
 
 /**

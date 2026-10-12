@@ -59,7 +59,13 @@ export function HowItWorks() {
               <Icon sx={{ fontSize: 18 }} />
             </Box>
             <Box sx={{ minWidth: 0 }}>
-              <Typography variant="body2" fontWeight={700} component="h3">
+              <Typography
+                variant="body2"
+                component="h3"
+                sx={{
+                  fontWeight: 700,
+                }}
+              >
                 <Box component="span" sx={visuallyHidden}>
                   Step {index + 1}:{' '}
                 </Box>
@@ -70,9 +76,12 @@ export function HowItWorks() {
               </Typography>
               <Typography
                 variant="caption"
-                color="text.secondary"
-                display="block"
-                sx={{ mt: 0.25, lineHeight: 1.5 }}
+                sx={{
+                  color: 'text.secondary',
+                  display: 'block',
+                  mt: 0.25,
+                  lineHeight: 1.5,
+                }}
               >
                 {body}
               </Typography>

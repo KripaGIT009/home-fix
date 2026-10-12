@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.List;
+import java.util.Locale;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,6 +14,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.web.util.UrlPathHelper;
 
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -49,6 +51,9 @@ public class InternalApiKeyFilter extends OncePerRequestFilter {
 
     private static final Logger log = LoggerFactory.getLogger(InternalApiKeyFilter.class);
 
+    /** Decodes and cleans the request path the same way Spring MVC does before matching handlers. */
+    private static final UrlPathHelper PATHS = new UrlPathHelper();
+
     private final byte[] expectedKey;
 
     public InternalApiKeyFilter(String expectedKey) {
@@ -57,9 +62,16 @@ public class InternalApiKeyFilter extends OncePerRequestFilter {
                 : expectedKey.getBytes(StandardCharsets.UTF_8);
     }
 
+    /**
+     * Decides on the decoded path within the application, lower-cased, not on the raw request URI.
+     * Spring MVC routes {@code /%69nternal/...} (and, on a case-insensitive match, other spellings) to
+     * the internal handlers after decoding it, so a raw-URI prefix check would let such a request skip
+     * the key check entirely. The security chain's {@code hasAuthority(ROLE_INTERNAL)} rule backs this up.
+     */
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return !request.getRequestURI().startsWith(INTERNAL_PREFIX);
+        String path = PATHS.getPathWithinApplication(request).toLowerCase(Locale.ROOT);
+        return !path.startsWith(INTERNAL_PREFIX);
     }
 
     @Override

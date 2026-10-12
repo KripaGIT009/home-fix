@@ -1,0 +1,33 @@
+# engagement-app - values for helm/homefix-service. One JVM hosting outbox-processor, notification-service, complaint-service, rating-review-service, admin-service, reporting-service,
+# each on the port it has in docker-compose.core.yml (shared/homefix-service-host).
+# Merged from the former per-service values; inter-service URLs point at the deployable.
+
+serviceName: engagement-app
+# outbox-processor
+containerPort: 8099
+extraPorts:
+  - name: notification  # notification-service
+    port: 8090
+  - name: complaint  # complaint-service
+    port: 8091
+  - name: rating-review  # rating-review-service
+    port: 8097
+  - name: admin  # admin-service
+    port: 8095
+  - name: reporting  # reporting-service
+    port: 8096
+
+dependencies:
+  postgres: true
+  redis: true
+  kafka: true
+
+# Keys read from the existing Secret "engagement-app-secrets".
+secrets:
+  env:
+    JWT_SECRET: jwt_secret
+    INTERNAL_API_KEY: internal_api_key
+
+config:
+  PREFERENCE_SERVICE_URL: "http://identity-app:8082"
+  AUTH_SERVICE_URL: "http://identity-app:8081"

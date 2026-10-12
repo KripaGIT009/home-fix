@@ -25,9 +25,12 @@ class RouteOrderTest {
     static void loadRoutes() throws Exception {
         try (InputStream in = RouteOrderTest.class.getResourceAsStream("/application.yml")) {
             Map<String, Object> root = new Yaml().load(in);
-            Map<String, Object> gateway = (Map<String, Object>) ((Map<String, Object>) ((Map<String, Object>)
-                    root.get("spring")).get("cloud")).get("gateway");
-            List<Map<String, Object>> routes = (List<Map<String, Object>>) gateway.get("routes");
+            // Spring Cloud Gateway 2025: spring.cloud.gateway.server.webflux.routes.
+            Map<String, Object> node = root;
+            for (String key : List.of("spring", "cloud", "gateway", "server", "webflux")) {
+                node = (Map<String, Object>) node.get(key);
+            }
+            List<Map<String, Object>> routes = (List<Map<String, Object>>) node.get("routes");
             routeIds = routes.stream().map(route -> (String) route.get("id")).toList();
         }
     }
@@ -43,5 +46,13 @@ class RouteOrderTest {
         int catchAll = routeIds.indexOf("admin-service");
         assertThat(catchAll).isEqualTo(routeIds.size() - 1);
         assertThat(routeIds.indexOf("admin-tenants")).isNotNegative().isLessThan(catchAll);
+        assertThat(routeIds.indexOf("admin-invitations")).isNotNegative().isLessThan(catchAll);
+    }
+
+    @Test
+    void agencyApplicationsHaveTheirOwnRoute() {
+        // "/tenant-applications" is not under "/tenant/", so the tenant route never swallows it; it
+        // must still exist, or the request falls through to no route at all.
+        assertThat(routeIds).contains("tenant-applications");
     }
 }

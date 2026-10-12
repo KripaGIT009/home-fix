@@ -1,4 +1,4 @@
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router';
 import {
   Box,
   Button,
@@ -44,7 +44,7 @@ export function JobDetailsScreen() {
   const job = useJobDetail(bookingId);
 
   return (
-    <AppShell title="Job details" onBack={() => navigate('/dashboard')}>
+    <AppShell title="Job details" onBack={() => void navigate('/dashboard')}>
       <QueryStateView
         isLoading={job.isLoading}
         isError={job.isError}
@@ -80,28 +80,51 @@ function DetailContent({ job }: { job: JobDetail }) {
       {awaitingAnswer ? (
         <AssignmentDecisionCard
           job={job}
-          onAccepted={() => navigate(`/jobs/${job.bookingId}/active`)}
+          onAccepted={() => void navigate(`/jobs/${job.bookingId}/active`)}
           onDeclined={(tenantName) =>
-            navigate('/dashboard', {
+            void navigate('/dashboard', {
               replace: true,
               state: { notice: declinedNotice(tenantName) } satisfies DashboardNoticeState,
             })
           }
-          onGone={() => navigate('/dashboard', { replace: true })}
+          onGone={() => void navigate('/dashboard', { replace: true })}
         />
       ) : null}
       <Card variant="outlined">
         <CardContent>
-          <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
+          <Stack
+            direction="row"
+            spacing={1}
+            sx={{
+              justifyContent: 'space-between',
+              alignItems: 'flex-start',
+            }}
+          >
             <Stack spacing={0.25}>
-              <Typography variant="h6" fontWeight={700}>
+              <Typography
+                variant="h6"
+                sx={{
+                  fontWeight: 700,
+                }}
+              >
                 {job.serviceName}
               </Typography>
-              <Typography variant="caption" color="text.secondary">
+              <Typography
+                variant="caption"
+                sx={{
+                  color: 'text.secondary',
+                }}
+              >
                 {job.reference}
               </Typography>
             </Stack>
-            <Stack direction="row" spacing={0.5} alignItems="center">
+            <Stack
+              direction="row"
+              spacing={0.5}
+              sx={{
+                alignItems: 'center',
+              }}
+            >
               {job.isEmergency ? (
                 <Chip
                   size="small"
@@ -117,12 +140,24 @@ function DetailContent({ job }: { job: JobDetail }) {
 
           <Stack spacing={1} sx={{ mt: 2 }}>
             {job.customerDisplayName ? (
-              <Stack direction="row" spacing={1} alignItems="center">
+              <Stack
+                direction="row"
+                spacing={1}
+                sx={{
+                  alignItems: 'center',
+                }}
+              >
                 <PersonRoundedIcon fontSize="small" color="action" aria-hidden />
                 <Typography variant="body2">{job.customerDisplayName}</Typography>
               </Stack>
             ) : null}
-            <Stack direction="row" spacing={1} alignItems="flex-start">
+            <Stack
+              direction="row"
+              spacing={1}
+              sx={{
+                alignItems: 'flex-start',
+              }}
+            >
               <PlaceRoundedIcon fontSize="small" color="action" aria-hidden />
               <Typography
                 variant="body2"
@@ -131,7 +166,13 @@ function DetailContent({ job }: { job: JobDetail }) {
                 {job.serviceAddress ?? 'Service address not available yet'}
               </Typography>
             </Stack>
-            <Stack direction="row" spacing={1} alignItems="center">
+            <Stack
+              direction="row"
+              spacing={1}
+              sx={{
+                alignItems: 'center',
+              }}
+            >
               <ScheduleRoundedIcon fontSize="small" color="action" aria-hidden />
               <Typography variant="body2">{formatDateTime(job.scheduledAt)}</Typography>
             </Stack>
@@ -156,7 +197,13 @@ function DetailContent({ job }: { job: JobDetail }) {
 
       <Card variant="outlined">
         <CardContent>
-          <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 1 }}>
+          <Typography
+            variant="subtitle2"
+            sx={{
+              fontWeight: 700,
+              mb: 1,
+            }}
+          >
             Service description
           </Typography>
           <Typography variant="body2" color={job.description ? 'text.primary' : 'text.secondary'}>
@@ -166,11 +213,26 @@ function DetailContent({ job }: { job: JobDetail }) {
           {job.estimatedEarning !== null ? (
             <>
               <Divider sx={{ my: 1.5 }} />
-              <Stack direction="row" justifyContent="space-between">
-                <Typography variant="body2" color="text.secondary">
+              <Stack
+                direction="row"
+                sx={{
+                  justifyContent: 'space-between',
+                }}
+              >
+                <Typography
+                  variant="body2"
+                  sx={{
+                    color: 'text.secondary',
+                  }}
+                >
                   Estimated earning
                 </Typography>
-                <Typography variant="subtitle1" fontWeight={700}>
+                <Typography
+                  variant="subtitle1"
+                  sx={{
+                    fontWeight: 700,
+                  }}
+                >
                   {formatCurrency(job.estimatedEarning, job.currency)}
                 </Typography>
               </Stack>
@@ -181,7 +243,13 @@ function DetailContent({ job }: { job: JobDetail }) {
 
       <Card variant="outlined">
         <CardContent>
-          <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 1 }}>
+          <Typography
+            variant="subtitle2"
+            sx={{
+              fontWeight: 700,
+              mb: 1,
+            }}
+          >
             Customer photos
           </Typography>
           {job.customerMedia.length > 0 ? (
@@ -199,7 +267,12 @@ function DetailContent({ job }: { job: JobDetail }) {
               ))}
             </ImageList>
           ) : (
-            <Typography variant="body2" color="text.secondary">
+            <Typography
+              variant="body2"
+              sx={{
+                color: 'text.secondary',
+              }}
+            >
               No customer photos attached.
             </Typography>
           )}
@@ -211,7 +284,7 @@ function DetailContent({ job }: { job: JobDetail }) {
           variant="contained"
           size="large"
           fullWidth
-          onClick={() => navigate(`/jobs/${job.bookingId}/active`)}
+          onClick={() => void navigate(`/jobs/${job.bookingId}/active`)}
         >
           Open active job
         </Button>
@@ -222,7 +295,7 @@ function DetailContent({ job }: { job: JobDetail }) {
           variant="contained"
           size="large"
           fullWidth
-          onClick={() => navigate(`/jobs/${job.bookingId}/complete`)}
+          onClick={() => void navigate(`/jobs/${job.bookingId}/complete`)}
         >
           View completion summary
         </Button>

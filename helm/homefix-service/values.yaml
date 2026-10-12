@@ -19,10 +19,10 @@
 #     --set image.repository=<registry>/booking-service --set image.tag=<git sha>
 
 # ── Identity ────────────────────────────────────────────────────────────────
-# Required, set by helm/services/<service>.yaml. Every resource (Deployment,
+# Required, set by helm/services/<deployable>.yaml. Every resource (Deployment,
 # Service, ServiceAccount, ...) is named after it, so in-cluster DNS matches
-# docker-compose.core.yml (auth-service:8081, booking-service:8084, ...) and the
-# services' built-in URL defaults work unchanged. The ServiceAccount name also
+# docker-compose.core.yml (identity-app:8081, jobs-app:8084, ...) and the
+# services' URL settings work unchanged. The ServiceAccount name also
 # matches the IRSA role subjects in infra/terraform/modules/iam.
 serviceName: ""
 nameOverride: ""
@@ -36,6 +36,13 @@ environment: ""
 # and the Prometheus annotations. Must equal the Dockerfile EXPOSE and the
 # SERVER_PORT in docker-compose.core.yml (CI checks the Dockerfile).
 containerPort: null
+
+# Further ports, for a deployable that hosts several services in one JVM: one entry per
+# additional service, exposed on the container and on the Service under its name (at most 15
+# lowercase characters). The probes and Prometheus annotations stay on containerPort.
+#   - name: customer
+#     port: 8082
+extraPorts: []
 
 replicaCount: 2
 

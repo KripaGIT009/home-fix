@@ -15,6 +15,7 @@ import com.homefix.dispatch.config.DispatchClientProperties;
 import com.homefix.dispatch.domain.BookingNotSearchableException;
 import com.homefix.dispatch.domain.DispatchRequest;
 import com.homefix.dispatch.domain.ProviderCandidate;
+import com.homefix.dispatch.domain.ProviderSearchUnavailableException;
 import com.homefix.dispatch.domain.SearchingFailedOutcome;
 import com.homefix.shared.resilience.ResilienceFactory;
 import com.sun.net.httpserver.HttpServer;
@@ -23,10 +24,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Tests the outbound HTTP adapters against a loopback stub server: the best-effort notification
- * adapter (Requirements 8.5, 8.9), including against the not-yet-existing notification endpoints,
- * the booking-transition adapter (Requirements 8.6, 8.9), and the provider query's internal
- * credential and response mapping (Requirement 8.2). Mirrors the pattern of
+ * Tests the outbound HTTP adapters against a loopback stub server: the booking-transition adapter
+ * (Requirements 8.6, 8.9), and the provider query's internal credential, response mapping and
+ * failure reporting (Requirement 8.2). Mirrors the pattern of
  * {@link ProviderQueryResilienceIntegrationTest}.
  */
 class DispatchHttpAdaptersTest {
@@ -66,58 +66,9 @@ class DispatchHttpAdaptersTest {
     private DispatchClientProperties props() {
         DispatchClientProperties p = new DispatchClientProperties();
         String base = "http://127.0.0.1:" + port;
-        p.setNotificationServiceBaseUrl(base);
         p.setBookingServiceBaseUrl(base);
         p.setProviderServiceBaseUrl(base);
         return p;
-    }
-
-    // ---- Notification adapter (best-effort, Requirement 8.9) -----------------------------------
-
-    @Test
-    void notificationAdapter_deliversNoProviderAndDispatcherAlert() {
-        statusToReturn = 200;
-        HttpNotificationAdapter adapter = new HttpNotificationAdapter(props(), new ResilienceFactory());
-
-        adapter.notifyCustomerNoProviderAvailable(UUID.randomUUID(), UUID.randomUUID());
-        adapter.alertDispatcherTeam(UUID.randomUUID());
-
-        assertThat(requests.get()).isEqualTo(2);
-    }
-
-    @Test
-    void notificationAdapter_serverError_degradesToNoOpWithoutThrowing() {
-        statusToReturn = 503;
-        bodyToReturn = "{\"error\":\"down\"}";
-        HttpNotificationAdapter adapter = new HttpNotificationAdapter(props(), new ResilienceFactory());
-
-        // Best-effort: must not throw even when the Notification Service is failing.
-        adapter.notifyCustomerNoProviderAvailable(UUID.randomUUID(), UUID.randomUUID());
-    }
-
-    @Test
-    void notificationAdapter_missingEndpoint_degradesToNoOpWithoutThrowing() {
-        // notification-service does not expose /internal/notifications/** yet: a 404 must be
-        // swallowed, never break dispatch, and never be retried.
-        statusToReturn = 404;
-        bodyToReturn = "{\"error\":\"not found\"}";
-        HttpNotificationAdapter adapter = new HttpNotificationAdapter(props(), new ResilienceFactory());
-
-        adapter.notifyProviderOfJobOffer(UUID.randomUUID(), UUID.randomUUID(), Instant.now());
-        adapter.alertDispatcherTeam(UUID.randomUUID());
-
-        assertThat(requests.get()).isEqualTo(2);
-    }
-
-    @Test
-    void notificationAdapter_sendsJobOfferPush() {
-        statusToReturn = 202;
-        bodyToReturn = "";
-        HttpNotificationAdapter adapter = new HttpNotificationAdapter(props(), new ResilienceFactory());
-
-        adapter.notifyProviderOfJobOffer(UUID.randomUUID(), UUID.randomUUID(), Instant.now());
-
-        assertThat(requests.get()).isEqualTo(1);
     }
 
     // ---- Booking-transition adapter (Requirements 8.6, 8.9) ------------------------------------
@@ -240,14 +191,51 @@ class DispatchHttpAdaptersTest {
     }
 
     @Test
-    void providerQueryAdapter_refusedCredential_degradesToNoProvidersWithoutRetrying() {
+    void providerQueryAdapter_refusedCredential_isReportedAsUnavailableNotAsAnEmptyMarket() {
+        // A mismatched INTERNAL_API_KEY used to read as "no providers", failing every booking.
         statusToReturn = 401;
         bodyToReturn = "{\"errorCode\":\"INTERNAL_AUTH_FAILED\",\"message\":\"Invalid internal credentials\"}";
         HttpProviderQueryAdapter adapter =
                 new HttpProviderQueryAdapter(props(), new ResilienceFactory(), "wrong-key");
 
-        assertThat(adapter.findEligibleProviders(dispatchRequest(), 10.0)).isEmpty();
+        assertThatThrownBy(() -> adapter.findEligibleProviders(dispatchRequest(), 10.0))
+                .isInstanceOf(ProviderSearchUnavailableException.class)
+                .hasMessageContaining("401");
+        // Retrying the same key cannot help.
         assertThat(requests.get()).isEqualTo(1);
+    }
+
+    @Test
+    void providerQueryAdapter_forbidden_isReportedAsUnavailable() {
+        statusToReturn = 403;
+        bodyToReturn = "{\"errorCode\":\"FORBIDDEN\"}";
+        HttpProviderQueryAdapter adapter =
+                new HttpProviderQueryAdapter(props(), new ResilienceFactory(), "test-internal-key");
+
+        assertThatThrownBy(() -> adapter.findEligibleProviders(dispatchRequest(), 10.0))
+                .isInstanceOf(ProviderSearchUnavailableException.class);
+    }
+
+    @Test
+    void providerQueryAdapter_serverError_isRetriedThenReportedAsUnavailable() {
+        statusToReturn = 503;
+        bodyToReturn = "{\"error\":\"down\"}";
+        HttpProviderQueryAdapter adapter =
+                new HttpProviderQueryAdapter(props(), new ResilienceFactory(), "test-internal-key");
+
+        assertThatThrownBy(() -> adapter.findEligibleProviders(dispatchRequest(), 10.0))
+                .isInstanceOf(ProviderSearchUnavailableException.class);
+        // A 5xx is transient: the shared stack retried it before giving up.
+        assertThat(requests.get()).isGreaterThan(1);
+    }
+
+    @Test
+    void providerQueryAdapter_emptyAnswer_isAGenuinelyEmptyMarket() {
+        bodyToReturn = "{\"providers\":[]}";
+        HttpProviderQueryAdapter adapter =
+                new HttpProviderQueryAdapter(props(), new ResilienceFactory(), "test-internal-key");
+
+        assertThat(adapter.findEligibleProviders(dispatchRequest(), 10.0)).isEmpty();
     }
 
     @Test

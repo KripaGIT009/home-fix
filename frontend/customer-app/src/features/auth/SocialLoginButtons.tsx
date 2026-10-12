@@ -32,7 +32,12 @@ export function SocialLoginButtons({ onSelect, disabled = false }: SocialLoginBu
   return (
     <Stack spacing={2}>
       <Divider>
-        <Typography variant="caption" color="text.secondary">
+        <Typography
+          variant="caption"
+          sx={{
+            color: 'text.secondary',
+          }}
+        >
           or
         </Typography>
       </Divider>

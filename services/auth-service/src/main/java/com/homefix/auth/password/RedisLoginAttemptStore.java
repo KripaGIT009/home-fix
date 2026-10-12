@@ -65,6 +65,11 @@ public class RedisLoginAttemptStore implements LoginAttemptStore {
         redis.delete(failKey(username));
     }
 
+    @Override
+    public void unlock(String username) {
+        redis.delete(java.util.List.of(failKey(username), lockKey(username)));
+    }
+
     private String failKey(String username) {
         return FAIL_PREFIX + username;
     }

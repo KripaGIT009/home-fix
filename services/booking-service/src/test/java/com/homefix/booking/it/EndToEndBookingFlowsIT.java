@@ -19,11 +19,12 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureTestRestTemplate;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
-import org.springframework.boot.test.web.client.TestRestTemplate;
+import org.springframework.boot.resttestclient.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.HttpEntity;
@@ -38,8 +39,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import com.homefix.booking.address.CustomerAddressPort;
 import com.homefix.booking.address.CustomerAddressPort.ServiceAddress;
 import com.homefix.booking.domain.Booking;
@@ -94,6 +95,7 @@ import io.jsonwebtoken.security.Keys;
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("it")
+@AutoConfigureTestRestTemplate
 @Import(ItSecurityConfig.class)
 class EndToEndBookingFlowsIT {
 
@@ -201,19 +203,19 @@ class EndToEndBookingFlowsIT {
         // This flow rests in PROVIDER_ASSIGNED (assigned via the guarded transition, accepted in a
         // later call), so the assignment is announced exactly once.
         JsonNode assigned = singleOutboxPayload(reference, "ProviderAssigned");
-        assertThat(assigned.get("customerId").asText()).isEqualTo(customerId.toString());
-        assertThat(assigned.get("providerId").asText()).isEqualTo(providerId.toString());
+        assertThat(assigned.get("customerId").asString()).isEqualTo(customerId.toString());
+        assertThat(assigned.get("providerId").asString()).isEqualTo(providerId.toString());
         assertThat(outboxRows(reference, "BookingCancelled")).isEmpty();
 
         // Every provider milestone names the customer, whom notification-service addresses
         // (Requirement 17.4); without customerId these were dead-lettered.
         for (String milestone : List.of("ProviderArriving", "ProviderArrived", "JobStarted", "JobCompleted")) {
             JsonNode event = singleOutboxPayload(reference, milestone);
-            assertThat(event.get("customerId").asText()).as("%s customerId", milestone)
+            assertThat(event.get("customerId").asString()).as("%s customerId", milestone)
                     .isEqualTo(customerId.toString());
-            assertThat(event.get("providerId").asText()).as("%s providerId", milestone)
+            assertThat(event.get("providerId").asString()).as("%s providerId", milestone)
                     .isEqualTo(providerId.toString());
-            assertThat(event.get("reference").asText()).as("%s reference", milestone)
+            assertThat(event.get("reference").asString()).as("%s reference", milestone)
                     .isEqualTo(reference);
         }
     }
@@ -307,8 +309,8 @@ class EndToEndBookingFlowsIT {
 
             // The customer is told through BookingCancelled, flagged as a dispatch failure.
             JsonNode event = singleOutboxPayload(reference, "BookingCancelled");
-            assertThat(event.get("status").asText()).isEqualTo("SEARCHING_FAILED");
-            assertThat(event.get("customerId").asText()).isEqualTo(customerId.toString());
+            assertThat(event.get("status").asString()).isEqualTo("SEARCHING_FAILED");
+            assertThat(event.get("customerId").asString()).isEqualTo(customerId.toString());
         }
 
         @Test
@@ -321,9 +323,9 @@ class EndToEndBookingFlowsIT {
             dispatchOutcomeService.markSearchingFailed(bookingId); // redelivered callback
 
             JsonNode event = singleOutboxPayload(reference, "BookingCancelled");
-            assertThat(event.get("bookingId").asText()).isEqualTo(bookingId.toString());
-            assertThat(event.get("previousStatus").asText()).isEqualTo("SEARCHING_PROVIDER");
-            assertThat(event.get("status").asText()).isEqualTo("SEARCHING_FAILED");
+            assertThat(event.get("bookingId").asString()).isEqualTo(bookingId.toString());
+            assertThat(event.get("previousStatus").asString()).isEqualTo("SEARCHING_PROVIDER");
+            assertThat(event.get("status").asString()).isEqualTo("SEARCHING_FAILED");
         }
     }
 
@@ -418,13 +420,13 @@ class EndToEndBookingFlowsIT {
         // Exactly one BookingCancelled, carrying everything chat needs to close the channel and
         // notification needs to address both participants (Requirement 18.5, 22.1).
         JsonNode event = singleOutboxPayload(reference, "BookingCancelled");
-        assertThat(event.get("bookingId").asText()).isEqualTo(booking.getId().toString());
-        assertThat(event.get("customerId").asText()).isEqualTo(customerId.toString());
-        assertThat(event.get("providerId").asText()).isEqualTo(providerId.toString());
-        assertThat(event.get("previousStatus").asText()).isEqualTo("PROVIDER_ON_THE_WAY");
-        assertThat(event.get("status").asText()).isEqualTo("CANCELLED");
-        assertThat(event.get("cancelledByRole").asText()).isEqualTo("CUSTOMER");
-        assertThat(event.get("reason").asText()).isEqualTo("customer no longer available");
+        assertThat(event.get("bookingId").asString()).isEqualTo(booking.getId().toString());
+        assertThat(event.get("customerId").asString()).isEqualTo(customerId.toString());
+        assertThat(event.get("providerId").asString()).isEqualTo(providerId.toString());
+        assertThat(event.get("previousStatus").asString()).isEqualTo("PROVIDER_ON_THE_WAY");
+        assertThat(event.get("status").asString()).isEqualTo("CANCELLED");
+        assertThat(event.get("cancelledByRole").asString()).isEqualTo("CUSTOMER");
+        assertThat(event.get("reason").asString()).isEqualTo("customer no longer available");
         assertThat(event.get("cancellationFee").decimalValue())
                 .isEqualByComparingTo(booking.getCancellationFee());
     }
@@ -443,7 +445,7 @@ class EndToEndBookingFlowsIT {
         assertThat(booking.getCancellationFee()).isEqualByComparingTo(new BigDecimal("0.00"));
 
         JsonNode event = singleOutboxPayload(reference, "BookingCancelled");
-        assertThat(event.get("previousStatus").asText()).isEqualTo("SEARCHING_PROVIDER");
+        assertThat(event.get("previousStatus").asString()).isEqualTo("SEARCHING_PROVIDER");
         // Cancelled before dispatch: no provider yet.
         assertThat(event.get("providerId").isNull()).isTrue();
     }
@@ -460,9 +462,9 @@ class EndToEndBookingFlowsIT {
         assertThat(cancelled.getStatusCode()).isEqualTo(HttpStatus.OK);
 
         JsonNode event = singleOutboxPayload(reference, "BookingCancelled");
-        assertThat(event.get("cancelledByRole").asText()).isEqualTo("SERVICE_PROVIDER");
-        assertThat(event.get("cancelledBy").asText()).isEqualTo(providerId.toString());
-        assertThat(event.get("providerId").asText()).isEqualTo(providerId.toString());
+        assertThat(event.get("cancelledByRole").asString()).isEqualTo("SERVICE_PROVIDER");
+        assertThat(event.get("cancelledBy").asString()).isEqualTo(providerId.toString());
+        assertThat(event.get("providerId").asString()).isEqualTo(providerId.toString());
     }
 
     @Test
@@ -619,9 +621,9 @@ class EndToEndBookingFlowsIT {
         List<OutboxEventEntity> assignments = outboxRows(reference, "ProviderAssigned");
         assertThat(assignments).hasSize(2);
         JsonNode acceptance = singleOutboxPayload(reference, "ProviderAccepted");
-        assertThat(acceptance.get("bookingId").asText()).isEqualTo(bookingId.toString());
-        assertThat(acceptance.get("customerId").asText()).isEqualTo(customerId.toString());
-        assertThat(acceptance.get("providerId").asText()).isEqualTo(providerId.toString());
+        assertThat(acceptance.get("bookingId").asString()).isEqualTo(bookingId.toString());
+        assertThat(acceptance.get("customerId").asString()).isEqualTo(customerId.toString());
+        assertThat(acceptance.get("providerId").asString()).isEqualTo(providerId.toString());
         assertThat(acceptance.has("bookingCreatedAt")).isTrue();
         assertThat(acceptance.has("acceptedAt")).isTrue();
         assertThat(outboxRows(reference, "BookingCancelled")).isEmpty();
@@ -649,7 +651,7 @@ class EndToEndBookingFlowsIT {
 
         assertThat(requireBooking(reference).getCancellationFee()).isEqualByComparingTo("0.00");
         JsonNode event = singleOutboxPayload(reference, "BookingCancelled");
-        assertThat(event.get("previousStatus").asText()).isEqualTo("AWAITING_ASSIGNMENT");
+        assertThat(event.get("previousStatus").asString()).isEqualTo("AWAITING_ASSIGNMENT");
     }
 
     private List<Map<String, Object>> queue(String token) {

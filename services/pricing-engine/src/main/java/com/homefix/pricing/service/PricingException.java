@@ -33,6 +33,11 @@ public class PricingException extends RuntimeException {
         return new PricingException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", message);
     }
 
+    /** A 400 {@code VALIDATION_ERROR} listing every violated rule in {@code details}. */
+    public static PricingException validation(String message, List<String> details) {
+        return new PricingException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", message, details);
+    }
+
     public static PricingException parametersNotFound(String message) {
         return new PricingException(HttpStatus.NOT_FOUND, "PRICING_PARAMETERS_NOT_FOUND", message);
     }

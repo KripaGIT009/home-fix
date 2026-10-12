@@ -41,7 +41,8 @@ class BookingStateMachineTest {
     /** The authoritative expected map, written independently from the production copy. */
     private static Map<BookingStatus, Set<BookingStatus>> expected() {
         Map<BookingStatus, Set<BookingStatus>> m = new EnumMap<>(BookingStatus.class);
-        m.put(CREATED, EnumSet.of(SEARCHING_PROVIDER));
+        // Requirement 9.16: an unconfirmed booking may be cancelled, at no fee.
+        m.put(CREATED, EnumSet.of(SEARCHING_PROVIDER, CANCELLED));
         m.put(SEARCHING_PROVIDER, EnumSet.of(PROVIDER_ASSIGNED, AWAITING_ASSIGNMENT, SEARCHING_FAILED, CANCELLED));
         // Tenant fallback (Requirement MT-9.1).
         m.put(AWAITING_ASSIGNMENT, EnumSet.of(PROVIDER_ASSIGNED, SEARCHING_FAILED, CANCELLED));

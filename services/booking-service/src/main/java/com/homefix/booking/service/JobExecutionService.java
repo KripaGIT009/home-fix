@@ -276,15 +276,27 @@ public class JobExecutionService {
     }
 
     /**
-     * Marks the job complete: JOB_STARTED (or CUSTOMER_APPROVAL_PENDING) → JOB_COMPLETED.
-     * Requires at least one after-photo (Requirement 9.10, 9.11, 11.4); computes and stores the
-     * net job duration (Requirement 11.6, Property 10); publishes JobCompleted (22.1).
+     * Marks the job complete: JOB_STARTED → JOB_COMPLETED. Requires at least one after-photo
+     * (Requirement 9.10, 9.11, 11.4); computes and stores the net job duration (Requirement 11.6,
+     * Property 10); publishes JobCompleted (22.1).
+     *
+     * <p>The state machine also permits CUSTOMER_APPROVAL_PENDING → JOB_COMPLETED, but only as the
+     * customer's rejection of an additional quote or its timeout (Requirement 9.8, 9.9), both of
+     * which revert the price to the original estimate. Letting the provider take that edge would
+     * complete the job at the unapproved, parts-inclusive total, so the provider's completion is
+     * refused there (409) like any other illegal transition: they wait for the customer's answer.
      *
      * @throws BookingException 422 if no after-photo is attached
+     * @throws InvalidTransitionException 409 unless the booking is JOB_STARTED
      */
     @Transactional
     public Booking completeJob(String reference, Actor actor) {
         Booking booking = BookingAccess.requireForProvider(bookingRepository, reference, actor);
+        if (booking.getStatus() != BookingStatus.JOB_STARTED) {
+            log.warn("Rejected job completion bookingId={} from={} actorId={} actorRole={}",
+                    booking.getId(), booking.getStatus(), actor.id(), actor.role());
+            throw new InvalidTransitionException(booking.getId(), booking.getStatus(), BookingStatus.JOB_COMPLETED);
+        }
         requirePhoto(booking, AFTER_PHOTO,
                 "An after-photo must be attached before completing the job");
         completeInternal(booking, actor, "Job completed");

@@ -12,8 +12,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
-import com.fasterxml.jackson.databind.SerializationFeature;
-import com.fasterxml.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.json.JsonMapper;
 import com.homefix.dispatch.config.DispatchRbacConfig;
 import com.homefix.dispatch.domain.DispatchRequest;
 import com.homefix.dispatch.domain.OfferStatus;
@@ -25,7 +24,7 @@ import com.homefix.shared.security.RbacProperties;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
+import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.AuthorityUtils;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -60,10 +59,9 @@ class JobOfferControllerTest {
         new DispatchRbacConfig(rbac).registerEndpointRoles();
         JobOfferController controller = new JobOfferController(offers, new CallerIdentity(), clock);
         // Serialise as Spring Boot does: ISO-8601 instants, not epoch numbers.
-        var mapper = JsonMapper.builder().findAndAddModules()
-                .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS).build();
+        var mapper = JsonMapper.builder().build();
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
-                .setMessageConverters(new MappingJackson2HttpMessageConverter(mapper))
+                .setMessageConverters(new JacksonJsonHttpMessageConverter(mapper))
                 .addFilters(new RbacEnforcementFilter(rbac))
                 .build();
         SecurityContextHolder.clearContext();
@@ -87,7 +85,7 @@ class JobOfferControllerTest {
         DispatchRequest request = new DispatchRequest(booking, UUID.randomUUID(), 12.9, 77.6,
                 UUID.fromString("00000000-0000-0000-0000-0000000000aa"), List.of("plumbing"), true,
                 T0, "HFX-2026-0000123", Instant.parse("2026-10-02T14:30:00Z"));
-        offers.open(request, to, WINDOW);
+        offers.open(request, List.of(to), WINDOW);
     }
 
     // ---- role gate ------------------------------------------------------------------------------
@@ -190,7 +188,7 @@ class JobOfferControllerTest {
     void detail_ofAnExpiredOffer_showsItsStatusWithNoTimeLeft() throws Exception {
         offerTo(bookingId, provider);
         clock.advance(WINDOW);
-        offers.expire(bookingId, provider);
+        offers.expire(bookingId, List.of(provider));
         actAsProvider(provider);
 
         mockMvc.perform(get("/dispatch/offers/" + bookingId))

@@ -56,8 +56,15 @@ public class JwtIntrospectionGatewayFilter implements GlobalFilter, Ordered {
             "/auth/login",
             "/auth/token/refresh",
             "/auth/introspect",
+            // Forgotten-password reset and the staff invitee's link (email-auth spec): both come
+            // before the person has a token.
+            "/auth/password",
+            "/auth/invitations",
             // Razorpay's webhook carries no JWT; the Payment Service verifies its HMAC signature.
             "/payments/webhooks/razorpay",
+            // The web apps' public settings (config.app_config rows marked exposed_to_clients),
+            // read before sign-in; the route only forwards GET.
+            "/config/client",
             "/actuator",
             "/health");
 

@@ -204,11 +204,20 @@ public class ReviewService {
      * Admin-approves a flagged review, clearing the flag so it re-enters the aggregate, then
      * recomputes the provider's aggregate and publishes the previously-withheld
      * {@code ReviewSubmitted} event (Requirement 15.5, 15.6).
+     *
+     * <p>A removed review cannot be approved: 409 {@code REVIEW_REMOVED}. Removal does not clear the
+     * flag, so without this guard the legacy {@code /reviews/{id}/approval} endpoint would clear it
+     * on a removed review and publish {@code ReviewSubmitted} for it again, although the review
+     * stays deactivated. The check lives here so every path to approval shares it.
      */
     @Transactional
     public Review approveReview(UUID reviewId) {
         Review review = reviewRepository.findById(reviewId)
                 .orElseThrow(() -> ReviewException.notFound("review not found: " + reviewId));
+        if (!review.isActive()) {
+            throw ReviewException.alreadyRemoved(
+                    "review " + reviewId + " was removed and cannot be published");
+        }
         if (!review.isFlagged()) {
             return review;
         }
@@ -290,10 +299,7 @@ public class ReviewService {
         Review review = reviewRepository.findById(reviewId)
                 .orElseThrow(() -> ReviewException.notFound("review not found: " + reviewId));
         if (action == ModerationAction.PUBLISH) {
-            if (!review.isActive()) {
-                throw ReviewException.alreadyRemoved(
-                        "review " + reviewId + " was removed and cannot be published");
-            }
+            // approveReview refuses a removed review with 409 REVIEW_REMOVED.
             return approveReview(reviewId);
         }
         if (!review.isActive()) {

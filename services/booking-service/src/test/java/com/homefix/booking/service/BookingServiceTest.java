@@ -248,6 +248,20 @@ class BookingServiceTest {
         verify(sagaStepRepository, org.mockito.Mockito.atLeastOnce()).save(any(SagaStep.class));
     }
 
+    @Test
+    void confirmingABookingThatIsNoLongerCreatedIsAConflictNotAServerError() {
+        Booking booking = com.homefix.booking.support.Bookings.inState(BookingStatus.SEARCHING_PROVIDER);
+        when(bookingRepository.findByReference(booking.getReference())).thenReturn(Optional.of(booking));
+
+        // InvalidTransitionException is what GlobalExceptionHandler maps to 409; the saga used to
+        // wrap it in a 500 BOOKING_NOT_COMPLETED.
+        assertThatThrownBy(() -> service.confirm(booking.getReference(),
+                Actor.user(booking.getCustomerId(), "CUSTOMER")))
+                .isInstanceOf(InvalidTransitionException.class);
+        assertThat(booking.getStatus()).isEqualTo(BookingStatus.SEARCHING_PROVIDER);
+        verify(outboxPublisher, never()).publish(any(), any(), any(), any());
+    }
+
     // ----- emergency -------------------------------------------------------
 
     @Test
@@ -335,15 +349,17 @@ class BookingServiceTest {
     }
 
     @Test
-    void cancelFromCreatedIsRejectedByTheStateMachineAndPublishesNothing() {
-        // CREATED is fee-free in the policy but has no CANCELLED edge, so the transition itself
-        // rejects it after the fee is computed. No event may escape.
+    void anUnconfirmedBookingCanBeCancelledAtNoFee() {
+        // Requirement 9.16 lists CREATED as fee-free; the state machine used to have no edge for it.
         Booking booking = com.homefix.booking.support.Bookings.inState(BookingStatus.CREATED);
         when(bookingRepository.findByReference(booking.getReference())).thenReturn(Optional.of(booking));
-        assertThatThrownBy(() -> service.cancel(booking.getReference(),
-                Actor.user(booking.getCustomerId(), "CUSTOMER"), "x"))
-                .isInstanceOf(InvalidTransitionException.class);
-        verify(outboxPublisher, never()).publish(any(), any(), any(), any());
+
+        Booking cancelled = service.cancel(booking.getReference(),
+                Actor.user(booking.getCustomerId(), "CUSTOMER"), "changed my mind");
+
+        assertThat(cancelled.getStatus()).isEqualTo(BookingStatus.CANCELLED);
+        assertThat(cancelled.getCancellationFee()).isEqualByComparingTo("0.00");
+        assertThat(singleBookingCancelled(booking).previousStatus()).isEqualTo(BookingStatus.CREATED);
     }
 
     // ----- BookingCancelled on every cancellation path (Requirement 22.1) ---

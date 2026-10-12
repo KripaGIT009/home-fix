@@ -47,7 +47,7 @@ public class DispatchConfigController {
     public DispatchConfigDto update(@Valid @RequestBody DispatchConfigDto request) {
         // toSettings validates the weights before the service validates the rest, and the service
         // applies nothing until everything has passed.
-        return DispatchConfigDto.from(settingsService.update(request.toSettings()));
+        return DispatchConfigDto.from(settingsService.update(request.toSettings(settingsService.current())));
     }
 
     @ExceptionHandler(WeightValidationException.class)

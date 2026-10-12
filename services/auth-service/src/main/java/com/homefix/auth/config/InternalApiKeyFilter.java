@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.List;
+import java.util.Locale;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,6 +14,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.web.util.UrlPathHelper;
 
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -54,6 +56,9 @@ public class InternalApiKeyFilter extends OncePerRequestFilter {
 
     private static final Logger log = LoggerFactory.getLogger(InternalApiKeyFilter.class);
 
+    /** Resolves the decoded, normalised path the dispatcher will route on. */
+    private static final UrlPathHelper PATH_HELPER = new UrlPathHelper();
+
     private final byte[] expectedKey;
 
     public InternalApiKeyFilter(String expectedKey) {
@@ -62,9 +67,24 @@ public class InternalApiKeyFilter extends OncePerRequestFilter {
                 : expectedKey.getBytes(StandardCharsets.UTF_8);
     }
 
+    /**
+     * Skips only requests that will not reach an internal handler.
+     *
+     * <p>The decision is made on the decoded path within the application, not on the raw
+     * {@link HttpServletRequest#getRequestURI() request URI}: Spring MVC decodes the URI before
+     * matching handlers, so {@code /%69nternal/...} reaches {@code /internal/...} although its raw
+     * form does not start with the prefix. The path is lower-cased so a case-insensitive matcher
+     * elsewhere cannot open the same gap. The security chain also requires {@code ROLE_INTERNAL} on
+     * {@code /internal/**}, but this filter must not depend on that rule to stay closed.
+     */
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return !request.getRequestURI().startsWith(INTERNAL_PREFIX);
+        return !isInternalPath(request);
+    }
+
+    static boolean isInternalPath(HttpServletRequest request) {
+        String path = PATH_HELPER.getPathWithinApplication(request);
+        return path != null && path.toLowerCase(Locale.ROOT).startsWith(INTERNAL_PREFIX);
     }
 
     @Override

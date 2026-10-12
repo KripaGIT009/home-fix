@@ -52,6 +52,15 @@ public interface AuthUserClientPort {
      */
     Optional<String> mobileNumberOf(UUID userId);
 
+    /**
+     * Asks the Auth Service, which owns email delivery, to email an agency applicant the decision on
+     * their application (email-auth Requirement 5.7). Best effort: never throws, because the decision
+     * stands whether or not the email goes out.
+     */
+    default void sendAgencyDecision(UUID userId, String tenantName, boolean approved, String reason) {
+        // No-op unless an adapter delivers it.
+    }
+
     /** An account as the Auth Service's {@code by-mobile} lookup describes it. */
     record AuthUser(UUID userId, Set<String> roles, String status) {
 

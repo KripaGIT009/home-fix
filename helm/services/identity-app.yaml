@@ -1,0 +1,48 @@
+# identity-app - values for helm/homefix-service. One JVM hosting auth-service, customer-service, provider-service, verification-service,
+# each on the port it has in docker-compose.core.yml (shared/homefix-service-host).
+# Merged from the former per-service values; inter-service URLs point at the deployable.
+
+serviceName: identity-app
+# auth-service
+containerPort: 8081
+extraPorts:
+  - name: customer  # customer-service
+    port: 8082
+  - name: provider  # provider-service
+    port: 8083
+  - name: verification  # verification-service
+    port: 8094
+
+dependencies:
+  postgres: true
+  redis: true
+  kafka: false
+
+# Keys read from the existing Secret "identity-app-secrets".
+secrets:
+  env:
+    JWT_SECRET: jwt_secret
+    INTERNAL_API_KEY: internal_api_key
+    KMS_LOCAL_DATA_KEY: kms_data_key
+    KMS_DATA_KEY: kms_data_key
+
+config:
+  GOOGLE_CLIENT_ID: ""
+  APPLE_SERVICES_ID: ""
+  # Email sign-up, reset and invitations (email-auth spec). No production email provider exists
+  # yet, so the default 'logging' adapter records each email by subject and delivers nothing;
+  # never 'file' here, which writes codes and links in plain text.
+  EMAIL_PROVIDER: "logging"
+  # Staff invitation links point at the homefix.apps.admin-portal-url row of config.app_config
+  # (seeded with the local address: set it for this environment with SQL, see docs/ARCHITECTURE.md).
+  KMS_PROVIDER: "local"
+  GEOCODING_PROVIDER: "noop"
+  BOOKING_SERVICE_URL: "http://jobs-app:8084"
+  BOOKING_CLIENT: "http"
+  BOOKING_SERVICE_URI: "http://jobs-app:8084"
+  CATALOG_SERVICE_URI: "http://jobs-app:8085"
+  # Batch APPROVED lookup behind the dispatch eligibility search (Req 5.10, 8.2).
+  VERIFICATION_SERVICE_URL: "http://identity-app:8094"
+  # Account lookup and TENANT_ADMIN grants for Tenant administration (Requirement MT-2).
+  AUTH_SERVICE_URL: "http://identity-app:8081"
+  PROVIDER_SERVICE_URL: "http://identity-app:8083"

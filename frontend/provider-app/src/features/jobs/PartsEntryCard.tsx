@@ -18,7 +18,7 @@ import { isApiError } from '@api/client';
 import { formatCurrency } from '@lib/format';
 import type { PartLineItem } from './api';
 import { useAddJobPart } from './hooks';
-import { partSchema, type PartFormValues } from './schemas';
+import { partSchema, type PartFormInput, type PartFormValues } from './schemas';
 
 interface PartsEntryCardProps {
   bookingId: string;
@@ -45,7 +45,7 @@ export function PartsEntryCard({
     handleSubmit,
     reset,
     formState: { errors },
-  } = useForm<PartFormValues>({
+  } = useForm<PartFormInput, unknown, PartFormValues>({
     resolver: zodResolver(partSchema),
     defaultValues: { itemName: '', quantity: 1, unitCost: 0.01 },
     mode: 'onSubmit',
@@ -62,7 +62,12 @@ export function PartsEntryCard({
   return (
     <Card variant="outlined">
       <CardContent>
-        <Typography variant="subtitle2" fontWeight={700}>
+        <Typography
+          variant="subtitle2"
+          sx={{
+            fontWeight: 700,
+          }}
+        >
           Parts &amp; materials
         </Typography>
 
@@ -74,7 +79,12 @@ export function PartsEntryCard({
                   key={part.id}
                   disableGutters
                   secondaryAction={
-                    <Typography variant="body2" fontWeight={700}>
+                    <Typography
+                      variant="body2"
+                      sx={{
+                        fontWeight: 700,
+                      }}
+                    >
                       {formatCurrency(part.quantity * part.unitCost, currency)}
                     </Typography>
                   }
@@ -87,17 +97,38 @@ export function PartsEntryCard({
               ))}
             </List>
             <Divider sx={{ my: 1 }} />
-            <Stack direction="row" justifyContent="space-between">
-              <Typography variant="body2" color="text.secondary">
+            <Stack
+              direction="row"
+              sx={{
+                justifyContent: 'space-between',
+              }}
+            >
+              <Typography
+                variant="body2"
+                sx={{
+                  color: 'text.secondary',
+                }}
+              >
                 Parts total
               </Typography>
-              <Typography variant="subtitle2" fontWeight={700}>
+              <Typography
+                variant="subtitle2"
+                sx={{
+                  fontWeight: 700,
+                }}
+              >
                 {formatCurrency(partsTotal, currency)}
               </Typography>
             </Stack>
           </>
         ) : (
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+          <Typography
+            variant="body2"
+            sx={{
+              color: 'text.secondary',
+              mt: 0.5,
+            }}
+          >
             No parts recorded yet.
           </Typography>
         )}
@@ -124,20 +155,24 @@ export function PartsEntryCard({
                 type="number"
                 size="small"
                 fullWidth
-                inputProps={{ min: 1, step: 1, inputMode: 'numeric' }}
                 error={Boolean(errors.quantity)}
                 helperText={errors.quantity?.message ?? ' '}
                 {...register('quantity')}
+                slotProps={{
+                  htmlInput: { min: 1, step: 1, inputMode: 'numeric' },
+                }}
               />
               <TextField
                 label="Unit cost"
                 type="number"
                 size="small"
                 fullWidth
-                inputProps={{ min: 0.01, step: 0.01, inputMode: 'decimal' }}
                 error={Boolean(errors.unitCost)}
                 helperText={errors.unitCost?.message ?? ' '}
                 {...register('unitCost')}
+                slotProps={{
+                  htmlInput: { min: 0.01, step: 0.01, inputMode: 'decimal' },
+                }}
               />
             </Stack>
             {addPart.isError ? (

@@ -18,9 +18,10 @@ import com.homefix.booking.domain.SagaStepRepository;
  *
  * <p>Each step is recorded in the Saga log as STARTED <em>before</em> its action runs
  * (Requirement 24.6), then marked COMPLETED. If any step fails, the already-committed steps
- * are compensated in reverse order (Requirement 24.7) and each is marked COMPENSATED; the
- * originating {@link BookingException} (mapped to a booking-not-completed response) is then
- * rethrown.
+ * are compensated in reverse order (Requirement 24.7) and each is marked COMPENSATED; then a
+ * {@link BookingException} or {@link InvalidTransitionException} from the step is rethrown as is
+ * (keeping its own status, e.g. 409 for an illegal transition) and anything else becomes a
+ * booking-not-completed response.
  *
  * <p>This orchestrator is deliberately independent of the specific step semantics so the
  * scheduled-create, emergency-create, and later job-execution flows (Task 15) can all reuse
@@ -76,6 +77,7 @@ public class BookingSagaOrchestrator {
      *
      * @return the results of each forward action, in order, on success
      * @throws BookingException if any step fails; committed steps are compensated first
+     * @throws InvalidTransitionException if a step attempts an illegal transition (after compensation)
      */
     public List<Object> execute(UUID bookingId, List<Step<?>> steps) {
         List<CommittedStep<?>> committed = new ArrayList<>();
@@ -96,6 +98,11 @@ public class BookingSagaOrchestrator {
                 compensate(bookingId, committed);
                 if (ex instanceof BookingException be) {
                     throw be;
+                }
+                // An illegal transition is the caller's conflict (409), such as confirming a booking
+                // that is no longer CREATED, not a failure of the saga; wrapping it answered 500.
+                if (ex instanceof InvalidTransitionException conflict) {
+                    throw conflict;
                 }
                 throw BookingException.sagaFailed(
                         "Booking request was not completed: step '" + step.name + "' failed");

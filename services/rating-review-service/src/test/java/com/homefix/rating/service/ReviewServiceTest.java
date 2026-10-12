@@ -295,6 +295,30 @@ class ReviewServiceTest {
         assertThat(publisher.published()).extracting(Review::getId).containsExactly(flagged.getId());
     }
 
+    /**
+     * The legacy approval endpoint must not resurrect a removed review: removal leaves the flag set,
+     * and approving used to clear it and publish {@code ReviewSubmitted} again.
+     */
+    @Test
+    void approvingARemovedFlaggedReviewIsRefusedAndPublishesNothing() {
+        UUID provider = UUID.randomUUID();
+        Review flagged = reviews.save(Review.customerReview(UUID.randomUUID(), UUID.randomUUID(),
+                provider, 5, 5, 5, 5, 5, null, "1.1.1.1", true, NOW.minus(Duration.ofDays(3))));
+        ReviewService service = serviceAt(NOW);
+        service.removeReview(flagged.getId(), UUID.randomUUID(), "fake review");
+
+        assertThatThrownBy(() -> service.approveReview(flagged.getId()))
+                .isInstanceOf(ReviewException.class)
+                .satisfies(e -> {
+                    assertThat(((ReviewException) e).getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                    assertThat(((ReviewException) e).getErrorCode()).isEqualTo("REVIEW_REMOVED");
+                });
+        Review stored = reviews.findById(flagged.getId()).orElseThrow();
+        assertThat(stored.isFlagged()).isTrue();
+        assertThat(stored.isActive()).isFalse();
+        assertThat(publisher.published()).isEmpty();
+    }
+
     // ---- Admin Portal list and moderation (19.2) -----------------------------------------------
 
     private Review stored(boolean flagged, Instant submittedAt) {

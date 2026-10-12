@@ -23,12 +23,14 @@ export type PauseReasonFormValues = z.infer<typeof pauseReasonSchema>;
 export const partSchema = z.object({
   itemName: z.string().trim().min(1, 'Enter the item name').max(120, 'Item name is too long'),
   quantity: z.coerce
-    .number({ invalid_type_error: 'Enter a quantity' })
+    .number({ error: 'Enter a quantity' })
     .int('Quantity must be a whole number')
     .min(1, 'Quantity must be at least 1'),
   unitCost: z.coerce
-    .number({ invalid_type_error: 'Enter a unit cost' })
+    .number({ error: 'Enter a unit cost' })
     .min(0.01, 'Unit cost must be at least 0.01'),
 });
 
 export type PartFormValues = z.infer<typeof partSchema>;
+/** What the inputs hold before coercion (react-hook-form's field values). */
+export type PartFormInput = z.input<typeof partSchema>;

@@ -50,5 +50,10 @@ public class AuthRbacConfig {
         // "/admin/users/**" also matches "/admin/users" itself (the list).
         rules.put("GET /admin/users/**", ADMINS);
         rules.put("PATCH /admin/users/**", ADMINS);
+        // Staff invitations (email-auth Requirement 6.1): ADMIN and SUPER_ADMIN; only SUPER_ADMIN may
+        // invite an ADMIN, which StaffInvitationService enforces. "/**" also matches the bare path.
+        rules.put("GET /admin/invitations/**", ADMINS);
+        rules.put("POST /admin/invitations/**", ADMINS);
+        rules.put("DELETE /admin/invitations/**", ADMINS);
     }
 }

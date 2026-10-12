@@ -6,7 +6,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import com.homefix.notification.domain.NotificationEventType;
 import com.homefix.shared.outbox.kafka.KafkaProducerTemplate;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -20,7 +21,7 @@ import org.junit.jupiter.api.Test;
  */
 class NotificationEventMapperTest {
 
-    private final NotificationEventMapper mapper = new NotificationEventMapper(new ObjectMapper());
+    private final NotificationEventMapper mapper = new NotificationEventMapper(new JsonMapper());
 
     private ConsumerRecord<String, String> record(String value, UUID eventId) {
         ConsumerRecord<String, String> record =

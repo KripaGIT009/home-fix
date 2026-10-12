@@ -29,8 +29,8 @@ export function InlineError({
       role="alert"
       direction={{ xs: 'column', sm: 'row' }}
       spacing={2}
-      alignItems={{ xs: 'flex-start', sm: 'center' }}
       sx={{
+        alignItems: { xs: 'flex-start', sm: 'center' },
         p: { xs: 2, md: 2.5 },
         borderRadius: `${radius.lg}px`,
         bgcolor: 'background.paper',
@@ -53,10 +53,20 @@ export function InlineError({
         {unreachable ? <CloudOffRoundedIcon /> : <InfoOutlinedIcon />}
       </Box>
       <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-        <Typography variant="subtitle1" fontWeight={700}>
+        <Typography
+          variant="subtitle1"
+          sx={{
+            fontWeight: 700,
+          }}
+        >
           {heading}
         </Typography>
-        <Typography variant="body2" color="text.secondary">
+        <Typography
+          variant="body2"
+          sx={{
+            color: 'text.secondary',
+          }}
+        >
           {friendlyErrorMessage(error)}
         </Typography>
       </Box>
@@ -91,9 +101,12 @@ export function EmptyState({
   return (
     <Stack
       spacing={1.5}
-      alignItems="center"
-      textAlign="center"
-      sx={{ py: compact ? 4 : { xs: 6, md: 9 }, px: 2 }}
+      sx={{
+        alignItems: 'center',
+        textAlign: 'center',
+        py: compact ? 4 : { xs: 6, md: 9 },
+        px: 2,
+      }}
     >
       <Box
         aria-hidden
@@ -114,7 +127,13 @@ export function EmptyState({
         {title}
       </Typography>
       {description ? (
-        <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 380 }}>
+        <Typography
+          variant="body2"
+          sx={{
+            color: 'text.secondary',
+            maxWidth: 380,
+          }}
+        >
           {description}
         </Typography>
       ) : null}

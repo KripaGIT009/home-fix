@@ -23,7 +23,9 @@ public record DispatchConfigDto(
         @NotNull Double initialRadiusKm,
         @NotNull Double radiusIncrementKm,
         @NotNull Integer maxExpansionCycles,
-        @NotNull Long offerTimeoutSeconds) {
+        @NotNull Long offerTimeoutSeconds,
+        Integer offerBatchSize,
+        Long agencyFallbackMinutes) {
 
     /** The five matching weights, keyed like the Requirement 8.3 score components. */
     public record Weights(
@@ -46,16 +48,19 @@ public record DispatchConfigDto(
                 s.initialRadiusKm(),
                 s.radiusIncrementKm(),
                 s.maxExpansionCycles(),
-                s.offerTimeoutSeconds());
+                s.offerTimeoutSeconds(),
+                s.offerBatchSize(),
+                s.agencyFallbackMinutes());
     }
 
     /**
-     * The requested settings.
+     * The requested settings. The wave size and agency-fallback minutes are optional: when a
+     * request omits them, the values in {@code current} are kept.
      *
      * @throws com.homefix.dispatch.domain.WeightValidationException if a weight is outside
      *         [0.0, 1.0] or the five do not sum to exactly 1.0
      */
-    public DispatchSettings toSettings() {
+    public DispatchSettings toSettings(DispatchSettings current) {
         MatchingWeights validated = MatchingWeights.ofExact(
                 weights.distance(),
                 weights.availability(),
@@ -63,6 +68,8 @@ public record DispatchConfigDto(
                 weights.skill(),
                 weights.performance());
         return new DispatchSettings(validated, initialRadiusKm, radiusIncrementKm,
-                maxExpansionCycles, offerTimeoutSeconds);
+                maxExpansionCycles, offerTimeoutSeconds,
+                offerBatchSize != null ? offerBatchSize : current.offerBatchSize(),
+                agencyFallbackMinutes != null ? agencyFallbackMinutes : current.agencyFallbackMinutes());
     }
 }

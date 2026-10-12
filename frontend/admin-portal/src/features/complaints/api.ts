@@ -75,6 +75,8 @@ export interface AdminComplaint {
   /** ISO 8601 SLA deadline; used to flag breaches in the UI. */
   slaDueAt: string;
   createdAt: string;
+  /** The latest resolution note staff recorded; null when there is none. */
+  resolutionNote?: string | null;
 }
 
 export interface ComplaintUpdatePayload {

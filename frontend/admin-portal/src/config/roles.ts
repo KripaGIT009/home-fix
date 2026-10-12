@@ -80,3 +80,24 @@ export function isStaff(roles: readonly UserRole[]): boolean {
 export function hasAnyRole(roles: readonly UserRole[], allowed: readonly UserRole[]): boolean {
   return roles.some((role) => allowed.includes(role));
 }
+
+/** Readable names for roles, as invitations and role lists show them. */
+export const ROLE_LABELS: Record<UserRole, string> = {
+  CUSTOMER: 'Customer',
+  SERVICE_PROVIDER: 'Service Provider',
+  DISPATCHER: 'Dispatcher',
+  ADMIN: 'Admin',
+  SUPER_ADMIN: 'Super Admin',
+  SUPPORT_AGENT: 'Support Agent',
+  FINANCE_ADMIN: 'Finance Admin',
+  TENANT_ADMIN: 'Agency Admin',
+};
+
+/**
+ * Staff roles an invitation may carry (email-auth Requirement 6.1). ADMIN is
+ * offered to a SUPER_ADMIN only, and SUPER_ADMIN is never granted by invitation.
+ */
+export function invitableRoles(roles: readonly UserRole[]): UserRole[] {
+  const base: UserRole[] = ['FINANCE_ADMIN', 'DISPATCHER', 'SUPPORT_AGENT'];
+  return roles.includes('SUPER_ADMIN') ? ['ADMIN', ...base] : base;
+}

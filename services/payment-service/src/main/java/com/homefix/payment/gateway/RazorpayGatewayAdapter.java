@@ -19,7 +19,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.databind.JsonNode;
 
 /**
  * Razorpay {@link PaymentGatewayPort} adapter (Requirement 12.1), against the Razorpay REST API
@@ -272,7 +272,7 @@ public class RazorpayGatewayAdapter extends AbstractHmacGatewayAdapter {
 
     private static String text(JsonNode node, String field) {
         JsonNode value = node == null ? null : node.get(field);
-        return value == null || value.isNull() ? null : value.asText();
+        return value == null || value.isNull() ? null : value.asString();
     }
 
     /**

@@ -1,8 +1,8 @@
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Alert, Box, Button, InputAdornment, Stack, TextField, Typography } from '@mui/material';
+import { Alert, Button, Stack } from '@mui/material';
 import ArrowForwardRoundedIcon from '@mui/icons-material/ArrowForwardRounded';
-import { brand } from '@lib/theme';
+import { MobileNumberField } from './AuthFields';
 import { mobileSchema, type MobileFormValues } from './schemas';
 
 interface MobileStepProps {
@@ -46,55 +46,12 @@ export function MobileStep({
         </Alert>
       ) : null}
 
-      <Box>
-        <Typography
-          component="label"
-          htmlFor="login-mobile"
-          variant="subtitle2"
-          sx={{ display: 'block', mb: 1, color: 'text.primary' }}
-        >
-          Mobile number
-        </Typography>
-        <TextField
-          id="login-mobile"
-          type="tel"
-          autoComplete="tel-national"
-          fullWidth
-          placeholder="98765 43210"
-          error={Boolean(errors.mobileNumber)}
-          helperText={errors.mobileNumber?.message ?? 'We’ll text you a 6-digit code to verify it.'}
-          InputProps={{
-            startAdornment: (
-              <InputAdornment position="start" sx={{ mr: 0, height: 'auto', maxHeight: 'none' }}>
-                <Box
-                  sx={{
-                    pr: 1.5,
-                    mr: 1.5,
-                    py: 0.5,
-                    borderRight: `1px solid ${brand.line}`,
-                    fontWeight: 700,
-                    color: 'text.primary',
-                    fontSize: '1.0625rem',
-                  }}
-                >
-                  +91
-                </Box>
-              </InputAdornment>
-            ),
-          }}
-          inputProps={{
-            inputMode: 'tel',
-            maxLength: 14,
-            style: {
-              fontSize: '1.125rem',
-              letterSpacing: '0.03em',
-              paddingTop: 16,
-              paddingBottom: 16,
-            },
-          }}
-          {...register('mobileNumber')}
-        />
-      </Box>
+      <MobileNumberField
+        id="login-mobile"
+        error={Boolean(errors.mobileNumber)}
+        helperText={errors.mobileNumber?.message ?? 'We’ll text you a 6-digit code to verify it.'}
+        {...register('mobileNumber')}
+      />
 
       <Button
         type="submit"

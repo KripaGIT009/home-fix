@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { TenantPayload } from './api';
 import { normaliseMobile } from './model';
 
 /**
@@ -9,6 +10,9 @@ import { normaliseMobile } from './model';
  * - radius within [1, 100] km, one decimal place at most (numeric(5,1))
  * - at least one category, every one active in the catalog
  * - optional contact phone (E.164 once normalised) and email (≤ 254 characters)
+ *
+ * The status is not part of these values: only the edit dialog sets it, and an
+ * agency application never does.
  *
  * Numeric fields are kept as strings in the form: coercing an empty field
  * gives 0, which is a perfectly valid latitude, and would let a forgotten
@@ -63,11 +67,42 @@ export function tenantSchema(activeCategoryIds: ReadonlySet<string>) {
         (ids) => ids.every((id) => activeCategoryIds.has(id)),
         'Remove the inactive categories; only active ones can be covered.',
       ),
-    status: z.enum(['ACTIVE', 'SUSPENDED']),
   });
 }
 
 export type TenantFormValues = z.infer<ReturnType<typeof tenantSchema>>;
+
+/**
+ * An agency's own application (email-auth Requirement 5.1): the Tenant rules,
+ * with the contact phone and email required — HomeFix has to be able to reach
+ * the agency about its application, and the applicant is not yet anyone the
+ * operations team knows.
+ */
+export function agencyApplicationSchema(activeCategoryIds: ReadonlySet<string>) {
+  return tenantSchema(activeCategoryIds)
+    .refine((values) => values.contactPhone.trim() !== '', {
+      message: 'Enter a contact phone number.',
+      path: ['contactPhone'],
+    })
+    .refine((values) => values.contactEmail.trim() !== '', {
+      message: 'Enter a contact email address.',
+      path: ['contactEmail'],
+    });
+}
+
+/** The create body for validated form values; blank contacts are left out. */
+export function toTenantPayload(values: TenantFormValues): TenantPayload {
+  const contactPhone = normaliseMobile(values.contactPhone);
+  return {
+    name: values.name.trim(),
+    baseLatitude: Number(values.baseLatitude),
+    baseLongitude: Number(values.baseLongitude),
+    serviceRadiusKm: Number(values.serviceRadiusKm),
+    categoryIds: values.categoryIds,
+    ...(contactPhone ? { contactPhone } : {}),
+    ...(values.contactEmail ? { contactEmail: values.contactEmail.trim() } : {}),
+  };
+}
 
 /** The add-member form: one mobile number (Requirements MT-2.2, MT-3.2). */
 export const mobileSchema = z.object({

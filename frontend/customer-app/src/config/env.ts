@@ -34,7 +34,9 @@ export const env = {
   googleClientId: import.meta.env.VITE_GOOGLE_CLIENT_ID ?? '',
   /**
    * Origin of the Provider App, linked from the footer's "Join as a
-   * professional". Professionals sign up there, not in this app.
+   * professional". Professionals sign up there, not in this app. Only the
+   * fallback: the live value is the `homefix.apps.provider-app-url` row of the
+   * backend's config table (see ./clientConfig).
    */
   providerAppUrl: import.meta.env.VITE_PROVIDER_APP_URL ?? 'http://localhost:5174',
   /** True when running the production build. */

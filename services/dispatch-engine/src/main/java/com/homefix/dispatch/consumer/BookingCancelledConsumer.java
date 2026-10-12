@@ -1,7 +1,7 @@
 package com.homefix.dispatch.consumer;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.homefix.dispatch.port.BookingCancellationPort;
 import com.homefix.dispatch.service.JobOfferService;
 import com.homefix.shared.outbox.kafka.DlqForwarder;

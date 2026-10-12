@@ -22,7 +22,11 @@ public interface ProviderQueryPort {
      *
      * @param request  the dispatch problem (location, skills, emergency flag)
      * @param radiusKm the current search radius in kilometres
-     * @return eligible candidates with their component scores (never {@code null}; may be empty)
+     * @return eligible candidates with their component scores (never {@code null}; may be empty).
+     *         Empty means the Provider Service answered and nobody qualified
+     * @throws com.homefix.dispatch.domain.ProviderSearchUnavailableException when the Provider
+     *         Service could not be asked (outage, open breaker, refused credential); an
+     *         implementation must never report that as an empty list
      */
     List<ProviderCandidate> findEligibleProviders(DispatchRequest request, double radiusKm);
 }

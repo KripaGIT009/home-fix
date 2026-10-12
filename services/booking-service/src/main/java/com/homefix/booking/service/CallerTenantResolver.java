@@ -20,16 +20,25 @@ import com.homefix.booking.tenant.TenantDirectoryUnavailableException;
  * parameter (Requirement MT-10.1, Property MT5), through the Provider Service's
  * {@code by-admin} lookup (design D2).
  *
- * <p>Answers are cached for {@value #TTL_SECONDS} s per user: the Tenant Portal polls its queue
- * every 15 s, and an admin's Tenant changes rarely. The cost is that a removal or suspension takes
- * up to a minute to reach booking-service, which the design accepts in place of a token claim.
+ * <p>Every answer is an authorization decision, and the Provider Service refuses a removed admin at
+ * once, so booking-service keeps the window in which a removed or suspended admin is still served
+ * as small as the latency budget allows:
+ * <ul>
+ *   <li><b>Reads</b> ({@link #requireActiveTenant}: the queue and the Tenant's bookings) reuse an
+ *       answer for at most {@value #TTL_SECONDS} s. That absorbs the burst of parallel calls one
+ *       Tenant Portal page load makes, while the portal's 15 s poll always asks afresh. It was
+ *       60 s, which let a removed admin keep reading the queue for up to a minute.</li>
+ *   <li><b>Changes</b> ({@link #requireActiveTenantNow}: assigning a booking) always ask the Provider
+ *       Service and refresh the cached answer. An assignment already makes a membership call, so one
+ *       more lookup is a small, rare cost, and a removed admin can never assign.</li>
+ * </ul>
  * "Not an admin of any Tenant" is cached too (so a misconfigured account does not hit the Provider
- * Service on every poll); an outage is not, so the next request asks again.
+ * Service on every call); an outage is not, so the next request asks again.
  */
 @Component
 public class CallerTenantResolver {
 
-    static final long TTL_SECONDS = 60;
+    static final long TTL_SECONDS = 5;
     private static final Duration TTL = Duration.ofSeconds(TTL_SECONDS);
 
     private final TenantDirectoryPort tenantDirectory;
@@ -49,7 +58,21 @@ public class CallerTenantResolver {
      *         503 {@code TENANT_DIRECTORY_UNAVAILABLE} when the Provider Service cannot be asked
      */
     public TenantSummary requireActiveTenant(UUID adminUserId) {
-        TenantSummary tenant = lookup(adminUserId).orElseThrow(() -> new BookingException(
+        return requireActive(lookup(adminUserId, false));
+    }
+
+    /**
+     * As {@link #requireActiveTenant}, but always asking the Provider Service rather than reusing a
+     * recent answer: for actions that change a booking, where a just-removed admin must be refused.
+     *
+     * @throws BookingException as {@link #requireActiveTenant}
+     */
+    public TenantSummary requireActiveTenantNow(UUID adminUserId) {
+        return requireActive(lookup(adminUserId, true));
+    }
+
+    private static TenantSummary requireActive(Optional<TenantSummary> found) {
+        TenantSummary tenant = found.orElseThrow(() -> new BookingException(
                 HttpStatus.NOT_FOUND, "TENANT_NOT_FOUND", "You do not administer a partner agency"));
         if (tenant.suspended()) {
             throw new BookingException(HttpStatus.FORBIDDEN, "TENANT_SUSPENDED",
@@ -58,9 +81,9 @@ public class CallerTenantResolver {
         return tenant;
     }
 
-    private Optional<TenantSummary> lookup(UUID adminUserId) {
+    private Optional<TenantSummary> lookup(UUID adminUserId, boolean bypassCache) {
         Instant now = Instant.now(clock);
-        Entry cached = cache.get(adminUserId);
+        Entry cached = bypassCache ? null : cache.get(adminUserId);
         if (cached != null && now.isBefore(cached.expiresAt())) {
             return cached.tenant();
         }

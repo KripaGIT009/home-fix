@@ -5,6 +5,13 @@
                              https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
+    <parent>
+        <groupId>com.homefix</groupId>
+        <artifactId>homefix-parent</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+        <relativePath>../../pom.xml</relativePath>
+    </parent>
+
     <groupId>com.homefix</groupId>
     <artifactId>api-gateway</artifactId>
     <version>1.0.0-SNAPSHOT</version>
@@ -24,27 +31,13 @@
     </description>
 
     <properties>
-        <java.version>21</java.version>
-        <maven.compiler.source>21</maven.compiler.source>
-        <maven.compiler.target>21</maven.compiler.target>
-        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-
-        <spring-boot.version>3.2.5</spring-boot.version>
-        <spring-cloud.version>2023.0.1</spring-cloud.version>
-        <homefix-shared.version>1.0.0-SNAPSHOT</homefix-shared.version>
-        <jacoco.version>0.8.12</jacoco.version>
-        <jqwik.version>1.8.4</jqwik.version>
+        <!-- Spring Cloud Gateway's GA train (2025.1) supports Spring Boot 4.0 only; move to
+             the parent's Boot version with the 2026.0 train. -->
+        <spring-boot.version>4.0.8</spring-boot.version>
     </properties>
 
     <dependencyManagement>
         <dependencies>
-            <dependency>
-                <groupId>org.springframework.boot</groupId>
-                <artifactId>spring-boot-dependencies</artifactId>
-                <version>${spring-boot.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
             <dependency>
                 <groupId>org.springframework.cloud</groupId>
                 <artifactId>spring-cloud-dependencies</artifactId>
@@ -60,18 +53,16 @@
         <dependency>
             <groupId>com.homefix.shared</groupId>
             <artifactId>homefix-shared-observability</artifactId>
-            <version>${homefix-shared.version}</version>
         </dependency>
         <dependency>
             <groupId>com.homefix.shared</groupId>
             <artifactId>homefix-shared-resilience</artifactId>
-            <version>${homefix-shared.version}</version>
         </dependency>
 
         <!-- ===== Spring Cloud Gateway (reactive / WebFlux) ===== -->
         <dependency>
             <groupId>org.springframework.cloud</groupId>
-            <artifactId>spring-cloud-starter-gateway</artifactId>
+            <artifactId>spring-cloud-starter-gateway-server-webflux</artifactId>
         </dependency>
 
         <!-- Redis-backed request rate limiter + reactive Redis for OTP counters -->
@@ -115,11 +106,16 @@
             <artifactId>reactor-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- @AutoConfigureWebTestClient (a module of its own since Spring Boot 4). -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-webtestclient</artifactId>
+            <scope>test</scope>
+        </dependency>
         <!-- jqwik for property-based tests (Testing Strategy: Property-Based Tests) -->
         <dependency>
             <groupId>net.jqwik</groupId>
             <artifactId>jqwik</artifactId>
-            <version>${jqwik.version}</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
@@ -129,54 +125,9 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
-                <version>${spring-boot.version}</version>
-                <executions>
-                    <execution>
-                        <goals>
-                            <goal>repackage</goal>
-                        </goals>
-                    </execution>
-                </executions>
-            </plugin>
-
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.13.0</version>
-                <configuration>
-                    <release>21</release>
-                    <!-- Retain parameter names in the bytecode. Spring resolves an unnamed
-                         @PathVariable/@RequestParam by reflecting on the parameter name, which
-                         javac drops without this; these services import the Spring Boot BOM but
-                         do not inherit spring-boot-starter-parent, which is what would otherwise
-                         set it. Without it such a handler fails at request time with a 500. -->
-                    <parameters>true</parameters>
-                </configuration>
-            </plugin>
-
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-surefire-plugin</artifactId>
-                <version>3.2.5</version>
             </plugin>
 
             <!-- JaCoCo coverage report (aligned with shared modules) -->
-            <plugin>
-                <groupId>org.jacoco</groupId>
-                <artifactId>jacoco-maven-plugin</artifactId>
-                <version>${jacoco.version}</version>
-                <executions>
-                    <execution>
-                        <id>prepare-agent</id>
-                        <goals><goal>prepare-agent</goal></goals>
-                    </execution>
-                    <execution>
-                        <id>report</id>
-                        <phase>verify</phase>
-                        <goals><goal>report</goal></goals>
-                    </execution>
-                </executions>
-            </plugin>
         </plugins>
     </build>
 </project>

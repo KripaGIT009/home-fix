@@ -6,9 +6,9 @@ import static com.homefix.pricing.support.TestData.baseParams;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.autoconfigure.domain.EntityScan;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
+import org.springframework.boot.persistence.autoconfigure.EntityScan;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
+import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 import org.springframework.test.context.ContextConfiguration;
@@ -22,7 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>{@code docker/init-db.sql} creates the schema, but Postgres runs it only when the data volume
  * is first initialised, so a volume that predates this service's persistence has no such schema.
  * The compose file runs services with {@code ddl-auto=update}, which creates tables but — on its
- * own — not schemas. {@code application.yml} therefore sets
+ * own — not schemas. {@code pricing-engine.yml} therefore sets
  * {@code hibernate.hbm2ddl.create_namespaces}; this test boots with that file's JPA settings
  * (default schema and that flag, no overrides) against an empty database and checks the adapter
  * works.

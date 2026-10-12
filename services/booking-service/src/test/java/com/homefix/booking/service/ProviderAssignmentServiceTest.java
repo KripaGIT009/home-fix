@@ -19,18 +19,21 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
-import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder;
+import org.springframework.http.HttpStatus;
+import org.springframework.transaction.support.TransactionOperations;
+import tools.jackson.databind.cfg.DateTimeFeature;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import com.homefix.booking.domain.Booking;
 import com.homefix.booking.domain.BookingAudit;
 import com.homefix.booking.domain.BookingAuditRepository;
 import com.homefix.booking.domain.BookingStateMachine;
 import com.homefix.booking.domain.BookingStatus;
 import com.homefix.booking.support.Bookings;
+import com.homefix.booking.support.FakeTenantDirectory;
 import com.homefix.booking.support.InMemoryBookingRepository;
 import com.homefix.shared.outbox.OutboxEventEntity;
 import com.homefix.shared.outbox.OutboxEventPublisher;
@@ -50,8 +53,8 @@ class ProviderAssignmentServiceTest {
 
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-10-03T10:15:00Z"), ZoneOffset.UTC);
 
-    private final ObjectMapper objectMapper = Jackson2ObjectMapperBuilder.json()
-            .featuresToDisable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+    private final ObjectMapper objectMapper = JsonMapper.builder()
+            .disable(DateTimeFeature.WRITE_DATES_AS_TIMESTAMPS)
             .build();
 
     /** Mirror of chat-service {@code com.homefix.chat.consumer.LifecycleEventPayload}. */
@@ -64,6 +67,7 @@ class ProviderAssignmentServiceTest {
     private OutboxEventRepository outboxRepository;
     private BookingAuditRepository auditRepository;
     private final List<BookingAudit> audits = new ArrayList<>();
+    private FakeTenantDirectory directory;
     private ProviderAssignmentService service;
 
     private final UUID providerId = UUID.randomUUID();
@@ -82,7 +86,10 @@ class ProviderAssignmentServiceTest {
         OutboxEventPublisher outbox = new OutboxEventPublisher(outboxRepository, objectMapper);
         BookingTransitionService transitions = new BookingTransitionService(new BookingStateMachine(),
                 auditRepository, new BookingLifecycleEventPublisher(outbox, CLOCK), CLOCK);
-        service = new ProviderAssignmentService(repository, transitions, outbox, CLOCK);
+        directory = new FakeTenantDirectory();
+        directory.addMember(tenantId, providerId, true);
+        service = new ProviderAssignmentService(repository, transitions, outbox, directory,
+                TransactionOperations.withoutTransaction(), CLOCK);
     }
 
     /** A booking a Tenant assigned to {@link #providerId} after the fallback. */
@@ -118,9 +125,9 @@ class ProviderAssignmentServiceTest {
         JsonNode json = objectMapper.readTree(row.getPayload());
         // Exactly the fields of dispatch-engine's ProviderAcceptedEvent, nothing more.
         List<String> fields = new ArrayList<>();
-        json.fieldNames().forEachRemaining(fields::add);
+        json.propertyNames().iterator().forEachRemaining(fields::add);
         assertThat(fields).containsExactly("bookingId", "customerId", "providerId", "bookingCreatedAt", "acceptedAt");
-        assertThat(json.get("acceptedAt").asText()).isEqualTo("2026-10-03T10:15:00Z");
+        assertThat(json.get("acceptedAt").asString()).isEqualTo("2026-10-03T10:15:00Z");
 
         ChatLifecycleEventPayload chat = objectMapper.readValue(row.getPayload(), ChatLifecycleEventPayload.class);
         assertThat(chat.bookingId()).isEqualTo(booking.getId());
@@ -166,6 +173,34 @@ class ProviderAssignmentServiceTest {
         assertThatThrownBy(() -> service.accept(booking.getReference(), providerId))
                 .isInstanceOf(InvalidTransitionException.class);
         verify(outboxRepository, never()).save(any());
+    }
+
+    @Test
+    void aProviderRemovedFromTheTenantAfterTheAssignmentCannotAccept() {
+        Booking booking = tenantAssigned();
+        directory.memberships.clear(); // the Tenant removed them after assigning the job
+
+        assertThatThrownBy(() -> service.accept(booking.getReference(), providerId))
+                .isInstanceOf(BookingException.class)
+                .satisfies(e -> assertThat(((BookingException) e).getErrorCode()).isEqualTo("PROVIDER_NOT_ASSIGNABLE"))
+                .satisfies(e -> assertThat(((BookingException) e).getStatus()).isEqualTo(HttpStatus.CONFLICT));
+        assertThat(booking.getStatus()).isEqualTo(BookingStatus.PROVIDER_ASSIGNED);
+        assertThat(audits).isEmpty();
+        verify(outboxRepository, never()).save(any());
+
+        // They can still hand it back, so the Tenant can assign someone else.
+        assertThat(service.decline(booking.getReference(), providerId).getStatus())
+                .isEqualTo(BookingStatus.AWAITING_ASSIGNMENT);
+    }
+
+    @Test
+    void anAcceptanceWhoseMembershipCannotBeCheckedIsRefusedWith503() {
+        Booking booking = tenantAssigned();
+        directory.down = true;
+
+        assertThatThrownBy(() -> service.accept(booking.getReference(), providerId))
+                .satisfies(e -> assertThat(((BookingException) e).getStatus()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE));
+        assertThat(booking.getStatus()).isEqualTo(BookingStatus.PROVIDER_ASSIGNED);
     }
 
     // ----- decline (Requirement MT-6.2, MT-7.2) --------------------------------

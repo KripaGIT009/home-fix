@@ -64,18 +64,22 @@ pods — see [iOS](#ios-macos-only).
 
 | Tool | Version | Needed for |
 | --- | --- | --- |
-| Node.js | **≥ 20.0.0** | Capacitor 7 CLI (pinned across all four `@capacitor/*` packages) |
-| JDK | **21** (17 also works) | Android Gradle Plugin 8.7.2 / Gradle 8.11.1 (`android/build.gradle`, `gradle-wrapper.properties`); Gradle 8.11 cannot run on newer JDKs such as 25 |
+| Node.js | **≥ 24** | The apps' build (Vite 8, React Router 8) and the Capacitor 8 CLI (needs ≥ 22); all `@capacitor/*` packages are on 8.x together |
+| JDK | **21** (17 also works) | Android Gradle Plugin 8.13.0 / Gradle 8.14.3 (`android/build.gradle`, `gradle-wrapper.properties`); keep `JAVA_HOME` on 21 for Gradle even though the backend builds on 25 |
 | Android Studio | Ladybug (2024.2) or newer | Android SDK, emulator, `adb` (bundles a suitable JDK) |
-| Android SDK | Platform 35 (compileSdk/targetSdk 35, minSdk 23) | Android builds |
-| macOS + Xcode | **Xcode 16** or newer (iOS deployment target 14.0) | iOS builds; an iOS app cannot be built or signed on Windows or Linux |
+| Android SDK | Platform 36 (compileSdk/targetSdk 36, minSdk 24) | Android builds |
+| macOS + Xcode | the Xcode that [Capacitor 8 requires](https://capacitorjs.com/docs/updating/8-0) (iOS deployment target 15.0) | iOS builds; an iOS app cannot be built or signed on Windows or Linux |
 | CocoaPods | 1.13 or newer (`sudo gem install cocoapods` or `brew install cocoapods`) | Installs the Capacitor pods into `ios/App` |
 | Apple account | Free Apple ID for your own device; paid Apple Developer Program for TestFlight / App Store | iOS signing |
 
-Capacitor is pinned to **7.x** deliberately: Capacitor 8 requires Node ≥ 22, and
-this project was set up on Node 20. Once everyone is on Node 22+, bumping all
-four `@capacitor/*` packages to 8 together is the upgrade — keep the CLI and the
-runtime on the same major or `cap sync` and the native project will disagree.
+Capacitor is on **8.x** (`npx cap migrate`, 2026-10-11): Android moved to
+compileSdk 36 / minSdk 24, AGP 8.13 and Gradle 8.14.3; iOS moved to a 15.0
+deployment target and adopts UIScene (`SceneDelegate.swift`, registered in the
+Xcode target and `Info.plist`). Keep the CLI and every `@capacitor/*` runtime
+package on the same major, or `cap sync` and the native project will disagree.
+The migration's Gradle-wrapper step cannot run on Windows; the wrapper's
+`distributionUrl` was set to 8.14.3 by hand, and the first `./gradlew` run
+downloads it.
 
 Android Studio must know where the SDK is. If `cap run android` cannot find it,
 set `ANDROID_HOME` (Windows: `%LOCALAPPDATA%\Android\Sdk`) and add
@@ -426,7 +430,7 @@ iOS:
   | Android SDK | none: `ANDROID_HOME` unset, no `%LOCALAPPDATA%\Android\Sdk`, no Android Studio | `./gradlew assembleDebug` cannot run |
   | JDK | 25.0.2 is the only one installed | too new for Gradle 8.11.1; install JDK 17 or 21 (or use Android Studio's bundled JBR) and point `JAVA_HOME` at it |
   | macOS / Xcode / CocoaPods | none (Windows 11) | no `pod install`, no iOS build, signing or simulator; iOS needs a Mac |
-  | Node.js | 20.15.0 | fine for Capacitor 7 |
+  | Node.js | 20.15.0 (24.21.0 used for the 2026-10-11 upgrade) | Capacitor 8 needs ≥ 22; use Node 24 |
 
   Verified there: `npm run build` and `npx cap sync` for both platforms (the
   bundle is in `android/app/src/main/assets/public` and `ios/App/App/public`,

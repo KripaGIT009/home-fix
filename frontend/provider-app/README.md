@@ -8,23 +8,29 @@ stack and conventions as the Customer App (Requirement 28.2). It runs in the
 browser and ships as Android and iOS apps from the same code (Capacitor, see
 [Mobile builds](#mobile-builds-android-and-ios)).
 
-Sign-in is mobile number + OTP (Google when configured). Registration through
-this app always asks for the `SERVICE_PROVIDER` role; the Booking, Dispatch and
+Sign-in is mobile number + OTP, or email + password (Google when configured).
+A new provider can sign up with an email, verified by an emailed code, and reset a
+forgotten password; the profile adds an email and password to an OTP account.
+After uploading documents, a provider is approved in two admin steps (documents,
+then a background check recorded by an admin) before taking jobs. Registration
+through this app always asks for the `SERVICE_PROVIDER` role; the Booking, Dispatch and
 Provider services decide what each call may do. Providers who belong to an
 agency (a Tenant) use the same app; they additionally see jobs the agency
 assigns them.
 
 ## Stack
 
-- **React 18 + TypeScript** (strict mode)
-- **Vite** build/dev server
+- **Node.js 24** to build (`"engines": {"node": ">=24"}`; the Docker build uses `node:24-alpine`)
+- **React 19 + TypeScript 6** (strict mode)
+- **Vite 8** build/dev server (Rolldown)
 - **TanStack Query** — server state (polling drives offers, assignments and payment status)
 - **Zustand** — client state (auth)
-- **React Router** — navigation
-- **Material UI** — components/theme (mobile-first)
-- **React Hook Form + Zod** — forms and validation
+- **React Router 8** — navigation
+- **Material UI 9** — components/theme (mobile-first)
+- **React Hook Form + Zod 4** — forms and validation
 - **Axios** — HTTP client with JWT Bearer + `X-Correlation-ID` injection
-- **Capacitor 7** — Android and iOS shells; `@capacitor/geolocation` for native location
+- **ESLint 10** (flat config, `eslint.config.js`) with typescript-eslint, eslint-react, react-hooks 7 and jsx-a11y-x
+- **Capacitor 8** — Android and iOS shells; `@capacitor/geolocation` for native location
 
 ## Screens
 
@@ -34,7 +40,9 @@ navigation carries Dashboard, Earnings, Verification and Profile.
 | Route | Screen | What it does |
 | --- | --- | --- |
 | `/` | Splash | Brand splash, then Dashboard or Login |
-| `/login` | Login | Mobile number + OTP with resend countdown and lockout handling; Google sign-in when `VITE_GOOGLE_CLIENT_ID` is set |
+| `/login` | Login | **Mobile** tab (OTP with resend countdown and lockout handling) and **Email** tab (email + password, "Forgot password?", "Create account"); Google sign-in when `VITE_GOOGLE_CLIENT_ID` is set |
+| `/signup`, `/signup/verify` | Email sign-up | Name, email, mobile and password, then the 6-digit code emailed to the address (locally in `docker/dev-mail/dev-mail.log`) |
+| `/forgot-password` | Password reset | Email, then the emailed code and a new password; every session of the account ends |
 | `/dashboard` | Dashboard | Open job offers (polled every 5 s, shown only while there are any), jobs the agency assigned and awaiting your answer (listed first), the earnings summary (wallet balance, today's net, jobs done) and active jobs with status indicators (refreshed every 15 s). After you decline an assigned job it says where the job went |
 | `/jobs/:bookingId/request` | Job request | An incoming offer with a live countdown; **Accept** or **Decline**. Accept is disabled at zero and the server refuses a late accept with `OFFER_EXPIRED` |
 | `/jobs/:bookingId` | Job details | Customer name, address, description, customer media and a navigation deep link; routes on to the active-job or completion flow. An agency-assigned job shows who assigned it with **Accept** / **Decline** |
@@ -151,7 +159,7 @@ docker compose -f docker-compose.core.yml up -d --build --wait
 
 The `provider-app` image (`Dockerfile`) builds the bundle with the default
 `/api` base and serves it from nginx on <http://localhost:5174>. `nginx.conf`
-proxies `/api/auth/*` to `auth-service:8081` and everything else under `/api/`
+proxies `/api/auth/*` to `identity-app:8081` (auth-service) and everything else under `/api/`
 to `api-gateway:8080`. The build copies the app directory, so keep native
 (absolute) URLs out of a local `.env` when building the image.
 

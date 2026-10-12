@@ -1,6 +1,7 @@
 package com.homefix.pricing.service;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -25,6 +26,13 @@ public class PricingConfigService {
 
     /** Row cap on the Admin listing (the portal's DataTable takes a bare, unpaged array). */
     public static final int ADMIN_LIST_LIMIT = 200;
+
+    /**
+     * Upper sanity bound on a stored emergency or surge multiplier. The engine still clamps to its
+     * configured maxima ({@code homefix.pricing.max-*-multiplier}) at quote time; this bound only
+     * catches values that cannot be meant as a multiplier, such as a percent typed as {@code 150}.
+     */
+    public static final BigDecimal MAX_MULTIPLIER = BigDecimal.TEN;
 
     private final PricingConfigCachePort cache;
     private final PricingParametersPort parametersPort;
@@ -54,8 +62,12 @@ public class PricingConfigService {
      * Admin update of pricing parameters. Persists through the source of truth and invalidates
      * the cache entry so the change is reflected on the next read within the TTL bound
      * (Requirement 6.11).
+     *
+     * @throws PricingException 400 {@code VALIDATION_ERROR} when a value is out of range (see
+     *                          {@link #requireInRange})
      */
     public PricingParameters updateParameters(PricingParameters parameters) {
+        requireInRange(parameters);
         PricingParameters saved = parametersPort.save(parameters);
         cache.invalidate(saved.subcategoryId());
         return saved;
@@ -93,6 +105,59 @@ public class PricingConfigService {
                     "basePrice is required to configure subcategory " + changes.subcategoryId());
         }
         return updateParameters(merged);
+    }
+
+    /**
+     * Range-checks a parameter set before it is stored. Both Admin entry points end here, the
+     * portal's merge after merging, so a stored value is never one the engine would have to
+     * silently correct at quote time:
+     * <ul>
+     *   <li>every amount (base price, per-km rate, travel cap, surcharges, override floor and
+     *       ceiling) is zero or more;</li>
+     *   <li>the platform-fee and tax rates are fractions between 0 and 1 (0% to 100%);</li>
+     *   <li>the emergency and surge multipliers are between 1 (no uplift) and
+     *       {@link #MAX_MULTIPLIER};</li>
+     *   <li>the override floor is not above the override ceiling.</li>
+     * </ul>
+     * Absent (null) values are not checked here: they mean "not configured" to the engine.
+     *
+     * @throws PricingException 400 {@code VALIDATION_ERROR} listing every violation in its details
+     */
+    static void requireInRange(PricingParameters p) {
+        List<String> errors = new ArrayList<>();
+        nonNegative(errors, "basePrice", p.basePrice());
+        nonNegative(errors, "perKmRate", p.perKmRate());
+        nonNegative(errors, "maxTravelCharge", p.maxTravelCharge());
+        nonNegative(errors, "nightSurcharge", p.nightSurcharge());
+        nonNegative(errors, "weekendSurcharge", p.weekendSurcharge());
+        nonNegative(errors, "overrideFloor", p.overrideFloor());
+        nonNegative(errors, "overrideCeiling", p.overrideCeiling());
+        between(errors, "platformFeeRate", p.platformFeeRate(), BigDecimal.ZERO, BigDecimal.ONE);
+        between(errors, "taxRate", p.taxRate(), BigDecimal.ZERO, BigDecimal.ONE);
+        between(errors, "emergencyMultiplier", p.emergencyMultiplier(), BigDecimal.ONE, MAX_MULTIPLIER);
+        between(errors, "surgeMultiplier", p.surgeMultiplier(), BigDecimal.ONE, MAX_MULTIPLIER);
+        if (p.overrideFloor() != null && p.overrideCeiling() != null
+                && p.overrideFloor().compareTo(p.overrideCeiling()) > 0) {
+            errors.add("overrideFloor must not be greater than overrideCeiling");
+        }
+        if (!errors.isEmpty()) {
+            throw PricingException.validation(
+                    "Pricing parameters for subcategory " + p.subcategoryId() + " are out of range",
+                    errors);
+        }
+    }
+
+    private static void nonNegative(List<String> errors, String field, BigDecimal value) {
+        if (value != null && value.signum() < 0) {
+            errors.add(field + " must not be negative");
+        }
+    }
+
+    private static void between(List<String> errors, String field, BigDecimal value,
+                                BigDecimal min, BigDecimal max) {
+        if (value != null && (value.compareTo(min) < 0 || value.compareTo(max) > 0)) {
+            errors.add(field + " must be between " + min.toPlainString() + " and " + max.toPlainString());
+        }
     }
 
     private static PricingParameters merge(PricingParameters stored, PricingParameters changes) {

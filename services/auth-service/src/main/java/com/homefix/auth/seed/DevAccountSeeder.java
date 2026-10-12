@@ -1,5 +1,6 @@
 package com.homefix.auth.seed;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Set;
 
@@ -58,6 +59,9 @@ public class DevAccountSeeder implements ApplicationRunner {
             // The demo Tenant's administrator (Requirement MT-15.5). The Tenant membership itself
             // lives in provider-service; docker/seed-tenants.sql links this account by mobile.
             new SeedAccount("tenantadmin", "+919000000031", Set.of(Role.TENANT_ADMIN)));
+
+    /** Domain of the seeded accounts' email addresses; never a real mail domain. */
+    static final String EMAIL_DOMAIN = "homefix.local";
 
     private final UserAccountRepository userRepository;
     private final PasswordEncoder passwordEncoder;
@@ -118,13 +122,33 @@ public class DevAccountSeeder implements ApplicationRunner {
             UserAccount account = UserAccount.createVerified(seed.mobileNumber(), first);
             seed.roles().forEach(account::addRole);
             account.setCredentials(seed.username(), passwordHash);
+            seedEmail(account, seed);
             userRepository.save(account);
             return true;
         }
 
         seed.roles().forEach(existing::addRole);
         existing.setCredentials(seed.username(), passwordHash);
+        seedEmail(existing, seed);
         userRepository.save(existing);
         return false;
+    }
+
+    /**
+     * Gives the account the verified address {@code <username>@homefix.local}, so email sign-in works
+     * in every app with the seeded password. An account that already has an email keeps it, and an
+     * address another account holds is left alone.
+     */
+    private void seedEmail(UserAccount account, SeedAccount seed) {
+        if (account.getEmail() != null) {
+            return;
+        }
+        String email = seed.username() + "@" + EMAIL_DOMAIN;
+        boolean takenElsewhere = userRepository.findByEmail(email)
+                .filter(other -> !other.getId().equals(account.getId()))
+                .isPresent();
+        if (!takenElsewhere) {
+            account.setVerifiedEmail(email, Instant.now());
+        }
     }
 }

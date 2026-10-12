@@ -1,4 +1,4 @@
-import { Link as RouterLink, useNavigate, useParams } from 'react-router-dom';
+import { Link as RouterLink, useNavigate, useParams } from 'react-router';
 import { Box, Button, ButtonBase, Stack, Typography } from '@mui/material';
 import ScheduleRoundedIcon from '@mui/icons-material/ScheduleRounded';
 import BoltRoundedIcon from '@mui/icons-material/BoltRounded';
@@ -48,13 +48,20 @@ export function SubcategoryScreen() {
     <AppShell
       title={categoryName}
       subtitle={summary}
-      onBack={() => navigate('/home')}
+      onBack={() => void navigate('/home')}
       width="full"
       plain
       footer
     >
       {/* The mobile bar only fits the title, so the description leads the page. */}
-      <Typography variant="body2" color="text.secondary" sx={{ display: { md: 'none' }, mb: 2.5 }}>
+      <Typography
+        variant="body2"
+        sx={{
+          color: 'text.secondary',
+          display: { md: 'none' },
+          mb: 2.5,
+        }}
+      >
         {summary}
         {services.length > 0 ? ` · ${pluralise(services.length, 'service')}` : ''}
       </Typography>
@@ -165,8 +172,14 @@ function ServiceIndex({
       <Typography
         component="h2"
         variant="caption"
-        color="text.secondary"
-        sx={{ display: 'block', px: 1, pt: 0.5, pb: 1, fontWeight: 600 }}
+        sx={{
+          color: 'text.secondary',
+          display: 'block',
+          px: 1,
+          pt: 0.5,
+          pb: 1,
+          fontWeight: 600,
+        }}
       >
         Select a service
       </Typography>
@@ -192,7 +205,13 @@ function ServiceIndex({
               plate={0.66}
               sx={{ width: 48, flexShrink: 0, borderRadius: `${radius.sm}px` }}
             />
-            <Typography variant="body2" fontWeight={500} sx={{ lineHeight: 1.35 }}>
+            <Typography
+              variant="body2"
+              sx={{
+                fontWeight: 500,
+                lineHeight: 1.35,
+              }}
+            >
               {subcategory.name}
             </Typography>
           </ButtonBase>
@@ -238,8 +257,11 @@ function ServiceRow({
         <Stack
           direction="row"
           spacing={0.5}
-          alignItems="center"
-          sx={{ mt: 0.75, color: 'text.secondary' }}
+          sx={{
+            alignItems: 'center',
+            mt: 0.75,
+            color: 'text.secondary',
+          }}
         >
           <ScheduleRoundedIcon sx={{ fontSize: 15 }} aria-hidden />
           <Typography variant="body2">
@@ -258,11 +280,19 @@ function ServiceRow({
           <Stack
             direction="row"
             spacing={0.5}
-            alignItems="center"
-            sx={{ mt: 1.25, color: brand.warmDark }}
+            sx={{
+              alignItems: 'center',
+              mt: 1.25,
+              color: brand.warmDark,
+            }}
           >
             <BoltRoundedIcon sx={{ fontSize: 15, color: brand.warm }} aria-hidden />
-            <Typography variant="caption" fontWeight={600}>
+            <Typography
+              variant="caption"
+              sx={{
+                fontWeight: 600,
+              }}
+            >
               Emergency booking, 24×7
             </Typography>
           </Stack>
@@ -270,8 +300,12 @@ function ServiceRow({
         {subcategory.description ? (
           <Typography
             variant="body2"
-            color="text.secondary"
-            sx={{ mt: 1.25, pt: 1.25, borderTop: `1px dashed ${brand.line}` }}
+            sx={{
+              color: 'text.secondary',
+              mt: 1.25,
+              pt: 1.25,
+              borderTop: `1px dashed ${brand.line}`,
+            }}
           >
             {subcategory.description}
           </Typography>

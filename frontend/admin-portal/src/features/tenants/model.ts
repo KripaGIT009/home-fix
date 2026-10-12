@@ -8,7 +8,21 @@ import { toE164 } from '@features/auth/phone';
  * design.md specifies them.
  */
 
-export type TenantStatus = 'ACTIVE' | 'SUSPENDED';
+/**
+ * ACTIVE and SUSPENDED are set by platform admins. PENDING_APPROVAL and
+ * REJECTED are an agency's own application (email-auth Requirement 5.2): such a
+ * Tenant covers no bookings and has no administrator until it is approved.
+ */
+export type TenantStatus = 'ACTIVE' | 'SUSPENDED' | 'PENDING_APPROVAL' | 'REJECTED';
+
+/**
+ * True for an application not yet made a working Tenant. Its status changes
+ * only by approval or rejection, never through the edit form, which the
+ * service refuses with 409 APPLICATION_NOT_DECIDED.
+ */
+export function isApplication(status: TenantStatus): boolean {
+  return status === 'PENDING_APPROVAL' || status === 'REJECTED';
+}
 
 /** The provider-service `Tenant` payload (`/admin/tenants`, `/tenant/me`). */
 export interface Tenant {
@@ -25,6 +39,10 @@ export interface Tenant {
   adminCount: number;
   createdAt: string;
   updatedAt: string;
+  /** The account that applied, for a self-registered agency (email-auth Requirement 5.2). */
+  applicantUserId?: string | null;
+  /** Why the application was rejected; shown to the applicant (Requirement 5.4). */
+  rejectionReason?: string | null;
 }
 
 /**
@@ -116,6 +134,37 @@ const TENANT_ERROR_MESSAGES: Record<string, string> = {
     'This request was just assigned by another partner or has moved on, so it has left the queue.',
   PROVIDER_NOT_ASSIGNABLE:
     'That provider can no longer be assigned (their verification changed or they left the team). Choose someone else.',
+  APPLICATION_NOT_DECIDED:
+    'This agency is still an application. Approve it from Pending applications first; approval makes the applicant its administrator.',
+  APPLICATION_NOT_PENDING:
+    'This application has already been decided by someone else. Refresh the list.',
+  APPLICATION_EXISTS:
+    'This account already has an agency application or runs an agency, so it cannot apply again.',
+  REASON_REQUIRED: 'Give a reason; it is emailed to the applicant.',
+};
+
+/**
+ * The form field each Tenant validation code names (design.md "Error Codes"),
+ * so the server's verdict lands under the field it is about.
+ */
+export const TENANT_FIELD_ERRORS: Record<
+  string,
+  | 'name'
+  | 'contactPhone'
+  | 'contactEmail'
+  | 'baseLatitude'
+  | 'baseLongitude'
+  | 'serviceRadiusKm'
+  | 'categoryIds'
+> = {
+  INVALID_TENANT_NAME: 'name',
+  INVALID_CONTACT_PHONE: 'contactPhone',
+  INVALID_CONTACT_EMAIL: 'contactEmail',
+  INVALID_LATITUDE: 'baseLatitude',
+  INVALID_LONGITUDE: 'baseLongitude',
+  INVALID_SERVICE_RADIUS: 'serviceRadiusKm',
+  CATEGORIES_REQUIRED: 'categoryIds',
+  INACTIVE_CATEGORY: 'categoryIds',
 };
 
 /** The message to show for a failed Tenant call. */

@@ -110,14 +110,23 @@ export const theme = createTheme({
     MuiButton: {
       defaultProps: { disableElevation: true },
       styleOverrides: {
-        root: { textTransform: 'none', fontWeight: 600, borderRadius: 12 },
+        root: {
+          textTransform: 'none',
+          fontWeight: 600,
+          borderRadius: 12,
+          variants: [
+            {
+              props: { variant: 'contained', color: 'primary' },
+              style: {
+                boxShadow: '0 6px 16px -8px rgba(37, 99, 235, 0.9)',
+                '&:hover': { boxShadow: '0 8px 20px -8px rgba(37, 99, 235, 0.9)' },
+              },
+            },
+          ],
+        },
         sizeLarge: { padding: '12px 20px', fontSize: '0.9375rem' },
         sizeMedium: { padding: '9px 16px' },
         sizeSmall: { padding: '5px 12px' },
-        containedPrimary: {
-          boxShadow: '0 6px 16px -8px rgba(37, 99, 235, 0.9)',
-          '&:hover': { boxShadow: '0 8px 20px -8px rgba(37, 99, 235, 0.9)' },
-        },
         outlined: { borderColor: brand.line, '&:hover': { borderColor: '#CBD5E1' } },
       },
     },
@@ -185,9 +194,21 @@ export const theme = createTheme({
 
     MuiAlert: {
       styleOverrides: {
-        root: { borderRadius: 12, fontSize: '0.875rem', alignItems: 'center' },
-        standardError: { backgroundColor: brand.redSoft },
-        standardSuccess: { backgroundColor: brand.greenSoft },
+        root: {
+          borderRadius: 12,
+          fontSize: '0.875rem',
+          alignItems: 'center',
+          variants: [
+            {
+              props: { variant: 'standard', severity: 'error' },
+              style: { backgroundColor: brand.redSoft },
+            },
+            {
+              props: { variant: 'standard', severity: 'success' },
+              style: { backgroundColor: brand.greenSoft },
+            },
+          ],
+        },
       },
     },
 

@@ -36,9 +36,20 @@ export function AssignableChip({ provider }: { provider: TeamProvider }) {
 export function RatingCell({ rating }: { rating: number | null | undefined }) {
   if (rating == null) return <>—</>;
   return (
-    <Stack direction="row" spacing={0.5} alignItems="center">
+    <Stack
+      direction="row"
+      spacing={0.5}
+      sx={{
+        alignItems: 'center',
+      }}
+    >
       <Rating value={rating} precision={0.1} size="small" readOnly />
-      <Typography variant="caption" color="text.secondary">
+      <Typography
+        variant="caption"
+        sx={{
+          color: 'text.secondary',
+        }}
+      >
         {rating.toFixed(1)}
       </Typography>
     </Stack>

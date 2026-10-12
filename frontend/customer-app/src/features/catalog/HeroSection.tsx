@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Link as RouterLink } from 'react-router-dom';
+import { Link as RouterLink } from 'react-router';
 import { Box, ButtonBase, Typography } from '@mui/material';
 import BoltRoundedIcon from '@mui/icons-material/BoltRounded';
 import { formatPrice } from '@lib/format';

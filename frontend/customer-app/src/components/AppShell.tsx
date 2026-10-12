@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Link as RouterLink, useLocation, useNavigate } from 'react-router-dom';
+import { Link as RouterLink, useLocation, useNavigate } from 'react-router';
 import {
   AppBar,
   Avatar,
@@ -27,9 +27,13 @@ import PlaceRoundedIcon from '@mui/icons-material/PlaceRounded';
 import ArrowBackRoundedIcon from '@mui/icons-material/ArrowBackRounded';
 import { useAuthStore } from '@stores/authStore';
 import { env } from '@config/env';
+import { useClientSetting } from '@config/clientConfig';
 import { brand, layout, radius, visuallyHidden } from '@lib/theme';
 import { BrandLogo } from './BrandLogo';
 import { ServiceSearchField } from './ServiceSearchField';
+
+/** For the footer's copyright line; read once, not on every render. */
+const COPYRIGHT_YEAR = new Date().getFullYear();
 
 /** Primary destinations. Four, so each stays thumb-reachable on the tab bar. */
 const NAV_ITEMS = [
@@ -112,7 +116,10 @@ export function AppShell({
   const activeValue =
     NAV_ITEMS.find((item) => location.pathname.startsWith(item.value))?.value ?? false;
   const showTabBar = !hideBottomNav && !isDesktop;
-  const goBack = () => (onBack ? onBack() : navigate(-1));
+  const goBack = () => {
+    if (onBack) onBack();
+    else void navigate(-1);
+  };
 
   const initials = (user?.displayName ?? '')
     .split(' ')
@@ -123,7 +130,11 @@ export function AppShell({
 
   const avatar = (
     <Tooltip title={user?.displayName ?? 'Your profile'}>
-      <IconButton onClick={() => navigate('/profile')} aria-label="Open profile" sx={{ p: 0.5 }}>
+      <IconButton
+        onClick={() => void navigate('/profile')}
+        aria-label="Open profile"
+        sx={{ p: 0.5 }}
+      >
         <Avatar
           {...(user?.photoUrl ? { src: user.photoUrl } : {})}
           sx={{
@@ -145,8 +156,8 @@ export function AppShell({
     <Stack
       direction="row"
       spacing={0.5}
-      alignItems="center"
       sx={{
+        alignItems: 'center',
         px: 1.25,
         height: isDesktop ? 44 : 34,
         borderRadius: `${radius.sm}px`,
@@ -158,7 +169,14 @@ export function AppShell({
       }}
     >
       <PlaceRoundedIcon sx={{ fontSize: 18, color: 'primary.main' }} aria-hidden />
-      <Typography variant="body2" fontWeight={500} noWrap sx={{ maxWidth: 140 }}>
+      <Typography
+        variant="body2"
+        noWrap
+        sx={{
+          fontWeight: 500,
+          maxWidth: 140,
+        }}
+      >
         <Box component="span" sx={visuallyHidden}>
           Service area:{' '}
         </Box>
@@ -261,7 +279,14 @@ export function AppShell({
           }}
         >
           {title && isDesktop ? (
-            <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 4 }}>
+            <Stack
+              direction="row"
+              spacing={2}
+              sx={{
+                alignItems: 'center',
+                mb: 4,
+              }}
+            >
               <IconButton
                 onClick={goBack}
                 aria-label="Go back"
@@ -274,7 +299,13 @@ export function AppShell({
                   {title}
                 </Typography>
                 {subtitle ? (
-                  <Typography variant="body2" color="text.secondary" component="div">
+                  <Typography
+                    variant="body2"
+                    component="div"
+                    sx={{
+                      color: 'text.secondary',
+                    }}
+                  >
                     {subtitle}
                   </Typography>
                 ) : null}
@@ -308,7 +339,7 @@ export function AppShell({
           <BottomNavigation
             showLabels
             value={activeValue}
-            onChange={(_event, value: string) => navigate(value)}
+            onChange={(_event, value: string) => void navigate(value)}
           >
             {NAV_ITEMS.map((item) => (
               <BottomNavigationAction
@@ -334,6 +365,7 @@ const CUSTOMER_LINKS = [
 
 /** Site footer for top-level pages, on a light grey band. */
 function SiteFooter() {
+  const providerAppUrl = useClientSetting('homefix.apps.provider-app-url', env.providerAppUrl);
   const heading = (text: string) => (
     <Typography
       component="h2"
@@ -360,7 +392,13 @@ function SiteFooter() {
         >
           <Box sx={{ gridColumn: { xs: '1 / -1', md: 'auto' }, maxWidth: 360 }}>
             <BrandLogo size={30} />
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5 }}>
+            <Typography
+              variant="body2"
+              sx={{
+                color: 'text.secondary',
+                mt: 1.5,
+              }}
+            >
               Background-checked professionals for repairs, cleaning and installations, with the
               price shown before you book.
             </Typography>
@@ -373,9 +411,13 @@ function SiteFooter() {
                 component={RouterLink}
                 to={link.to}
                 underline="hover"
-                color="text.secondary"
                 variant="body2"
-                sx={linkSx}
+                sx={[
+                  {
+                    color: 'text.secondary',
+                  },
+                  ...(Array.isArray(linkSx) ? linkSx : [linkSx]),
+                ]}
               >
                 {link.label}
               </Link>
@@ -384,19 +426,28 @@ function SiteFooter() {
           <Box component="nav" aria-label="For professionals">
             {heading('For professionals')}
             <Link
-              href={env.providerAppUrl}
+              href={providerAppUrl}
               underline="hover"
-              color="text.secondary"
               variant="body2"
-              sx={linkSx}
+              sx={[
+                {
+                  color: 'text.secondary',
+                },
+                ...(Array.isArray(linkSx) ? linkSx : [linkSx]),
+              ]}
             >
               Join as a professional
             </Link>
           </Box>
         </Box>
         <Box sx={{ mt: { xs: 4, md: 5 }, pt: 2.5, borderTop: `1px solid ${brand.lineStrong}` }}>
-          <Typography variant="caption" color="text.secondary">
-            © {new Date().getFullYear()} HomeFix. Verified Help. Anytime. Anywhere.
+          <Typography
+            variant="caption"
+            sx={{
+              color: 'text.secondary',
+            }}
+          >
+            © {COPYRIGHT_YEAR} HomeFix. Verified Help. Anytime. Anywhere.
           </Typography>
         </Box>
       </Container>

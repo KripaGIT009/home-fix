@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import {
   Accordion,
   AccordionDetails,
@@ -60,7 +60,13 @@ export function HelpScreen() {
           <Typography variant="h2" component="h1">
             How can we help?
           </Typography>
-          <Typography variant="body1" color="text.secondary" sx={{ mt: 0.5 }}>
+          <Typography
+            variant="body1"
+            sx={{
+              color: 'text.secondary',
+              mt: 0.5,
+            }}
+          >
             Answers to the questions we get most, and a quick way to the right place.
           </Typography>
         </Box>
@@ -76,14 +82,14 @@ export function HelpScreen() {
             icon={<ReceiptLongRoundedIcon />}
             title="A problem with a booking"
             caption="Open the job to track it, chat or get the invoice"
-            onClick={() => navigate('/history')}
+            onClick={() => void navigate('/history')}
           />
           <ActionCard
             icon={<BoltRoundedIcon />}
             title="Emergency help"
             caption="Book a 24×7 service and get a pro now"
             tone="danger"
-            onClick={() => navigate('/home')}
+            onClick={() => void navigate('/home')}
           />
         </Box>
 
@@ -95,12 +101,22 @@ export function HelpScreen() {
             {FAQS.map((faq) => (
               <Accordion key={faq.question} disableGutters elevation={0}>
                 <AccordionSummary expandIcon={<ExpandMoreRoundedIcon />} sx={{ px: 2.5, py: 0.5 }}>
-                  <Typography variant="subtitle1" fontWeight={700}>
+                  <Typography
+                    variant="subtitle1"
+                    sx={{
+                      fontWeight: 700,
+                    }}
+                  >
                     {faq.question}
                   </Typography>
                 </AccordionSummary>
                 <AccordionDetails sx={{ px: 2.5, pb: 2.5, pt: 0 }}>
-                  <Typography variant="body1" color="text.secondary">
+                  <Typography
+                    variant="body1"
+                    sx={{
+                      color: 'text.secondary',
+                    }}
+                  >
                     {faq.answer}
                   </Typography>
                 </AccordionDetails>
@@ -135,7 +151,13 @@ function ActionCard({
         sx={{ height: '100%', p: { xs: 2, md: 2.5 } }}
         aria-label={title}
       >
-        <Stack direction="row" spacing={2} alignItems="center">
+        <Stack
+          direction="row"
+          spacing={2}
+          sx={{
+            alignItems: 'center',
+          }}
+        >
           <IconTile
             size={48}
             bg={isDanger ? brand.redSoft : brand.accentSoft}
@@ -144,10 +166,21 @@ function ActionCard({
             {icon}
           </IconTile>
           <Box sx={{ flexGrow: 1 }}>
-            <Typography variant="subtitle1" fontWeight={700} lineHeight={1.3}>
+            <Typography
+              variant="subtitle1"
+              sx={{
+                fontWeight: 700,
+                lineHeight: 1.3,
+              }}
+            >
               {title}
             </Typography>
-            <Typography variant="body2" color="text.secondary">
+            <Typography
+              variant="body2"
+              sx={{
+                color: 'text.secondary',
+              }}
+            >
               {caption}
             </Typography>
           </Box>

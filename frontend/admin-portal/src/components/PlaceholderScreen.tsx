@@ -16,9 +16,13 @@ export function PlaceholderScreen({ title, description }: PlaceholderScreenProps
     <Container maxWidth="sm">
       <Stack
         spacing={1.5}
-        alignItems="center"
-        textAlign="center"
-        sx={{ minHeight: '60dvh', justifyContent: 'center', py: 6 }}
+        sx={{
+          alignItems: 'center',
+          textAlign: 'center',
+          minHeight: '60dvh',
+          justifyContent: 'center',
+          py: 6,
+        }}
       >
         <Box
           sx={{
@@ -37,7 +41,13 @@ export function PlaceholderScreen({ title, description }: PlaceholderScreenProps
           {title}
         </Typography>
         {description ? (
-          <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 320 }}>
+          <Typography
+            variant="body2"
+            sx={{
+              color: 'text.secondary',
+              maxWidth: 320,
+            }}
+          >
             {description}
           </Typography>
         ) : null}

@@ -17,7 +17,8 @@ import java.util.List;
 import java.util.UUID;
 import java.util.function.Consumer;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 import com.homefix.notification.config.NotificationProperties;
 import com.homefix.notification.contact.RecipientResolver;
 import com.homefix.notification.delivery.NotificationDeliveryService;
@@ -76,7 +77,7 @@ class LifecycleEventConsumerTest {
 
     private LifecycleEventConsumer consumerWith(FakeContactDirectory contacts) {
         return new LifecycleEventConsumer(processedEventRepository, dlqForwarder,
-                new NotificationEventMapper(new ObjectMapper()),
+                new NotificationEventMapper(new JsonMapper()),
                 new RecipientResolver(new RecipientPolicy(), contacts),
                 deliveryService, new NotificationProperties());
     }

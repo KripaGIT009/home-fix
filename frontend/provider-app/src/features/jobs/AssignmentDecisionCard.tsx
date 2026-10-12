@@ -58,13 +58,29 @@ export function AssignmentDecisionCard({
     <Card variant="outlined" sx={{ borderColor: 'warning.main' }}>
       <CardContent>
         <Stack spacing={1.5}>
-          <Stack direction="row" spacing={1} alignItems="center">
+          <Stack
+            direction="row"
+            spacing={1}
+            sx={{
+              alignItems: 'center',
+            }}
+          >
             <ApartmentRoundedIcon color="warning" aria-hidden />
-            <Typography variant="subtitle1" fontWeight={700}>
+            <Typography
+              variant="subtitle1"
+              sx={{
+                fontWeight: 700,
+              }}
+            >
               Assigned by {agency}
             </Typography>
           </Stack>
-          <Typography variant="body2" color="text.secondary">
+          <Typography
+            variant="body2"
+            sx={{
+              color: 'text.secondary',
+            }}
+          >
             {agency} has assigned this job to you. Accept it to go ahead, or decline so they can
             assign someone else. The customer is waiting for your answer.
           </Typography>

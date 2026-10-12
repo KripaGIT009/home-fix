@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import {
@@ -117,7 +117,7 @@ export function PriceEstimateScreen() {
           // Dispatch offers the job to providers itself, emergency or scheduled;
           // there is no step where the customer picks one. Tracking shows the
           // search until a provider accepts.
-          navigate(`/bookings/${response.bookingId}/track`, { replace: true });
+          void navigate(`/bookings/${response.bookingId}/track`, { replace: true });
         },
       },
     );
@@ -125,7 +125,7 @@ export function PriceEstimateScreen() {
 
   const handleCancel = useCallback(() => {
     clearDraft();
-    navigate(`/book/${subcategoryId}`);
+    void navigate(`/book/${subcategoryId}`);
   }, [clearDraft, navigate, subcategoryId]);
 
   // No draft in memory (e.g. after a hard refresh) — send the user back.
@@ -137,7 +137,7 @@ export function PriceEstimateScreen() {
           title="Your request has expired"
           description="We don't keep unfinished requests. Start again — it only takes a minute."
           action={
-            <Button variant="contained" size="large" onClick={() => navigate('/home')}>
+            <Button variant="contained" size="large" onClick={() => void navigate('/home')}>
               Back to home
             </Button>
           }
@@ -196,7 +196,14 @@ export function PriceEstimateScreen() {
           <Stack spacing={2} sx={{ gridArea: 'details', minWidth: 0 }}>
             <Card>
               <CardContent>
-                <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mb: 2.5 }}>
+                <Stack
+                  direction="row"
+                  spacing={1.5}
+                  sx={{
+                    alignItems: 'center',
+                    mb: 2.5,
+                  }}
+                >
                   <IconTile size={36}>
                     <ReceiptLongRoundedIcon />
                   </IconTile>
@@ -216,7 +223,13 @@ export function PriceEstimateScreen() {
                   onSubmit={(event) => void handleSubmit(handleApplyCoupon)(event)}
                   noValidate
                 >
-                  <Stack direction="row" spacing={1.5} alignItems="center">
+                  <Stack
+                    direction="row"
+                    spacing={1.5}
+                    sx={{
+                      alignItems: 'center',
+                    }}
+                  >
                     <IconTile size={36} bg={brand.warmSoft} color={brand.warmDark}>
                       <LocalOfferRoundedIcon />
                     </IconTile>
@@ -224,17 +237,25 @@ export function PriceEstimateScreen() {
                       Have a coupon?
                     </Typography>
                   </Stack>
-                  <Stack direction="row" spacing={1} alignItems="flex-start">
+                  <Stack
+                    direction="row"
+                    spacing={1}
+                    sx={{
+                      alignItems: 'flex-start',
+                    }}
+                  >
                     <TextField
                       placeholder="Enter code"
                       fullWidth
                       error={Boolean(errors.code) || Boolean(couponError)}
                       helperText={errors.code?.message ?? couponError ?? ' '}
-                      inputProps={{
-                        'aria-label': 'Coupon code',
-                        style: { textTransform: 'uppercase' },
-                      }}
                       {...register('code')}
+                      slotProps={{
+                        htmlInput: {
+                          'aria-label': 'Coupon code',
+                          style: { textTransform: 'uppercase' },
+                        },
+                      }}
                     />
                     <Button
                       type="submit"
@@ -270,9 +291,20 @@ export function PriceEstimateScreen() {
           <Card sx={{ gridArea: 'actions', position: { md: 'sticky' }, top: { md: 96 } }}>
             <CardContent>
               <Stack spacing={1.5}>
-                <Stack direction="row" spacing={1} alignItems="flex-start">
+                <Stack
+                  direction="row"
+                  spacing={1}
+                  sx={{
+                    alignItems: 'flex-start',
+                  }}
+                >
                   <ShieldRoundedIcon sx={{ fontSize: 20, color: 'success.main', mt: 0.25 }} />
-                  <Typography variant="body2" color="text.secondary">
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      color: 'text.secondary',
+                    }}
+                  >
                     The final price may change with the actual work and parts. You approve any
                     change before it is charged.
                   </Typography>
@@ -355,7 +387,13 @@ function TotalCard({
       }}
     >
       <CardContent>
-        <Stack direction="row" alignItems="flex-start" justifyContent="space-between">
+        <Stack
+          direction="row"
+          sx={{
+            alignItems: 'flex-start',
+            justifyContent: 'space-between',
+          }}
+        >
           <Typography variant="body2" sx={{ opacity: 0.85 }}>
             Estimated total
           </Typography>
@@ -363,8 +401,8 @@ function TotalCard({
             <Stack
               direction="row"
               spacing={0.5}
-              alignItems="center"
               sx={{
+                alignItems: 'center',
                 px: 1,
                 py: 0.25,
                 borderRadius: `${radius.pill}px`,
@@ -372,7 +410,12 @@ function TotalCard({
               }}
             >
               <BoltRoundedIcon sx={{ fontSize: 15 }} aria-hidden />
-              <Typography variant="caption" fontWeight={700}>
+              <Typography
+                variant="caption"
+                sx={{
+                  fontWeight: 700,
+                }}
+              >
                 Emergency
               </Typography>
             </Stack>
@@ -398,14 +441,28 @@ function EstimateBreakdown({ estimate }: { estimate: PriceEstimate }) {
   return (
     <Stack spacing={1.25}>
       {estimate.lineItems.map((item) => (
-        <Stack key={item.key} direction="row" justifyContent="space-between" spacing={2}>
-          <Typography variant="body1" color="text.secondary">
+        <Stack
+          key={item.key}
+          direction="row"
+          spacing={2}
+          sx={{
+            justifyContent: 'space-between',
+          }}
+        >
+          <Typography
+            variant="body1"
+            sx={{
+              color: 'text.secondary',
+            }}
+          >
             {item.label}
           </Typography>
           <Typography
             variant="body1"
-            fontWeight={600}
             color={item.amount < 0 ? 'success.main' : 'text.primary'}
+            sx={{
+              fontWeight: 600,
+            }}
           >
             {item.amount < 0 ? '−' : ''}
             {formatCurrency(Math.abs(item.amount), estimate.currency)}
@@ -413,7 +470,13 @@ function EstimateBreakdown({ estimate }: { estimate: PriceEstimate }) {
         </Stack>
       ))}
       <Divider sx={{ my: 0.5 }} />
-      <Stack direction="row" justifyContent="space-between" alignItems="center">
+      <Stack
+        direction="row"
+        sx={{
+          justifyContent: 'space-between',
+          alignItems: 'center',
+        }}
+      >
         <Typography variant="h6" component="p">
           Total
         </Typography>

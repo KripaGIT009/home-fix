@@ -7,11 +7,11 @@ import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
-
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
 import com.homefix.provider.crypto.EncryptionException;
 import com.homefix.provider.crypto.KmsEncryptionPort;
 
@@ -36,7 +36,7 @@ public class BankAccountCodec {
 
     private static final Logger log = LoggerFactory.getLogger(BankAccountCodec.class);
 
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final ObjectMapper JSON = new JsonMapper();
     private static final int FORMAT_VERSION = 1;
 
     /** Four bullets (U+2022) standing in for the hidden digits. */
@@ -59,7 +59,7 @@ public class BankAccountCodec {
                 .put("ifsc", details.ifsc());
         try {
             return kms.encrypt(JSON.writeValueAsString(node));
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             throw new EncryptionException("Failed to serialise bank account", e);
         }
     }
@@ -112,14 +112,14 @@ public class BankAccountCodec {
                 return null;
             }
             return new BankAccountDetails(text(node, "holder"), text(node, "number"), text(node, "ifsc"));
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             return null;
         }
     }
 
     private static String text(JsonNode node, String field) {
         JsonNode value = node.get(field);
-        return value == null || value.isNull() ? null : value.asText();
+        return value == null || value.isNull() ? null : value.asString();
     }
 
     /** Masks a legacy bare reference: its IFSC prefix when it has one, and its last four digits. */

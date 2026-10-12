@@ -66,7 +66,7 @@ public class AdminUserService {
     }
 
     /**
-     * Accounts whose mobile number or console username contains {@code search}
+     * Accounts whose mobile number, console username, email or display name contains {@code search}
      * (case-insensitive), or every account when it is blank; newest first, at most
      * {@link #ADMIN_LIST_LIMIT}.
      */
@@ -92,12 +92,16 @@ public class AdminUserService {
      *
      * @return the updated account
      * @throws UserNotFoundException 404 if no account has that id
-     * @throws AdminUserException    403 for a self-change, or an ADMIN acting on an administrator
+     * @throws AdminUserException    403 for a self-change, or an ADMIN acting on an administrator;
+     *                               400 {@code STATUS_NOT_SETTABLE} for PENDING_VERIFICATION
      */
     public UserAccount changeStatus(UUID userId, AccountStatus newStatus, StaffActor actor) {
         UserAccount account = userRepository.findById(userId)
                 .orElseThrow(() -> new UserNotFoundException(userId));
 
+        if (newStatus == AccountStatus.PENDING_VERIFICATION) {
+            throw AdminUserException.statusNotSettable();
+        }
         if (account.getId().equals(actor.userId())) {
             throw AdminUserException.selfStatusChange();
         }

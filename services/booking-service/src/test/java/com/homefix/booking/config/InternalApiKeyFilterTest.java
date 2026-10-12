@@ -86,6 +86,26 @@ class InternalApiKeyFilterTest {
         }
     }
 
+    /**
+     * Spring MVC decodes {@code /%69nternal/...} to {@code /internal/...} before routing it, so the
+     * filter must guard the encoded spelling too; matching the raw URI let a customer token through.
+     */
+    @Test
+    void encodedOrUpperCaseInternalPath_isStillGuarded() throws Exception {
+        for (String uri : new String[] {
+                "/%69nternal/bookings/b2e7d410-3a65-4c98-9f12-7d4e6a8b0c55/provider-accepted",
+                "/INTERNAL/bookings/b2e7d410-3a65-4c98-9f12-7d4e6a8b0c55/provider-accepted"}) {
+            MockHttpServletRequest request = new MockHttpServletRequest("POST", uri);
+            MockHttpServletResponse response = new MockHttpServletResponse();
+            MockFilterChain chain = new MockFilterChain();
+
+            new InternalApiKeyFilter(KEY).doFilter(request, response, chain);
+
+            assertThat(response.getStatus()).as(uri).isEqualTo(401);
+            assertThat(chain.getRequest()).as(uri).isNull();
+        }
+    }
+
     @Test
     void nonInternalPaths_areLeftAlone() throws Exception {
         MockHttpServletRequest request = new MockHttpServletRequest("POST", "/bookings");

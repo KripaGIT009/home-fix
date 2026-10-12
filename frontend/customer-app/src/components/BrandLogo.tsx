@@ -21,7 +21,14 @@ export function BrandLogo({ size = 40, inverted = false, markOnly = false, sx }:
   const wordmarkSize = size * 0.6;
 
   return (
-    <Stack direction="row" spacing={1.25} alignItems="center" {...(sx ? { sx } : {})}>
+    <Stack
+      direction="row"
+      spacing={1.25}
+      {...(sx ? { sx } : {})}
+      sx={{
+        alignItems: 'center',
+      }}
+    >
       <Box
         aria-hidden
         sx={{

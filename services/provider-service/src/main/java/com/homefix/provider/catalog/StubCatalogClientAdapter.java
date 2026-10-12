@@ -12,7 +12,8 @@ import org.springframework.stereotype.Component;
  * wired in. It treats every well-formed category/subcategory reference as active so the
  * provider flow is functional in local/dev environments.
  *
- * <p>Selecting {@code homefix.catalog.client=http} (a future adapter) or supplying a mock in
+ * <p>Selecting {@code homefix.catalog.client=http} swaps in {@link HttpCatalogClientAdapter}, which
+ * checks against the Service Catalog (an inactive category is then refused); supplying a mock in
  * tests replaces this behaviour without touching the profile business logic.
  */
 @Component

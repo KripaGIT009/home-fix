@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import {
   Avatar,
   Box,
@@ -24,12 +24,14 @@ import { IconTile } from '@components/StateViews';
 import { formatMobileNumber } from '@features/auth/phone';
 import { useAuthStore } from '@stores/authStore';
 import { brand, radius } from '@lib/theme';
+import { EmailPasswordSection } from './EmailPasswordSection';
 
 /**
  * Profile screen: the account home base reached from the main navigation.
  *
- * It shows the signed-in identity and routes to the areas of the app that are
- * about the customer rather than a single booking. Entries whose screens are
+ * It shows the signed-in identity, the email and password the customer can
+ * sign in with (email-auth Requirement 4.3), and routes to the areas of the
+ * app that are about the customer rather than a single booking. Entries whose screens are
  * not part of the Customer app's screen set (Requirement 28.7) are not shown
  * at all, so nothing here leads to a dead end.
  */
@@ -50,7 +52,7 @@ export function ProfileScreen() {
     // state. Navigation is not awaited so the button never appears to hang on a
     // slow network; the revoke completes in the background either way.
     void logout();
-    navigate('/login', { replace: true });
+    void navigate('/login', { replace: true });
   };
 
   return (
@@ -66,7 +68,14 @@ export function ProfileScreen() {
             borderColor: brand.accentLine,
           }}
         >
-          <Stack direction="row" spacing={2.5} alignItems="center" sx={{ p: { xs: 2.5, md: 3.5 } }}>
+          <Stack
+            direction="row"
+            spacing={2.5}
+            sx={{
+              alignItems: 'center',
+              p: { xs: 2.5, md: 3.5 },
+            }}
+          >
             <Avatar
               {...(user?.photoUrl ? { src: user.photoUrl } : {})}
               sx={{ width: 72, height: 72, bgcolor: 'primary.main', fontSize: 26 }}
@@ -77,19 +86,30 @@ export function ProfileScreen() {
               <Typography variant="h4" component="h2" noWrap>
                 {user?.displayName || 'Your account'}
               </Typography>
-              <Typography variant="body1" color="text.secondary">
+              <Typography
+                variant="body1"
+                sx={{
+                  color: 'text.secondary',
+                }}
+              >
                 {user?.mobileNumber ? formatMobileNumber(user.mobileNumber) : 'Signed in'}
               </Typography>
               {user?.email ? (
-                <Typography variant="body2" color="text.secondary" noWrap>
+                <Typography
+                  variant="body2"
+                  noWrap
+                  sx={{
+                    color: 'text.secondary',
+                  }}
+                >
                   {user.email}
                 </Typography>
               ) : null}
               <Stack
                 direction="row"
                 spacing={0.5}
-                alignItems="center"
                 sx={{
+                  alignItems: 'center',
                   display: 'inline-flex',
                   mt: 1,
                   px: 1,
@@ -100,7 +120,12 @@ export function ProfileScreen() {
                 }}
               >
                 <VerifiedUserRoundedIcon sx={{ fontSize: 14 }} aria-hidden />
-                <Typography variant="caption" fontWeight={700}>
+                <Typography
+                  variant="caption"
+                  sx={{
+                    fontWeight: 700,
+                  }}
+                >
                   Number verified
                 </Typography>
               </Stack>
@@ -108,27 +133,29 @@ export function ProfileScreen() {
           </Stack>
         </Card>
 
+        <EmailPasswordSection />
+
         <Card>
           <List disablePadding aria-label="Account">
             <ProfileLink
               icon={<ReceiptLongRoundedIcon />}
               label="Your bookings"
               caption="Past and active jobs, with invoices"
-              onClick={() => navigate('/history')}
+              onClick={() => void navigate('/history')}
             />
             <Divider component="li" />
             <ProfileLink
               icon={<HomeWorkRoundedIcon />}
               label="Service addresses"
               caption="Saved with each booking you make"
-              onClick={() => navigate('/history')}
+              onClick={() => void navigate('/history')}
             />
             <Divider component="li" />
             <ProfileLink
               icon={<SupportAgentRoundedIcon />}
               label="Help & support"
               caption="Answers, and a way through to our team"
-              onClick={() => navigate('/help')}
+              onClick={() => void navigate('/help')}
             />
           </List>
         </Card>
@@ -145,7 +172,13 @@ export function ProfileScreen() {
           Log out
         </Button>
 
-        <Typography variant="caption" color="text.secondary" align="center">
+        <Typography
+          variant="caption"
+          align="center"
+          sx={{
+            color: 'text.secondary',
+          }}
+        >
           HomeFix — Verified Help. Anytime. Anywhere.
         </Typography>
       </Stack>
@@ -171,8 +204,10 @@ function ProfileLink({
       <ListItemText
         primary={label}
         secondary={caption}
-        primaryTypographyProps={{ variant: 'subtitle1', fontWeight: 700 }}
-        secondaryTypographyProps={{ variant: 'body2' }}
+        slotProps={{
+          primary: { variant: 'subtitle1', sx: { fontWeight: 700 } },
+          secondary: { variant: 'body2' },
+        }}
       />
       <ChevronRightRoundedIcon sx={{ color: 'text.disabled' }} />
     </ListItemButton>

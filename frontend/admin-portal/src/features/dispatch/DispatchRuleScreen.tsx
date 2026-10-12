@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import {
   Alert,
   Box,
@@ -68,16 +68,23 @@ function DispatchForm({ initial }: { initial: DispatchConfig }) {
   const [radiusIncrementKm, setRadiusIncrementKm] = useState(initial.radiusIncrementKm);
   const [maxExpansionCycles, setMaxExpansionCycles] = useState(initial.maxExpansionCycles);
   const [offerTimeoutSeconds, setOfferTimeoutSeconds] = useState(initial.offerTimeoutSeconds);
+  const [offerBatchSize, setOfferBatchSize] = useState(initial.offerBatchSize);
+  const [agencyFallbackMinutes, setAgencyFallbackMinutes] = useState(initial.agencyFallbackMinutes);
   const [saved, setSaved] = useState(false);
 
-  // Keep local state in sync if the query refetches new server values.
-  useEffect(() => {
+  // Keep local state in sync if the query refetches new server values (reset during render,
+  // not in an effect, so the form never paints the stale values first).
+  const [syncedFrom, setSyncedFrom] = useState(initial);
+  if (syncedFrom !== initial) {
+    setSyncedFrom(initial);
     setWeights(initial.weights);
     setInitialRadiusKm(initial.initialRadiusKm);
     setRadiusIncrementKm(initial.radiusIncrementKm);
     setMaxExpansionCycles(initial.maxExpansionCycles);
     setOfferTimeoutSeconds(initial.offerTimeoutSeconds);
-  }, [initial]);
+    setOfferBatchSize(initial.offerBatchSize);
+    setAgencyFallbackMinutes(initial.agencyFallbackMinutes);
+  }
 
   const validation = validateWeights(weights);
 
@@ -99,6 +106,8 @@ function DispatchForm({ initial }: { initial: DispatchConfig }) {
         radiusIncrementKm,
         maxExpansionCycles,
         offerTimeoutSeconds,
+        offerBatchSize,
+        agencyFallbackMinutes,
       },
       { onSuccess: () => setSaved(true) },
     );
@@ -118,14 +127,20 @@ function DispatchForm({ initial }: { initial: DispatchConfig }) {
           <Typography variant="h6" gutterBottom>
             Matching weights
           </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          <Typography
+            variant="body2"
+            sx={{
+              color: 'text.secondary',
+              mb: 2,
+            }}
+          >
             Each weight must be between 0.0 and 1.0, and all five must sum to exactly 1.0.
           </Typography>
           <Grid container spacing={2}>
             {WEIGHT_FIELDS.map((field) => {
               const invalid = validation.outOfRange.includes(field.key);
               return (
-                <Grid item xs={12} sm={6} md={4} key={field.key}>
+                <Grid key={field.key} size={{ xs: 12, sm: 6, md: 4 }}>
                   <TextField
                     label={field.label}
                     type="number"
@@ -133,7 +148,9 @@ function DispatchForm({ initial }: { initial: DispatchConfig }) {
                     value={weights[field.key]}
                     onChange={(event) => handleWeightChange(field.key, event.target.value)}
                     error={invalid}
-                    inputProps={{ min: 0, max: 1, step: 0.05, readOnly: !canEdit }}
+                    slotProps={{
+                      htmlInput: { min: 0, max: 1, step: 0.05, readOnly: !canEdit },
+                    }}
                   />
                 </Grid>
               );
@@ -142,8 +159,19 @@ function DispatchForm({ initial }: { initial: DispatchConfig }) {
 
           <Divider sx={{ my: 2 }} />
 
-          <Stack direction="row" alignItems="center" spacing={2}>
-            <Typography variant="subtitle1" fontWeight={700}>
+          <Stack
+            direction="row"
+            spacing={2}
+            sx={{
+              alignItems: 'center',
+            }}
+          >
+            <Typography
+              variant="subtitle1"
+              sx={{
+                fontWeight: 700,
+              }}
+            >
               Sum: {validation.sum.toFixed(2)}
             </Typography>
             {validation.isValid ? (
@@ -165,47 +193,82 @@ function DispatchForm({ initial }: { initial: DispatchConfig }) {
             Search radius &amp; timeouts
           </Typography>
           <Grid container spacing={2}>
-            <Grid item xs={12} sm={6} md={3}>
+            <Grid size={{ xs: 12, sm: 6, md: 3 }}>
               <TextField
                 label="Initial radius"
                 type="number"
                 fullWidth
                 value={initialRadiusKm}
                 onChange={(event) => setInitialRadiusKm(Number(event.target.value))}
-                InputProps={{ endAdornment: <InputAdornment position="end">km</InputAdornment> }}
-                inputProps={{ min: 1, readOnly: !canEdit }}
+                slotProps={{
+                  input: { endAdornment: <InputAdornment position="end">km</InputAdornment> },
+                  htmlInput: { min: 1, readOnly: !canEdit },
+                }}
               />
             </Grid>
-            <Grid item xs={12} sm={6} md={3}>
+            <Grid size={{ xs: 12, sm: 6, md: 3 }}>
               <TextField
                 label="Radius increment"
                 type="number"
                 fullWidth
                 value={radiusIncrementKm}
                 onChange={(event) => setRadiusIncrementKm(Number(event.target.value))}
-                InputProps={{ endAdornment: <InputAdornment position="end">km</InputAdornment> }}
-                inputProps={{ min: 1, readOnly: !canEdit }}
+                slotProps={{
+                  input: { endAdornment: <InputAdornment position="end">km</InputAdornment> },
+                  htmlInput: { min: 1, readOnly: !canEdit },
+                }}
               />
             </Grid>
-            <Grid item xs={12} sm={6} md={3}>
+            <Grid size={{ xs: 12, sm: 6, md: 3 }}>
               <TextField
                 label="Max expansion cycles"
                 type="number"
                 fullWidth
                 value={maxExpansionCycles}
                 onChange={(event) => setMaxExpansionCycles(Number(event.target.value))}
-                inputProps={{ min: 0, max: 10, readOnly: !canEdit }}
+                slotProps={{
+                  htmlInput: { min: 0, max: 10, readOnly: !canEdit },
+                }}
               />
             </Grid>
-            <Grid item xs={12} sm={6} md={3}>
+            <Grid size={{ xs: 12, sm: 6, md: 3 }}>
               <TextField
                 label="Offer timeout"
                 type="number"
                 fullWidth
                 value={offerTimeoutSeconds}
                 onChange={(event) => setOfferTimeoutSeconds(Number(event.target.value))}
-                InputProps={{ endAdornment: <InputAdornment position="end">s</InputAdornment> }}
-                inputProps={{ min: 5, readOnly: !canEdit }}
+                slotProps={{
+                  input: { endAdornment: <InputAdornment position="end">s</InputAdornment> },
+                  htmlInput: { min: 5, readOnly: !canEdit },
+                }}
+              />
+            </Grid>
+            <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+              <TextField
+                label="Providers per wave"
+                type="number"
+                fullWidth
+                value={offerBatchSize}
+                onChange={(event) => setOfferBatchSize(Number(event.target.value))}
+                helperText="Offered at once; the first to accept wins"
+                slotProps={{
+                  htmlInput: { min: 1, max: 10, readOnly: !canEdit },
+                }}
+              />
+            </Grid>
+            <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+              <TextField
+                label="Hand to agencies after"
+                type="number"
+                fullWidth
+                value={agencyFallbackMinutes}
+                onChange={(event) => setAgencyFallbackMinutes(Number(event.target.value))}
+                helperText="Unaccepted bookings go to partner agencies"
+                slotProps={{
+                  input: { endAdornment: <InputAdornment position="end">min</InputAdornment> },
+                  htmlInput: { min: 1, max: 30, readOnly: !canEdit },
+                }}
               />
             </Grid>
           </Grid>
@@ -224,7 +287,14 @@ function DispatchForm({ initial }: { initial: DispatchConfig }) {
           {update.isPending ? 'Saving…' : 'Save configuration'}
         </Button>
         {canEdit ? null : (
-          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+          <Typography
+            variant="caption"
+            sx={{
+              color: 'text.secondary',
+              display: 'block',
+              mt: 1,
+            }}
+          >
             Saving is restricted to Super Admins.
           </Typography>
         )}

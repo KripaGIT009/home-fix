@@ -27,7 +27,7 @@ public class PasswordLoginException extends RuntimeException {
     /** Unknown username, no password set on the account, or a wrong password. */
     public static PasswordLoginException invalidCredentials() {
         return new PasswordLoginException(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS",
-                "Incorrect username or password.", null);
+                "Incorrect email, username or password.", null);
     }
 
     /** Too many consecutive failures: the username is locked for the configured window. */
