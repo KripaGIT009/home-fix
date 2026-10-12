@@ -8,7 +8,9 @@ COPY target/jobs-app-1.0.0-SNAPSHOT.jar app.jar
 RUN java -Djarmode=tools -jar app.jar extract --destination extracted
 
 FROM eclipse-temurin:25-jre-alpine
-RUN addgroup -S app && adduser -S -G app app
+# UID 999 as in the earlier Debian-based images, so files the services already wrote to
+# bind mounts (docker/dev-sms, docker/dev-mail) stay writable.
+RUN addgroup -S app && adduser -S -u 999 -G app app
 WORKDIR /app
 COPY --from=extract /build/extracted/lib/ lib/
 COPY --from=extract /build/extracted/app.jar app.jar
