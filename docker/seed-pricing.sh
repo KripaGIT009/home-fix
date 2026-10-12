@@ -12,26 +12,28 @@
 # OTP number instead, which authorization hardening turned into a silent 403 on
 # every subcategory.
 #
-# The work runs INSIDE the compose network via `docker exec`. Docker Desktop's
-# Windows port-forwarding proxy resets connections intermittently under this
-# stack's load, which made a host-side seed fail most of the time;
-# container-to-container calls over the compose network are reliable.
+# The work runs INSIDE the compose network, in a throwaway curl container. Docker
+# Desktop's Windows port-forwarding proxy resets connections intermittently under
+# this stack's load, which made a host-side seed fail most of the time;
+# container-to-container calls over the compose network are reliable. (It used to
+# `docker exec` into the gateway, but the Java 25 images are Alpine-based and
+# BusyBox wget cannot send a PUT.)
 #
 # Usage:  bash docker/seed-pricing.sh
 set -uo pipefail
 
-# Any container on the compose network with wget and a shell; the gateway will do.
-RUNNER="${RUNNER:-homefix-core-api-gateway-1}"
+NETWORK="${NETWORK:-homefix-core_default}"
+CURL_IMAGE="${CURL_IMAGE:-curlimages/curl:8.22.0}"
 ADMIN_USER="${ADMIN_USER:-admin}"
 # Matches DEV_SEED_PASSWORD, which auth-service seeds the admin account with.
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-${DEV_SEED_PASSWORD:-HomeFix@2026}}"
 
 echo "==> Signing in as ${ADMIN_USER}"
 echo "==> Seeding from inside the compose network"
-docker exec "${RUNNER}" sh -c "
+MSYS_NO_PATHCONV=1 docker run --rm --network "${NETWORK}" --entrypoint sh "${CURL_IMAGE}" -c "
 set -u
-TOKEN=\$(wget -q -O - --post-data='{\"username\":\"${ADMIN_USER}\",\"password\":\"${ADMIN_PASSWORD}\"}' \
-  --header='Content-Type: application/json' \
+TOKEN=\$(curl -sf -H 'Content-Type: application/json' \
+  -d '{\"username\":\"${ADMIN_USER}\",\"password\":\"${ADMIN_PASSWORD}\"}' \
   http://identity-app:8081/auth/login/password \
   | sed 's/.*\"accessToken\":\"\([^\"]*\)\".*/\1/')
 case \"\$TOKEN\" in
@@ -39,7 +41,7 @@ case \"\$TOKEN\" in
   *) echo 'Admin sign-in failed. Is DEV_SEED_ENABLED=true and DEV_SEED_PASSWORD correct?' >&2; exit 1 ;;
 esac
 
-wget -q -O - http://jobs-app:8085/catalog/categories \
+curl -sf http://jobs-app:8085/catalog/categories \
   | tr '{' '\n' | grep '\"basePrice\"' \
   | sed 's/.*\"id\":\"\([^\"]*\)\".*\"basePrice\":\([0-9.]*\).*/\1 \2/' > /tmp/subs.txt
 
@@ -47,9 +49,9 @@ ok=0
 failed=0
 while read id base; do
   [ -z \"\$id\" ] && continue
-  if wget -q -O /dev/null --method=PUT \
-    --body-data=\"{\\\"subcategoryId\\\":\\\"\$id\\\",\\\"basePrice\\\":\$base,\\\"perKmRate\\\":8.00,\\\"maxTravelCharge\\\":150.00,\\\"nightSurcharge\\\":100.00,\\\"weekendSurcharge\\\":75.00,\\\"platformFeeRate\\\":0.10,\\\"taxRate\\\":0.18,\\\"emergencyMultiplier\\\":2.0,\\\"surgeMultiplier\\\":1.0,\\\"overrideFloor\\\":1.00,\\\"overrideCeiling\\\":99999.00}\" \
-    --header=\"Authorization: Bearer \$TOKEN\" --header='Content-Type: application/json' \
+  if curl -sf -o /dev/null -X PUT \
+    -d \"{\\\"subcategoryId\\\":\\\"\$id\\\",\\\"basePrice\\\":\$base,\\\"perKmRate\\\":8.00,\\\"maxTravelCharge\\\":150.00,\\\"nightSurcharge\\\":100.00,\\\"weekendSurcharge\\\":75.00,\\\"platformFeeRate\\\":0.10,\\\"taxRate\\\":0.18,\\\"emergencyMultiplier\\\":2.0,\\\"surgeMultiplier\\\":1.0,\\\"overrideFloor\\\":1.00,\\\"overrideCeiling\\\":99999.00}\" \
+    -H \"Authorization: Bearer \$TOKEN\" -H 'Content-Type: application/json' \
     http://jobs-app:8086/admin/pricing/parameters; then
     ok=\$((ok + 1))
     echo \"    \$id  base=\$base\"
