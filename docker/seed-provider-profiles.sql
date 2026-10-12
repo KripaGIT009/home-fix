@@ -54,12 +54,16 @@ WHERE p.id = u.id
   AND p.base_latitude IS NULL AND p.base_longitude IS NULL;
 
 -- Skill tags are the ones docker/seed-catalog.sql puts on service_subcategory_skill_tag, which is
--- what the Dispatch Engine matches against.
+-- what the Dispatch Engine matches against. Both providers do plumbing and electrical work, so a
+-- booking for either is offered to both at once (the first to accept wins, the other offer is
+-- withdrawn); cleaning is Provider Two's alone, so a cleaning booking reaches one provider.
 INSERT INTO provider.provider_skill_tag (provider_id, tag)
 SELECT u.id, s.tag
 FROM (VALUES
         ('+919000000011', 'plumbing'),
         ('+919000000011', 'electrical'),
+        ('+919000000012', 'plumbing'),
+        ('+919000000012', 'electrical'),
         ('+919000000012', 'cleaning')
      ) AS s(mobile, tag)
 JOIN auth.user_account u ON u.mobile_number = s.mobile
@@ -75,6 +79,8 @@ SELECT gen_random_uuid(), u.id, c.id
 FROM (VALUES
         ('+919000000011', 'Plumbing'),
         ('+919000000011', 'Electrical'),
+        ('+919000000012', 'Plumbing'),
+        ('+919000000012', 'Electrical'),
         ('+919000000012', 'Cleaning')
      ) AS s(mobile, category)
 JOIN auth.user_account u ON u.mobile_number = s.mobile
