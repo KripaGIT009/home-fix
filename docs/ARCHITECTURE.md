@@ -74,45 +74,39 @@ graph TB
 
     GW["api-gateway :8080<br/>Spring Cloud Gateway"]
 
-    subgraph Identity
+    subgraph IDA["identity-app (one JVM)"]
         AUTH["auth-service :8081"]
-    end
-
-    subgraph Profiles
         CUST["customer-service :8082"]
         PROV["provider-service :8083"]
         VER["verification-service :8094"]
     end
 
-    subgraph Booking["Booking domain"]
+    subgraph JOBA["jobs-app (one JVM)"]
         BOOK["booking-service :8084"]
         CAT["catalog-service :8085"]
         PRICE["pricing-engine :8086"]
         DISP["dispatch-engine :8087"]
         LOC["location-service :8092"]
-    end
-
-    subgraph Money
-        PAYS["payment-service :8088"]
-        INV["invoice-service :8089"]
+        CHAT["chat-service :8093"]
         PROMO["promotion-service :8098"]
     end
 
-    subgraph Engagement
-        NOTIF["notification-service :8090"]
-        CHAT["chat-service :8093"]
-        CMPL["complaint-service :8091"]
-        RATE["rating-review-service :8097"]
+    subgraph MONA["money-app (one JVM)"]
+        PAYS["payment-service :8088"]
+        INV["invoice-service :8089"]
     end
 
-    subgraph Ops
+    subgraph ENGA["engagement-app (one JVM)"]
+        NOTIF["notification-service :8090"]
+        CMPL["complaint-service :8091"]
         ADM["admin-service :8095"]
         REP["reporting-service :8096"]
+        RATE["rating-review-service :8097"]
         OUT["outbox-processor :8099"]
     end
 
     subgraph Data
-        PG[("PostgreSQL<br/>17 service schemas<br/>+ shared outbox")]
+        PG[("PostgreSQL<br/>17 service schemas<br/>+ outbox + config")]
         RD[("Redis")]
         KF[["Kafka"]]
     end
@@ -151,6 +145,8 @@ graph TB
     OUT --> KF
     KF --> BOOK & DISP & NOTIF & INV & CHAT & RATE & LOC
 ```
+
+Each box is a service with its own port, `<service>.yml`, database schema and Spring context; the four `*-app` groups are the deployables that host them, one JVM each (`apps/`, `shared/homefix-service-host`). Calls between two services in the same deployable still go over HTTP to the other service's port, exactly as when they ran apart, so any service can be moved to a deployable of its own without code changes.
 
 Arrows labelled `internal` go to `/internal/**` endpoints. They carry no end-user token: the caller acts on its own behalf and presents the shared service credential (`X-Internal-Api-Key`) instead. Dispatch's calls to notification-service (`/internal/notifications/**`) still answer 4xx because notification-service has no such endpoints; they are best effort, and providers see offers by polling dispatch instead.
 
@@ -229,10 +225,10 @@ flowchart TD
     VAL --> CREATE["Create booking"]
 
     CREATE --> SEARCH["SEARCHING_PROVIDER<br/>dispatch-engine matches"]
-    SEARCH --> OFFER{"Provider accepts<br/>within window?"}
+    SEARCH --> OFFER{"One of the providers offered<br/>(3 at once) accepts?"}
     OFFER -->|"no, all exhausted"| EXPAND["Expand radius"]
     EXPAND --> OFFER
-    OFFER -->|"no candidates left"| TENANT{"A Tenant covers<br/>area + category?"}
+    OFFER -->|"none in 5 min,<br/>or no candidates left"| TENANT{"A Tenant covers<br/>area + category?"}
     TENANT -->|no| FAILED["SEARCHING_FAILED"]
     TENANT -->|yes| QUEUE["AWAITING_ASSIGNMENT<br/>Tenant admin assigns"]
     QUEUE -->|"deadline, 60 min"| FAILED
@@ -259,6 +255,28 @@ flowchart TD
     REFUND -->|yes| END
     REFUND -->|no| ESC["Escalate / dispute"]
 ```
+
+### 4.1 The booking, step by step
+
+The same journey as numbered steps, with the call or event behind each. Every app call goes through nginx and the API gateway, except `/api/auth/**`, which nginx sends straight to auth-service.
+
+| # | Step | Who | Call or event | Booking status after |
+|---|------|-----|---------------|----------------------|
+| 1 | Sign in with an OTP or email and password | Customer | `POST /auth/register/otp`, then `/auth/register/verify` (or `/auth/login/password`) | — |
+| 2 | Browse the catalog and get an itemised price | Customer | `GET /catalog/categories`, `POST /pricing/estimate` (coupon validated by promotion-service) | — |
+| 3 | Book, then confirm the estimate | Customer | `POST /bookings`, `POST /bookings/{ref}/confirmation`; `BookingCreated` written to the outbox | `SEARCHING_PROVIDER` |
+| 4 | Find eligible providers and score them | dispatch-engine | consumes `BookingCreated`; `GET /internal/providers/eligible` (skill tag, radius, APPROVED, available) | `SEARCHING_PROVIDER` |
+| 5 | Offer the job to the best three at once, 60 s each | dispatch-engine → providers | one Redis hash per booking; the provider app polls `GET /dispatch/offers` every 5 s | `SEARCHING_PROVIDER` |
+| 6 | First provider accepts; the other offers are withdrawn | Provider | `POST /dispatch/offers/{bookingId}/accept`; a late accept gets 409 `OFFER_TAKEN`; `ProviderAccepted` | `PROVIDER_ACCEPTED` |
+| 6a | Nobody accepts within 5 minutes | dispatch-engine → booking | `POST /internal/bookings/{id}/searching-failed`: a covering agency assigns from the Tenant Portal, otherwise the search fails | `AWAITING_ASSIGNMENT` or `SEARCHING_FAILED` |
+| 7 | Provider sets off and shares a live position | Provider | `POST /bookings/{id}/on-the-way`, `POST /locations/{id}`; the customer follows the stream | `PROVIDER_ON_THE_WAY` |
+| 8 | Provider arrives, uploads a before-photo, starts | Provider | `POST /bookings/{id}/arrived`, `/photos`, `/start` | `JOB_STARTED` |
+| 9 | Work, optional parts quote, completion | Provider, customer | `/pause`, `/resume`, `/parts` (customer approves the quote), `/complete` with an after-photo | `JOB_COMPLETED` |
+| 10 | Customer pays; Razorpay confirms twice | Customer | `POST /payments` (amount from booking-service), Checkout, `POST /payments/{id}/razorpay/verify`, signed webhook | `PAYMENT_PENDING` → `PAYMENT_COMPLETED` |
+| 11 | Settle: wallet credit, invoice, notices | payment, invoice, notification | `PaymentCompleted` consumed; one `JOB_CREDIT` earning per booking; PDF invoice | `PAYMENT_COMPLETED` |
+| 12 | Review within 7 days, or raise a complaint | Customer | `POST /reviews`, `POST /complaints` (SLA clock starts) | `PAYMENT_COMPLETED`, or `DISPUTED` |
+
+Sections 5.3 to 5.5 and 5.8 show steps 3 to 11 as sequence diagrams; section 9 details steps 4 to 6.
 
 ---
 
@@ -1474,6 +1492,8 @@ Weights are validated with `BigDecimal` and must sum to one. They are stored in 
 
 ## 10. Deployment
 
+Step-by-step runbooks for both targets, including a database reset and rollback, are in [DEPLOYMENT.md](DEPLOYMENT.md); this section describes what runs where.
+
 ### 10.1 Local (Docker Compose)
 
 ```mermaid
@@ -1582,6 +1602,8 @@ All five deployables share one Helm chart, `helm/homefix-service`, with one rele
 
 ## 11. Cross-cutting concerns
 
+The security architecture (trust boundaries, the checks a request passes, secrets, and the open findings) is in [SECURITY.md](SECURITY.md).
+
 ```mermaid
 graph LR
     subgraph "Every request"
@@ -1606,8 +1628,9 @@ Resilience is meant to wrap every synchronous call through the shared `Resilient
 ## 12. Reading order for newcomers
 
 1. This document, then `.kiro/specs/homefix-platform/requirements.md` for the product rules.
-2. [LOCAL_ACCESS.md](LOCAL_ACCESS.md) to get the stack running and log in as each role.
+2. [DEPLOYMENT.md](DEPLOYMENT.md) and [LOCAL_ACCESS.md](LOCAL_ACCESS.md) to get the stack running and log in as each role.
 3. [API_CONTRACTS.md](API_CONTRACTS.md) when wiring a client or a new service.
 4. `shared/homefix-shared-security` and `shared/homefix-shared-outbox`, which every service depends on.
 5. `services/booking-service`, the richest domain model and the best example of the intended patterns.
-6. [../CODEBASE_REVIEW.md](../CODEBASE_REVIEW.md) before trusting any integration to work end to end.
+6. [SECURITY.md](SECURITY.md) before changing anything on the request path.
+7. [../CODEBASE_REVIEW.md](../CODEBASE_REVIEW.md) before trusting any integration to work end to end.

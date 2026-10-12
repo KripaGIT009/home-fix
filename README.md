@@ -18,7 +18,7 @@ engine. Service agencies (tenants) can run their own teams of providers on the p
 | [`helm/`](helm/) | Helm chart (`homefix-service`) and values for each of the five deployables |
 | [`infra/terraform/`](infra/terraform/) | AWS infrastructure: VPC, EKS, RDS, MSK, ElastiCache, KMS, IAM |
 | [`infra/k8s/`](infra/k8s/) | Cluster-level manifests (observability) |
-| [`docs/`](docs/) | Architecture, API contracts and local-run guide |
+| [`docs/`](docs/) | Architecture, deployment runbooks, security architecture, API contracts, local-run guide and the design deck |
 
 ## Services and deployables
 
@@ -53,7 +53,8 @@ provider apps also ship as Android and iOS apps via Capacitor; see
 
 Locally the services and web apps run in Docker Compose, while PostgreSQL, Kafka and Redis run
 on the host machine. Full setup, including the one-time infrastructure configuration, seeding
-and test users, is in [`docs/LOCAL_ACCESS.md`](docs/LOCAL_ACCESS.md). In short:
+and test users, is in [`docs/LOCAL_ACCESS.md`](docs/LOCAL_ACCESS.md); the step-by-step runbook,
+including a database reset, is in [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md). In short:
 
 ```bash
 cp .env.example .env            # first time only
@@ -80,7 +81,20 @@ npm run dev
 
 Production targets AWS: Terraform provisions the platform (EKS, RDS PostgreSQL, MSK, ElastiCache)
 and each of the five deployables is deployed to EKS with the Helm chart in [`helm/`](helm/), configured through
-per-environment values and Secrets. See [`infra/terraform/README.md`](infra/terraform/README.md).
+per-environment values and Secrets. The step-by-step production runbook and the blockers to clear
+first are in [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md); see also
+[`infra/terraform/README.md`](infra/terraform/README.md).
+
+## Documentation
+
+| Document | What it covers |
+|----------|----------------|
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Containers, the booking step by step, sequence diagrams, events, data model, state machines, dispatch |
+| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Local and production deployment, step by step, with reset and rollback |
+| [`docs/SECURITY.md`](docs/SECURITY.md) | Security architecture: trust boundaries, request checks, identity, secrets, open findings |
+| [`docs/API_CONTRACTS.md`](docs/API_CONTRACTS.md) | REST and event contracts per service |
+| [`docs/LOCAL_ACCESS.md`](docs/LOCAL_ACCESS.md) | Local infrastructure setup, URLs, test users and walkthroughs |
+| [`docs/HomeFix_Design_Deck.pptx`](docs/HomeFix_Design_Deck.pptx) | The design deck: architecture, flows, deployment and security in pictures |
 
 ## Documentation
 

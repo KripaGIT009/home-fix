@@ -136,9 +136,15 @@ bash docker/seed-pricing.sh                                     # pricing for ev
 ```
 
 Keep that order: the provider profiles need the catalog, and the Tenant seed needs the catalog,
-the two provider profiles and the `tenantadmin` account. Provider One gets the plumbing and
-electrical skills, Provider Two cleaning; both join the demo agency's team. The SQL seeds are
-idempotent.
+the two provider profiles and the `tenantadmin` account. Both providers get the plumbing and
+electrical skills, so a booking for either is offered to both at once (the first to accept takes
+it); cleaning is Provider Two's alone. Both join the demo agency's team. The SQL seeds are
+idempotent. `seed-pricing.sh` runs in a throwaway `curlimages/curl` container on the compose
+network.
+
+To start again from an empty database, follow the reset in [DEPLOYMENT.md](DEPLOYMENT.md)
+section 1, step 3 (back up, drop the service schemas, re-run `init-db.sql`, clear Redis), then
+restart the stack and seed again.
 
 The test accounts in section 3 need no script: auth-service creates them at startup when
 `DEV_SEED_ENABLED=true`. `docker/seed-test-users.sh` remains for extra OTP-only accounts.
